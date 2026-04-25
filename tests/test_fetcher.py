@@ -110,3 +110,20 @@ def test_both_sources_same_schema() -> None:
     _assert_standard_columns(finmind_df)
     _assert_standard_columns(yfinance_df)
     assert [str(dt) for dt in finmind_df.dtypes] == [str(dt) for dt in yfinance_df.dtypes]
+
+
+@pytest.mark.integration
+def test_finmind_fetch_dividends_2330() -> None:
+    token = _resolve_finmind_token()
+    if not token:
+        pytest.skip("FINMIND_TOKEN is not configured.")
+
+    fetcher = FinMindFetcher(token=token)
+    df = fetcher.fetch_dividends(symbol="2330", start_date="2018-01-01")
+    if df.empty:
+        pytest.skip("FinMind dividend endpoint returned empty data.")
+
+    assert df.columns.tolist() == ["date", "cash_dividend", "stock_dividend", "symbol"]
+    assert str(df["date"].dtype) == f"datetime64[ns, {TAIPEI_TZ}]"
+    assert pd.api.types.is_float_dtype(df["cash_dividend"].dtype)
+    assert pd.api.types.is_float_dtype(df["stock_dividend"].dtype)

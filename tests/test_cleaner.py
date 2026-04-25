@@ -5,14 +5,29 @@ from pathlib import Path
 import pandas as pd
 import pandas.testing as pdt
 
-from src.data.cleaner import DataCleaner
+from src.data.cleaner import DataCleaner, adjust_prices, compute_adjustment_factors
 
 
 FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "bad_data.csv"
+DIV_FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "dividends_2330.csv"
 
 
 def _load_bad_data() -> pd.DataFrame:
     return pd.read_csv(FIXTURE_PATH)
+
+
+def _make_adj_daily_df() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2024-06-24", "2024-06-25", "2024-06-26", "2024-06-27"]),
+            "open": [99.0, 100.0, 95.0, 96.0],
+            "high": [101.0, 101.0, 96.0, 97.0],
+            "low": [98.0, 99.0, 94.0, 95.0],
+            "close": [100.0, 100.0, 95.0, 96.0],
+            "volume": [1000, 1000, 1000, 1000],
+            "symbol": ["2330", "2330", "2330", "2330"],
+        }
+    )
 
 
 def test_l1_negative_price_removed() -> None:
@@ -98,3 +113,67 @@ def test_clean_returns_new_dataframe() -> None:
 
     assert cleaned is not raw
     pdt.assert_frame_equal(raw, raw_snapshot)
+
+
+def test_adj_factor_no_dividend() -> None:
+    daily = _make_adj_daily_df()
+    divs = pd.DataFrame(columns=["date", "cash_dividend", "stock_dividend", "symbol"])
+
+    out = compute_adjustment_factors(daily, divs)
+
+    assert "adj_factor" in out.columns
+    assert (out["adj_factor"] == 1.0).all()
+
+
+def test_adj_factor_cash_dividend() -> None:
+    daily = _make_adj_daily_df()
+    divs = pd.DataFrame(
+        {
+            "date": [pd.Timestamp("2024-06-26")],
+            "cash_dividend": [5.0],
+            "stock_dividend": [0.0],
+            "symbol": ["2330"],
+        }
+    )
+
+    out = compute_adjustment_factors(daily, divs)
+
+    # Ex-date is 2024-06-26, so dates before that should have factor 0.95.
+    assert out.loc[out["date"] == pd.Timestamp("2024-06-24"), "adj_factor"].iloc[0] < 1.0
+    assert out.loc[out["date"] == pd.Timestamp("2024-06-25"), "adj_factor"].iloc[0] < 1.0
+    assert out.loc[out["date"] == pd.Timestamp("2024-06-26"), "adj_factor"].iloc[0] == 1.0
+
+
+def test_forward_adj_latest_price_unchanged() -> None:
+    daily = _make_adj_daily_df()
+    divs = pd.read_csv(DIV_FIXTURE_PATH)
+
+    out = adjust_prices(daily, divs, method="forward")
+
+    assert out.loc[out["date"] == pd.Timestamp("2024-06-27"), "close"].iloc[0] == 96.0
+
+
+def test_adj_no_gap_across_ex_date() -> None:
+    daily = _make_adj_daily_df()
+    divs = pd.DataFrame(
+        {
+            "date": [pd.Timestamp("2024-06-26")],
+            "cash_dividend": [5.0],
+            "stock_dividend": [0.0],
+            "symbol": ["2330"],
+        }
+    )
+
+    out = adjust_prices(daily, divs, method="forward")
+
+    pre_ex = out.loc[out["date"] == pd.Timestamp("2024-06-25"), "close"].iloc[0]
+    ex_date = out.loc[out["date"] == pd.Timestamp("2024-06-26"), "close"].iloc[0]
+    assert abs(pre_ex - ex_date) < 0.01
+
+
+def test_raw_method_returns_unchanged() -> None:
+    daily = _make_adj_daily_df()
+    divs = pd.read_csv(DIV_FIXTURE_PATH)
+
+    out = adjust_prices(daily, divs, method="raw")
+    pdt.assert_frame_equal(out, daily)

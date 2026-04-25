@@ -6,7 +6,7 @@ venv/
 .env
 
 # runtime data
-data/
+/data/
 
 # python cache
 __pycache__/
