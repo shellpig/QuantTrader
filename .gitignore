@@ -1,0 +1,23 @@
+# virtual environments
+.venv/
+venv/
+
+# secrets
+.env
+
+# runtime data
+data/
+
+# python cache
+__pycache__/
+*.pyc
+.pytest_cache/
+.pytest_tmp/
+pytest-cache-files-*/
+
+# tooling
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+settings.local.json

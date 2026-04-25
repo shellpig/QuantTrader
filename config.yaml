@@ -1,0 +1,21 @@
+system:
+  data_dir: ./data
+  log_level: INFO
+  timezone: Asia/Taipei
+
+backtest:
+  initial_capital: 1000000
+  commission_rate: 0.001425
+  commission_discount: 0.6
+  tax_rate: 0.003
+  etf_tax_rate: 0.001
+  slippage_ticks: 1
+
+risk:
+  max_daily_loss_pct: 0.03
+  max_position_pct: 0.20
+  max_drawdown_warning_pct: 0.10
+
+data:
+  primary_source: finmind
+  fallback_source: yfinance

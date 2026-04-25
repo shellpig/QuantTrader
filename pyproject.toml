@@ -1,0 +1,36 @@
+[project]
+name = "quanttrader"
+version = "0.1.0"
+description = "Personal quantitative trading research toolkit for Taiwan stocks"
+requires-python = ">=3.12"
+dependencies = [
+    "pandas>=2.2",
+    "pandas-ta>=0.3.14b1",
+    "duckdb>=1.0",
+    "pyarrow>=17.0",
+    "plotly>=5.22",
+    "streamlit>=1.37",
+    "anthropic>=0.34",
+    "python-dotenv>=1.0",
+    "pyyaml>=6.0",
+    "requests>=2.32",
+    "yfinance>=0.2.40",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.5",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = [
+    "integration: tests that require external APIs or network connectivity",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
