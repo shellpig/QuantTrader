@@ -78,14 +78,60 @@ class ParquetStorage:
         self.data_dir = (data_dir or get_data_dir()).resolve()
         self.data_dir.mkdir(parents=True, exist_ok=True)
 
-    def _daily_path(self, symbol: str) -> Path:
-        return self.data_dir / "raw" / "tw" / symbol / "daily.parquet"
+    def _validate_market(self, market: str | None) -> str:
+        normalized = "tw" if market is None else str(market).strip().lower()
+        if normalized != "tw":
+            raise StorageError(f"Unsupported market: {market}")
+        return normalized
 
-    def _minute_path(self, symbol: str) -> Path:
-        return self.data_dir / "raw" / "tw" / symbol / "minute.parquet"
+    def _validate_symbol(self, symbol: str) -> str:
+        if not isinstance(symbol, str):
+            raise StorageError("Symbol must be a non-empty string.")
 
-    def _adjusted_path(self, symbol: str) -> Path:
-        return self.data_dir / "processed" / "tw" / symbol / "adj_daily.parquet"
+        normalized = str(symbol).strip()
+        if not normalized:
+            raise StorageError("Symbol must be a non-empty string.")
+
+        if ".." in normalized or "/" in normalized or "\\" in normalized:
+            raise StorageError(f"Invalid symbol path segment: {symbol}")
+
+        symbol_path = Path(normalized)
+        if symbol_path.is_absolute() or symbol_path.anchor:
+            raise StorageError(f"Invalid symbol path segment: {symbol}")
+
+        return normalized
+
+    def _build_market_path(self, layer: str, market: str, symbol: str, filename: str) -> Path:
+        path = (self.data_dir / layer / market / symbol / filename).resolve(strict=False)
+        try:
+            path.relative_to(self.data_dir)
+        except ValueError as exc:
+            raise StorageError(f"Resolved path escapes data_dir: {path}") from exc
+        return path
+
+    def _daily_path(self, symbol: str, market: str = "tw") -> Path:
+        return self._build_market_path(
+            "raw",
+            self._validate_market(market),
+            self._validate_symbol(symbol),
+            "daily.parquet",
+        )
+
+    def _minute_path(self, symbol: str, market: str = "tw") -> Path:
+        return self._build_market_path(
+            "raw",
+            self._validate_market(market),
+            self._validate_symbol(symbol),
+            "minute.parquet",
+        )
+
+    def _adjusted_path(self, symbol: str, market: str = "tw") -> Path:
+        return self._build_market_path(
+            "processed",
+            self._validate_market(market),
+            self._validate_symbol(symbol),
+            "adj_daily.parquet",
+        )
 
     def _save_with_upsert(self, path: Path, symbol: str, df: pd.DataFrame) -> Path:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -115,23 +161,29 @@ class ParquetStorage:
             raise StorageError(f"Failed to read parquet: {path}") from exc
         return _normalize_market_df(loaded, symbol=symbol)
 
-    def save_daily(self, symbol: str, df: pd.DataFrame) -> Path:
-        return self._save_with_upsert(self._daily_path(symbol), symbol, df)
+    def save_daily(self, symbol: str, df: pd.DataFrame, market: str = "tw") -> Path:
+        normalized_symbol = self._validate_symbol(symbol)
+        return self._save_with_upsert(self._daily_path(normalized_symbol, market), normalized_symbol, df)
 
-    def load_daily(self, symbol: str) -> pd.DataFrame:
-        return self._load_or_empty(self._daily_path(symbol), symbol)
+    def load_daily(self, symbol: str, market: str = "tw") -> pd.DataFrame:
+        normalized_symbol = self._validate_symbol(symbol)
+        return self._load_or_empty(self._daily_path(normalized_symbol, market), normalized_symbol)
 
-    def save_minute(self, symbol: str, df: pd.DataFrame) -> Path:
-        return self._save_with_upsert(self._minute_path(symbol), symbol, df)
+    def save_minute(self, symbol: str, df: pd.DataFrame, market: str = "tw") -> Path:
+        normalized_symbol = self._validate_symbol(symbol)
+        return self._save_with_upsert(self._minute_path(normalized_symbol, market), normalized_symbol, df)
 
-    def load_minute(self, symbol: str) -> pd.DataFrame:
-        return self._load_or_empty(self._minute_path(symbol), symbol)
+    def load_minute(self, symbol: str, market: str = "tw") -> pd.DataFrame:
+        normalized_symbol = self._validate_symbol(symbol)
+        return self._load_or_empty(self._minute_path(normalized_symbol, market), normalized_symbol)
 
-    def save_adjusted(self, symbol: str, df: pd.DataFrame) -> Path:
-        return self._save_with_upsert(self._adjusted_path(symbol), symbol, df)
+    def save_adjusted(self, symbol: str, df: pd.DataFrame, market: str = "tw") -> Path:
+        normalized_symbol = self._validate_symbol(symbol)
+        return self._save_with_upsert(self._adjusted_path(normalized_symbol, market), normalized_symbol, df)
 
-    def load_adjusted(self, symbol: str) -> pd.DataFrame:
-        return self._load_or_empty(self._adjusted_path(symbol), symbol)
+    def load_adjusted(self, symbol: str, market: str = "tw") -> pd.DataFrame:
+        normalized_symbol = self._validate_symbol(symbol)
+        return self._load_or_empty(self._adjusted_path(normalized_symbol, market), normalized_symbol)
 
 
 class DuckDBMeta:

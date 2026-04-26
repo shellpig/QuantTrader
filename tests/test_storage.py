@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from src.core.constants import STANDARD_COLUMNS, TAIPEI_TZ
+from src.core.exceptions import StorageError
 from src.data.storage import DuckDBMeta, ParquetStorage
 
 
@@ -55,6 +57,41 @@ def test_load_nonexistent_returns_empty(tmp_path) -> None:
 
     assert loaded.empty
     assert loaded.columns.tolist() == STANDARD_COLUMNS
+
+
+@pytest.mark.parametrize(
+    "symbol",
+    ["..", "../escape", "..\\escape", "a/b", "a\\b", "/escape", "C:/escape", "C:\\escape", "C:escape"],
+)
+def test_storage_rejects_path_traversal_symbol(tmp_path, symbol: str) -> None:
+    storage = ParquetStorage(data_dir=tmp_path)
+    source = _make_daily_df(symbol="2330", start="2025-01-01", periods=1)
+    safe_path = storage._daily_path("2330")
+    safe_path.resolve().relative_to(tmp_path.resolve())
+
+    with pytest.raises(StorageError):
+        storage.save_daily(symbol, source)
+
+
+def test_storage_uses_default_tw_market_path(tmp_path) -> None:
+    storage = ParquetStorage(data_dir=tmp_path)
+    source = _make_daily_df(symbol="2330", start="2025-01-01", periods=1)
+
+    default_path = storage.save_daily("2330", source)
+    explicit_tw_path = storage.save_daily("2330", source, market="tw")
+    expected_path = (tmp_path / "raw" / "tw" / "2330" / "daily.parquet").resolve()
+
+    assert default_path == expected_path
+    assert explicit_tw_path == expected_path
+    assert expected_path.exists()
+
+
+def test_storage_rejects_unknown_market(tmp_path) -> None:
+    storage = ParquetStorage(data_dir=tmp_path)
+    source = _make_daily_df(symbol="2330", start="2025-01-01", periods=1)
+
+    with pytest.raises(StorageError, match="Unsupported market"):
+        storage.save_daily("2330", source, market="us")
 
 
 def test_duckdb_meta_upsert_and_query() -> None:
