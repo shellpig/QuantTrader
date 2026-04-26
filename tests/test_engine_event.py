@@ -85,6 +85,7 @@ class CountingStrategy(StrategyBase):
 class SingleOrderStrategy(StrategyBase):
     trigger_index: int
     side: str = "BUY"
+    quantity: int = 1000
     call_index: int = 0
     fills: list[FillEvent] = field(default_factory=list)
 
@@ -100,7 +101,7 @@ class SingleOrderStrategy(StrategyBase):
                     symbol=bar.symbol,
                     order_type="MARKET",
                     side=self.side,
-                    quantity=1000,
+                    quantity=self.quantity,
                 )
             )
         self.call_index += 1
@@ -209,6 +210,41 @@ def test_market_order_fill_price() -> None:
     expected = calc.apply_slippage(price=float(df.iloc[1]["open"]), side="BUY")
     assert len(strategy.fills) == 1
     assert strategy.fills[0].fill_price == pytest.approx(expected, abs=1e-9)
+
+
+def test_market_buy_is_resized_to_affordable_quantity() -> None:
+    index = pd.date_range("2025-08-28", periods=3, freq="D", tz="UTC")
+    df = pd.DataFrame(
+        {
+            "open": [1160.0, 1180.0, 1190.0],
+            "high": [1165.0, 1185.0, 1195.0],
+            "low": [1155.0, 1175.0, 1185.0],
+            "close": [1160.0, 1180.0, 1190.0],
+            "volume": [1000, 1000, 1000],
+            "symbol": ["2330", "2330", "2330"],
+        },
+        index=index,
+    )
+    initial_capital = 1_000_000.0
+    calc = CostCalculator(slippage_ticks=0)
+    strategy = SingleOrderStrategy(trigger_index=0, side="BUY", quantity=1000)
+    backtester = EventDrivenBacktester(initial_capital=initial_capital, cost_calculator=calc)
+
+    backtester.run(strategy, df)
+
+    assert len(strategy.fills) == 1
+    fill = strategy.fills[0]
+    assert fill.quantity < 1000
+
+    total_spend = (fill.fill_price * fill.quantity) + fill.commission
+    assert total_spend <= initial_capital + 1e-9
+
+    next_qty = fill.quantity + 1
+    next_spend = (fill.fill_price * next_qty) + max(
+        fill.fill_price * next_qty * calc.effective_commission_rate,
+        20.0,
+    )
+    assert next_spend > initial_capital
 
 
 def test_no_future_function() -> None:

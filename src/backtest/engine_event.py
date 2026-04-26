@@ -77,7 +77,7 @@ class EventDrivenBacktester(BacktesterBase):
             # Step 1: execute pending orders at current bar open.
             if pending_orders:
                 for order in pending_orders:
-                    fill = self._simulate_fill(order=order, bar=bar_event, match_ctx=match_ctx)
+                    fill = self._simulate_fill(order=order, bar=bar_event, match_ctx=match_ctx, account=account)
                     if fill is None:
                         continue
                     account.apply_fill(fill)
@@ -205,7 +205,13 @@ class EventDrivenBacktester(BacktesterBase):
         )
         return bar_event, _MatchContext(symbol=symbol, is_etf=self._is_etf_symbol(symbol))
 
-    def _simulate_fill(self, order: OrderEvent, bar: BarEvent, match_ctx: _MatchContext) -> FillEvent | None:
+    def _simulate_fill(
+        self,
+        order: OrderEvent,
+        bar: BarEvent,
+        match_ctx: _MatchContext,
+        account: SimpleAccount,
+    ) -> FillEvent | None:
         side = order.side.upper()
         if order.order_type == "MARKET":
             fill_price = self.cost_calculator.apply_slippage(price=bar.open, side=side)
@@ -219,9 +225,20 @@ class EventDrivenBacktester(BacktesterBase):
         else:
             raise ValueError(f"Unsupported order type: {order.order_type}")
 
+        quantity = int(order.quantity)
+        if side == "BUY":
+            quantity = self._resolve_buy_quantity(
+                requested_qty=quantity,
+                cash=account.get_cash(),
+                fill_price=float(fill_price),
+                is_etf=match_ctx.is_etf,
+            )
+            if quantity <= 0:
+                return None
+
         cost = self.cost_calculator.calculate(
             price=fill_price,
-            quantity=order.quantity,
+            quantity=quantity,
             side=side,
             is_etf=match_ctx.is_etf,
         )
@@ -229,12 +246,91 @@ class EventDrivenBacktester(BacktesterBase):
         return FillEvent(
             symbol=match_ctx.symbol,
             side=side,
-            quantity=order.quantity,
+            quantity=quantity,
             fill_price=float(fill_price),
             commission=float(cost.commission),
             tax=float(cost.tax),
             timestamp=bar.timestamp,
         )
+
+    def _resolve_buy_quantity(
+        self,
+        *,
+        requested_qty: int,
+        cash: float,
+        fill_price: float,
+        is_etf: bool,
+    ) -> int:
+        if requested_qty <= 0 or cash <= 0 or fill_price <= 0:
+            return 0
+
+        upper = min(int(requested_qty), int(cash // fill_price))
+        if upper <= 0:
+            return 0
+
+        # Keep quantity preference aligned with vectorized engine:
+        # first try whole-lot (1000 shares), then fallback to odd-lot.
+        whole_lot_upper = (upper // 1000) * 1000
+        if whole_lot_upper > 0:
+            whole_lot_qty = self._max_affordable_buy_quantity(
+                upper=whole_lot_upper,
+                step=1000,
+                cash=cash,
+                fill_price=fill_price,
+                is_etf=is_etf,
+            )
+            if whole_lot_qty > 0:
+                return whole_lot_qty
+
+        return self._max_affordable_buy_quantity(
+            upper=upper,
+            step=1,
+            cash=cash,
+            fill_price=fill_price,
+            is_etf=is_etf,
+        )
+
+    def _max_affordable_buy_quantity(
+        self,
+        *,
+        upper: int,
+        step: int,
+        cash: float,
+        fill_price: float,
+        is_etf: bool,
+    ) -> int:
+        if upper <= 0 or step <= 0:
+            return 0
+
+        units_high = upper // step
+        if units_high <= 0:
+            return 0
+
+        quantity_upper = units_high * step
+        if self._buy_total_spend(fill_price=fill_price, quantity=quantity_upper, is_etf=is_etf) <= cash:
+            return quantity_upper
+
+        units_low = 1
+        best_units = 0
+        while units_low <= units_high:
+            units_mid = (units_low + units_high) // 2
+            quantity_mid = units_mid * step
+            if self._buy_total_spend(fill_price=fill_price, quantity=quantity_mid, is_etf=is_etf) <= cash:
+                best_units = units_mid
+                units_low = units_mid + 1
+            else:
+                units_high = units_mid - 1
+
+        return best_units * step
+
+    def _buy_total_spend(self, *, fill_price: float, quantity: int, is_etf: bool) -> float:
+        commission = self.cost_calculator.calculate(
+            price=fill_price,
+            quantity=quantity,
+            side="BUY",
+            is_etf=is_etf,
+        ).commission
+        return float((fill_price * quantity) + commission)
 
     @staticmethod
     def _build_result(equity_records: list[dict[str, Any]], trade_records: list[dict[str, Any]]) -> BacktestResult:

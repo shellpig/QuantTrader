@@ -38,7 +38,12 @@ class StrategyBase(ABC):
 
     @abstractmethod
     def on_bar(self, bar: BarEvent, account: Account) -> list[OrderEvent]:
-        """Handle one bar in event-driven mode."""
+        """
+        Handle one bar in event-driven mode.
+
+        Strategy should express trade intent; execution layer may shrink BUY quantity
+        based on real fill price and transaction cost constraints.
+        """
 
     def on_fill(self, fill: Any, account: Account) -> None:
         """Callback after an order fill; subclasses may override."""

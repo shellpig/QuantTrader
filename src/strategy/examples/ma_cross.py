@@ -13,6 +13,8 @@ if TYPE_CHECKING:
     from src.backtest.account import Account
     from src.backtest.events import BarEvent
 
+_BUY_INTENT_QUANTITY = 10**9
+
 
 class MACrossStrategy(StrategyBase):
     """
@@ -52,8 +54,7 @@ class MACrossStrategy(StrategyBase):
         return signal
 
     def on_bar(self, bar: BarEvent, account: Account) -> list[OrderEvent]:
-        close_price = float(bar.close)
-        self._close_history.append(close_price)
+        self._close_history.append(float(bar.close))
 
         if len(self._close_history) < self.ma_long:
             return []
@@ -73,16 +74,14 @@ class MACrossStrategy(StrategyBase):
         position_qty = account.get_position(bar.symbol)
 
         if self._prev_trend == -1 and current_trend == 1 and position_qty == 0:
-            buy_qty = self._calculate_buy_quantity(account.get_cash(), close_price)
-            if buy_qty > 0:
-                orders.append(
-                    OrderEvent(
-                        symbol=bar.symbol,
-                        order_type="MARKET",
-                        side="BUY",
-                        quantity=buy_qty,
-                    )
+            orders.append(
+                OrderEvent(
+                    symbol=bar.symbol,
+                    order_type="MARKET",
+                    side="BUY",
+                    quantity=_BUY_INTENT_QUANTITY,
                 )
+            )
         elif self._prev_trend == 1 and current_trend == -1 and position_qty > 0:
             orders.append(
                 OrderEvent(
@@ -99,9 +98,3 @@ class MACrossStrategy(StrategyBase):
     def reset_runtime_state(self) -> None:
         self._close_history = []
         self._prev_trend = None
-
-    @staticmethod
-    def _calculate_buy_quantity(cash: float, price: float) -> int:
-        if price <= 0:
-            return 0
-        return int((cash // price) // 1000) * 1000
