@@ -11,3 +11,6 @@ PRICE_LIMIT_PCT = 0.10
 
 # Unified output schema for fetchers
 STANDARD_COLUMNS = ["date", "open", "high", "low", "close", "volume", "symbol"]
+
+# Canonical bar frequencies for event objects.
+VALID_BAR_FREQS = {"1min", "5min", "15min", "30min", "60min", "1day"}

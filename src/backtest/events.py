@@ -7,6 +7,8 @@ from datetime import datetime
 from numbers import Real
 from typing import Any
 
+from src.core.constants import VALID_BAR_FREQS
+
 
 def _is_real_number(value: Any) -> bool:
     return isinstance(value, Real) and not isinstance(value, bool)
@@ -83,7 +85,9 @@ class BarEvent:
         low = _validate_real(self.low, "low")
         close = _validate_real(self.close, "close")
         _validate_non_negative_int(self.volume, "volume")
-        _validate_string(self.freq, "freq")
+        freq = _validate_string(self.freq, "freq")
+        if freq not in VALID_BAR_FREQS:
+            raise ValueError(f"Invalid freq: {freq}. Must be one of {sorted(VALID_BAR_FREQS)}.")
 
         if high < low:
             raise ValueError("high must be greater than or equal to low.")
@@ -163,6 +167,8 @@ class FillEvent:
             raise ValueError(f"Invalid side: {self.side}")
         if fill_price <= 0:
             raise ValueError("fill_price must be positive.")
+        if side == "BUY" and tax > 0:
+            raise ValueError("BUY fill must have tax=0.0.")
 
         object.__setattr__(self, "side", side)
         object.__setattr__(self, "fill_price", fill_price)

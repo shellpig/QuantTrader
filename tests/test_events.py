@@ -74,6 +74,33 @@ def test_fill_event_total_cost_sell() -> None:
     assert fill.total_cost == pytest.approx(4978.0, abs=1e-9)
 
 
+def test_fill_event_buy_tax_must_be_zero() -> None:
+    with pytest.raises(ValueError):
+        FillEvent(
+            symbol="2330",
+            side="BUY",
+            quantity=100,
+            fill_price=50.0,
+            commission=7.0,
+            tax=15.0,
+            timestamp=_aware_dt(),
+        )
+
+
+def test_bar_event_invalid_freq_raises() -> None:
+    with pytest.raises(ValueError):
+        BarEvent(
+            symbol="2330",
+            timestamp=_aware_dt(),
+            open=100.0,
+            high=101.0,
+            low=99.5,
+            close=100.5,
+            volume=1_000,
+            freq="daily",
+        )
+
+
 def test_events_serializable() -> None:
     events = [
         BarEvent(

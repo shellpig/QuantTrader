@@ -61,6 +61,7 @@ class EventDrivenBacktester(BacktesterBase):
         if df.empty:
             return calculate_metrics(pd.Series(dtype="float64"), pd.DataFrame())
 
+        strategy.reset_runtime_state()
         account = SimpleAccount(self.initial_capital)
         pending_orders: list[OrderEvent] = []
         equity_records: list[dict[str, Any]] = []

@@ -6,11 +6,12 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
+from src.backtest.events import OrderEvent
 from src.strategy.base import StrategyBase
 
 if TYPE_CHECKING:
     from src.backtest.account import Account
-    from src.backtest.events import BarEvent, OrderEvent
+    from src.backtest.events import BarEvent
 
 
 class MACrossStrategy(StrategyBase):
@@ -28,6 +29,8 @@ class MACrossStrategy(StrategyBase):
             raise ValueError("ma_short must be smaller than ma_long.")
         self.ma_short = int(ma_short)
         self.ma_long = int(ma_long)
+        self._close_history: list[float] = []
+        self._prev_trend: int | None = None
 
     def generate_signals(self, df: pd.DataFrame) -> pd.Series:
         if "close" not in df.columns:
@@ -49,5 +52,56 @@ class MACrossStrategy(StrategyBase):
         return signal
 
     def on_bar(self, bar: BarEvent, account: Account) -> list[OrderEvent]:
-        _ = (bar, account)
-        return []
+        close_price = float(bar.close)
+        self._close_history.append(close_price)
+
+        if len(self._close_history) < self.ma_long:
+            return []
+
+        short_window = self._close_history[-self.ma_short :]
+        long_window = self._close_history[-self.ma_long :]
+        ma_short = sum(short_window) / self.ma_short
+        ma_long = sum(long_window) / self.ma_long
+        current_trend = 1 if ma_short > ma_long else -1
+
+        # First valid MA bar only initializes trend to avoid warm-up pseudo signal.
+        if self._prev_trend is None:
+            self._prev_trend = current_trend
+            return []
+
+        orders: list[OrderEvent] = []
+        position_qty = account.get_position(bar.symbol)
+
+        if self._prev_trend == -1 and current_trend == 1 and position_qty == 0:
+            buy_qty = self._calculate_buy_quantity(account.get_cash(), close_price)
+            if buy_qty > 0:
+                orders.append(
+                    OrderEvent(
+                        symbol=bar.symbol,
+                        order_type="MARKET",
+                        side="BUY",
+                        quantity=buy_qty,
+                    )
+                )
+        elif self._prev_trend == 1 and current_trend == -1 and position_qty > 0:
+            orders.append(
+                OrderEvent(
+                    symbol=bar.symbol,
+                    order_type="MARKET",
+                    side="SELL",
+                    quantity=position_qty,
+                )
+            )
+
+        self._prev_trend = current_trend
+        return orders
+
+    def reset_runtime_state(self) -> None:
+        self._close_history = []
+        self._prev_trend = None
+
+    @staticmethod
+    def _calculate_buy_quantity(cash: float, price: float) -> int:
+        if price <= 0:
+            return 0
+        return int((cash // price) // 1000) * 1000

@@ -66,12 +66,18 @@ class SimpleAccount(Account):
         tax = float(fill.tax)
 
         if side == "BUY":
+            total_buy_cost = (fill_price * quantity) + commission
+            if total_buy_cost > self.cash:
+                raise ValueError(
+                    f"Insufficient cash for BUY: cash={self.cash:.6f}, total_cost={total_buy_cost:.6f}."
+                )
+
             previous_qty = self.positions.get(symbol, 0)
             previous_cost = self.cost_basis.get(symbol, 0.0)
             new_qty = previous_qty + quantity
             new_cost_basis = ((previous_cost * previous_qty) + (fill_price * quantity)) / new_qty
 
-            self.cash -= (fill_price * quantity) + commission
+            self.cash -= total_buy_cost
             self.positions[symbol] = new_qty
             self.cost_basis[symbol] = float(new_cost_basis)
         elif side == "SELL":

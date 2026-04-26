@@ -20,8 +20,9 @@ class StrategyBase(ABC):
     """
     Base class for trading strategies.
 
-    - Vectorized engine calls `generate_signals`.
-    - Event-driven engine calls `on_bar`.
+    - `generate_signals` is used by vectorized engine.
+    - `on_bar` is used by event-driven engine.
+    - These two paths are parallel interfaces, not interchangeable behavior.
     """
 
     @abstractmethod
@@ -42,4 +43,8 @@ class StrategyBase(ABC):
     def on_fill(self, fill: Any, account: Account) -> None:
         """Callback after an order fill; subclasses may override."""
         _ = (fill, account)
+        return None
+
+    def reset_runtime_state(self) -> None:
+        """Reset mutable runtime state before one backtest run."""
         return None

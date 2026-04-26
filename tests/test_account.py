@@ -70,6 +70,17 @@ def test_oversell_raises() -> None:
         account.apply_fill(_fill(side="SELL", quantity=1000, fill_price=110.0, commission=94.0, tax=330.0))
 
 
+def test_buy_insufficient_cash_raises() -> None:
+    account = SimpleAccount(initial_capital=10_000)
+
+    with pytest.raises(ValueError, match="Insufficient cash for BUY"):
+        account.apply_fill(_fill(side="BUY", quantity=1000, fill_price=100.0, commission=85.0))
+
+    assert account.get_cash() == pytest.approx(10_000.0, abs=1e-9)
+    assert account.get_position("2330") == 0
+    assert account.get_cost_basis("2330") == pytest.approx(0.0, abs=1e-9)
+
+
 def test_cost_basis_weighted_average() -> None:
     account = SimpleAccount(initial_capital=1_000_000)
     account.apply_fill(_fill(side="BUY", quantity=1000, fill_price=100.0, commission=85.0))

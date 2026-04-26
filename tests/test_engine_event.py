@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -10,6 +11,10 @@ from src.backtest.engine_event import EventDrivenBacktester
 from src.backtest.engine_vec import VectorizedBacktester
 from src.backtest.events import FillEvent, OrderEvent
 from src.strategy.base import StrategyBase
+from src.strategy.examples.ma_cross import MACrossStrategy
+
+
+FIXTURE_PATH = Path(__file__).parent / "fixtures" / "ma_cross_data.csv"
 
 
 def _build_data(rows: int = 8) -> pd.DataFrame:
@@ -36,6 +41,28 @@ def _build_consistency_fixture() -> pd.DataFrame:
             "low": [99.0, 100.0, 102.0, 104.0, 106.0, 108.0],
             "close": [100.0, 102.0, 104.0, 105.0, 108.0, 110.0],
             "symbol": ["2330"] * 6,
+        },
+        index=index,
+    )
+
+
+def _load_ma_cross_fixture() -> pd.DataFrame:
+    df = pd.read_csv(FIXTURE_PATH)
+    df["date"] = pd.to_datetime(df["date"])
+    return df.set_index("date")
+
+
+def _build_ma_cross_event_fixture() -> pd.DataFrame:
+    index = pd.date_range("2024-01-02", periods=8, freq="D")
+    close = [10.0, 9.0, 8.0, 9.0, 10.0, 9.0, 8.0, 7.0]
+    return pd.DataFrame(
+        {
+            "open": close,
+            "high": [x + 0.5 for x in close],
+            "low": [x - 0.5 for x in close],
+            "close": close,
+            "volume": [1000] * len(close),
+            "symbol": ["2330"] * len(close),
         },
         index=index,
     )
@@ -272,3 +299,52 @@ def test_event_engine_matches_vectorized() -> None:
     assert pd.Timestamp(vec_trade["entry_date"]).date() == pd.Timestamp(event_trade["entry_date"]).date()
     assert pd.Timestamp(vec_trade["exit_date"]).date() == pd.Timestamp(event_trade["exit_date"]).date()
     assert float(vec_trade["pnl"]) == pytest.approx(float(event_trade["pnl"]), abs=1e-6)
+
+
+def test_strategy_abc_enforcement() -> None:
+    class IncompleteStrategy(StrategyBase):
+        def generate_signals(self, df: pd.DataFrame) -> pd.Series:
+            return pd.Series(0, index=df.index, dtype="int8")
+
+    with pytest.raises(TypeError):
+        IncompleteStrategy()
+
+
+def test_ma_cross_event_same_entry_points() -> None:
+    df = _build_ma_cross_event_fixture()
+    calc = CostCalculator(slippage_ticks=0)
+
+    vec_result = VectorizedBacktester(initial_capital=1_000_000, cost_calculator=calc).run(
+        MACrossStrategy(ma_short=2, ma_long=3),
+        df,
+    )
+    event_result = EventDrivenBacktester(initial_capital=1_000_000, cost_calculator=calc).run(
+        MACrossStrategy(ma_short=2, ma_long=3),
+        df,
+    )
+
+    vec_entry_dates = [pd.Timestamp(x).date() for x in vec_result.trades["entry_date"].tolist()]
+    event_entry_dates = [pd.Timestamp(x).date() for x in event_result.trades["entry_date"].tolist()]
+    vec_exit_dates = [pd.Timestamp(x).date() for x in vec_result.trades["exit_date"].tolist()]
+    event_exit_dates = [pd.Timestamp(x).date() for x in event_result.trades["exit_date"].tolist()]
+
+    assert vec_entry_dates == event_entry_dates
+    assert vec_exit_dates == event_exit_dates
+
+
+def test_strategy_no_modification_needed() -> None:
+    df = _build_ma_cross_event_fixture()
+    strategy = MACrossStrategy(ma_short=2, ma_long=3)
+    calc = CostCalculator(slippage_ticks=0)
+
+    vec_result = VectorizedBacktester(initial_capital=1_000_000, cost_calculator=calc).run(strategy, df)
+    event_backtester = EventDrivenBacktester(initial_capital=1_000_000, cost_calculator=calc)
+    first_event_result = event_backtester.run(strategy, df)
+    second_event_result = event_backtester.run(strategy, df)
+
+    assert vec_result.total_trades > 0
+    assert first_event_result.total_trades > 0
+    assert first_event_result.total_trades == second_event_result.total_trades
+    assert first_event_result.trades["entry_date"].tolist() == second_event_result.trades["entry_date"].tolist()
+    assert first_event_result.trades["exit_date"].tolist() == second_event_result.trades["exit_date"].tolist()
+    assert first_event_result.total_return == pytest.approx(second_event_result.total_return, abs=1e-9)
