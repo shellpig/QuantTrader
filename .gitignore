@@ -23,3 +23,8 @@ pytest-cache-files-*/
 htmlcov/
 *.egg-info/
 settings.local.json
+
+# streamlit logs
+.streamlit_*.log
+.streamlit_*.err.log
+.streamlit_*.out.log
