@@ -18,6 +18,7 @@ pytest-cache-files-*/
 
 # tooling
 .ruff_cache/
+.idea/
 .coverage
 htmlcov/
 *.egg-info/
