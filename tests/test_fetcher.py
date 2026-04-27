@@ -56,6 +56,62 @@ def test_empty_dataframe_has_standard_columns() -> None:
     assert result.empty
 
 
+def test_finmind_fetch_eps_normalization_prefers_basic_eps() -> None:
+    class DummyResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "data": [
+                    {
+                        "stock_id": "2330",
+                        "date": "2025-05-15",
+                        "type": "基本每股盈餘",
+                        "value": "1.23",
+                        "year": 2025,
+                        "season": 1,
+                    },
+                    {
+                        "stock_id": "2330",
+                        "date": "2025-08-14",
+                        "type": "稀釋每股盈餘",
+                        "value": "1.49",
+                        "year": 2025,
+                        "season": 2,
+                    },
+                    {
+                        "stock_id": "2330",
+                        "date": "2025-08-14",
+                        "type": "基本每股盈餘",
+                        "value": "1.50",
+                        "year": 2025,
+                        "season": 2,
+                    },
+                    {
+                        "stock_id": "2330",
+                        "date": "2024-11-14",
+                        "type": "EPS",
+                        "value": "5.50",
+                        "year": 2024,
+                        "season": 4,
+                    },
+                ]
+            }
+
+    class DummySession:
+        def get(self, *args, **kwargs) -> DummyResponse:  # noqa: ANN002, ANN003
+            return DummyResponse()
+
+    fetcher = FinMindFetcher(token="dummy-token", session=DummySession())
+    eps_df = fetcher.fetch_eps(symbol="2330", start_date="2024-01-01")
+
+    assert eps_df.columns.tolist() == ["year", "quarter", "eps", "symbol", "report_date"]
+    assert list(zip(eps_df["year"], eps_df["quarter"], strict=True)) == [(2024, 4), (2025, 1), (2025, 2)]
+    assert eps_df.loc[(eps_df["year"] == 2025) & (eps_df["quarter"] == 2), "eps"].iloc[0] == pytest.approx(1.50)
+    assert TAIPEI_TZ in str(eps_df["report_date"].dtype)
+
+
 @pytest.mark.integration
 def test_finmind_daily_2330() -> None:
     token = _resolve_finmind_token()

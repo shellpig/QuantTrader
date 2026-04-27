@@ -41,6 +41,18 @@ def _empty_dividends_dataframe() -> pd.DataFrame:
     )[["date", "cash_dividend", "stock_dividend", "symbol"]]
 
 
+def _empty_eps_dataframe() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "year": pd.Series(dtype="int64"),
+            "quarter": pd.Series(dtype="int64"),
+            "eps": pd.Series(dtype="float64"),
+            "symbol": pd.Series(dtype="object"),
+            "report_date": pd.Series(dtype=f"datetime64[ns, {TAIPEI_TZ}]"),
+        }
+    )[["year", "quarter", "eps", "symbol", "report_date"]]
+
+
 def localize_to_taipei(df: pd.DataFrame, col: str = "date") -> pd.DataFrame:
     """
     Standardize datetime column to Asia/Taipei.
@@ -189,6 +201,26 @@ class FinMindFetcher(IDataFetcher):
         )
         return self._normalize_dividends(raw, symbol=symbol)
 
+    def fetch_eps(self, symbol: str, start_date: str = "2000-01-01") -> pd.DataFrame:
+        """
+        Fetch EPS records from FinMind financial statements dataset.
+
+        Returns columns:
+        - year: fiscal year
+        - quarter: 1-4
+        - eps: EPS value
+        - symbol: stock id
+        - report_date: source report date (tz-aware Asia/Taipei)
+        """
+        raw = self._request_data(
+            {
+                "dataset": "TaiwanStockFinancialStatements",
+                "data_id": symbol,
+                "start_date": start_date,
+            }
+        )
+        return self._normalize_eps(raw, symbol=symbol)
+
     def _request_data(self, params: dict[str, Any]) -> pd.DataFrame:
         headers = {"Authorization": f"Bearer {self._token}"}
         last_error: Exception | None = None
@@ -271,6 +303,123 @@ class FinMindFetcher(IDataFetcher):
         normalized = normalized[["date", "cash_dividend", "stock_dividend", "symbol"]]
         normalized = normalized.sort_values("date").drop_duplicates(subset=["date", "symbol"], keep="last").reset_index(drop=True)
         return normalized
+
+    def _normalize_eps(self, raw: pd.DataFrame, symbol: str) -> pd.DataFrame:
+        if raw.empty:
+            return _empty_eps_dataframe()
+
+        out = raw.copy()
+        for col in (
+            "stock_id",
+            "date",
+            "type",
+            "origin_name",
+            "name",
+            "item",
+            "title",
+            "value",
+            "eps",
+            "EPS",
+            "year",
+            "fiscal_year",
+            "season",
+            "quarter",
+            "fiscal_quarter",
+        ):
+            if col not in out.columns:
+                out[col] = pd.NA
+
+        metric_label = out[["type", "origin_name", "name", "item", "title"]].bfill(axis=1).iloc[:, 0].astype(str)
+        metric_mask = metric_label.str.contains("EPS", case=False, na=False) | metric_label.str.contains("每股", na=False)
+        filtered = out[metric_mask].copy()
+        if filtered.empty:
+            return _empty_eps_dataframe()
+
+        metric_label = metric_label.loc[filtered.index]
+        report_date = pd.to_datetime(filtered["date"], errors="coerce")
+        valid_report_dates = report_date.dropna()
+        if valid_report_dates.empty:
+            report_date = pd.Series(pd.NaT, index=filtered.index, dtype=f"datetime64[ns, {TAIPEI_TZ}]")
+        elif valid_report_dates.dt.tz is None:
+            report_date = report_date.dt.tz_localize(TAIPEI_TZ)
+        else:
+            report_date = report_date.dt.tz_convert(TAIPEI_TZ)
+
+        year = pd.to_numeric(filtered["year"], errors="coerce")
+        year = year.where(~year.isna(), pd.to_numeric(filtered["fiscal_year"], errors="coerce"))
+        year = year.where(~year.isna(), report_date.dt.year if hasattr(report_date, "dt") else pd.Series(dtype="float64"))
+
+        quarter_raw = filtered[["quarter", "season", "fiscal_quarter"]].bfill(axis=1).iloc[:, 0]
+        quarter = quarter_raw.map(_parse_quarter_value)
+        if hasattr(report_date, "dt"):
+            quarter_from_date = ((report_date.dt.month - 1) // 3 + 1).astype("float64")
+            quarter = quarter.where(~quarter.isna(), quarter_from_date)
+
+        eps = pd.to_numeric(filtered["value"], errors="coerce")
+        eps = eps.where(~eps.isna(), pd.to_numeric(filtered["eps"], errors="coerce"))
+        eps = eps.where(~eps.isna(), pd.to_numeric(filtered["EPS"], errors="coerce"))
+
+        normalized = pd.DataFrame(
+            {
+                "year": year,
+                "quarter": quarter,
+                "eps": eps,
+                "symbol": filtered["stock_id"].fillna(symbol).astype(str),
+                "report_date": report_date,
+                "priority": metric_label.map(_eps_metric_priority),
+            }
+        )
+        normalized = normalized.dropna(subset=["year", "quarter", "eps"]).copy()
+        if normalized.empty:
+            return _empty_eps_dataframe()
+
+        normalized["year"] = normalized["year"].astype("int64")
+        normalized["quarter"] = normalized["quarter"].astype("int64")
+        normalized = normalized[normalized["quarter"].between(1, 4)].copy()
+        if normalized.empty:
+            return _empty_eps_dataframe()
+
+        normalized["eps"] = normalized["eps"].astype("float64")
+        normalized = normalized.sort_values(
+            ["year", "quarter", "priority", "report_date"],
+            ascending=[True, True, True, False],
+        )
+        normalized = normalized.drop_duplicates(subset=["year", "quarter", "symbol"], keep="first")
+        normalized = normalized.sort_values(["year", "quarter"]).reset_index(drop=True)
+        return normalized[["year", "quarter", "eps", "symbol", "report_date"]]
+
+
+def _parse_quarter_value(value: Any) -> float:
+    if pd.isna(value):
+        return float("nan")
+    text = str(value).strip().upper()
+    if not text:
+        return float("nan")
+    if text.startswith("Q") and text[1:].isdigit():
+        return float(int(text[1:]))
+    if text.endswith("Q") and text[:-1].isdigit():
+        return float(int(text[:-1]))
+    if text.isdigit():
+        return float(int(text))
+    if "第一季" in text:
+        return 1.0
+    if "第二季" in text:
+        return 2.0
+    if "第三季" in text:
+        return 3.0
+    if "第四季" in text:
+        return 4.0
+    return float("nan")
+
+
+def _eps_metric_priority(label: str) -> int:
+    label_text = str(label or "")
+    name = label_text.upper()
+    if "基本每股盈餘" in label_text or "BASIC EPS" in name or "BASICEPS" in name:
+        return 0
+    if "稀釋" in label_text or "DILUTED" in name:
+        return 2
+    return 1
 
 
 class YFinanceFetcher(IDataFetcher):
