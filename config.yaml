@@ -2,25 +2,35 @@ system:
   data_dir: ./data
   log_level: INFO
   timezone: Asia/Taipei
-
 backtest:
-  initial_capital: 1000000
+  initial_capital: 1000000.0
   commission_rate: 0.001425
   commission_discount: 0.6
   tax_rate: 0.003
   etf_tax_rate: 0.001
   slippage_ticks: 1
-
 risk:
   max_daily_loss_pct: 0.03
-  max_position_pct: 0.20
-  max_drawdown_warning_pct: 0.10
-
+  max_position_pct: 0.2
+  max_drawdown_warning_pct: 0.1
 data:
   primary_source: finmind
   fallback_source: yfinance
-
 ai:
   enabled: false
   provider: anthropic
   model: claude-haiku-4-5-20251001
+strategies:
+- name: MA20_MA60
+  type: moving_average_cross
+  params:
+    short_window: 20
+    long_window: 60
+- name: 定期定額
+  type: dollar_cost_averaging
+  params:
+    monthly_day: 15
+    monthly_amount: 10000.0
+    min_buy_unit: 1
+    non_trading_day_policy: next_trading_day
+    buy_price_field: close

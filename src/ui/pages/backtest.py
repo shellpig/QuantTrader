@@ -16,8 +16,11 @@ except ModuleNotFoundError:  # pragma: no cover - optional in some runtime envir
 from src.backtest.engine_event import EventDrivenBacktester
 from src.backtest.engine_vec import VectorizedBacktester
 from src.backtest.report import TearsheetReport
+from src.backtest.dca import DcaBacktestResult, run_dca_backtest
+from src.core.config import get_config
 from src.core.constants import TAIPEI_TZ
 from src.core.exceptions import FetcherError
+from src.core.strategy_config import get_strategy_presets, make_strategy_label
 from src.data.fetcher import FinMindFetcher
 from src.data.storage import ParquetStorage
 from src.strategy.examples.ma_cross import MACrossStrategy
@@ -45,12 +48,29 @@ def render() -> None:
         engine_name = st.selectbox("回測引擎", options=[_VECTOR_ENGINE_LABEL, _EVENT_ENGINE_LABEL], index=0)
         end_date = st.date_input("結束日期", value=today)
 
-    strategy_name = st.selectbox("策略", options=["MA Cross"], index=0)
-    s1, s2 = st.columns(2)
-    with s1:
-        ma_short = int(st.number_input("短均線期間", min_value=2, max_value=120, value=20, step=1))
-    with s2:
-        ma_long = int(st.number_input("長均線期間", min_value=3, max_value=240, value=60, step=1))
+    strategy_presets = get_strategy_presets(get_config())
+    strategy_labels = [make_strategy_label(preset) for preset in strategy_presets]
+    strategy_label = st.selectbox("策略", options=strategy_labels, index=0)
+    selected_strategy = strategy_presets[strategy_labels.index(strategy_label)]
+    selected_type = str(selected_strategy.get("type", "")).strip().lower()
+    selected_params = selected_strategy.get("params", {}) if isinstance(selected_strategy.get("params"), dict) else {}
+
+    if selected_type == "moving_average_cross":
+        st.caption(
+            f"策略參數：short_window={int(selected_params.get('short_window', 20))}, "
+            f"long_window={int(selected_params.get('long_window', 60))}"
+        )
+    elif selected_type == "dollar_cost_averaging":
+        st.caption(
+            "策略參數："
+            f"monthly_day={int(selected_params.get('monthly_day', 5))}, "
+            f"monthly_amount={float(selected_params.get('monthly_amount', 10_000)):.0f}, "
+            f"min_buy_unit={int(selected_params.get('min_buy_unit', 1))}, "
+            f"non_trading_day_policy={str(selected_params.get('non_trading_day_policy', 'next_trading_day'))}, "
+            f"buy_price_field={str(selected_params.get('buy_price_field', 'close'))}"
+        )
+    else:
+        st.warning(f"此策略類型目前未支援執行：{selected_type}")
 
     if st.button("開始回測", type="primary"):
         _run_backtest(
@@ -58,9 +78,7 @@ def render() -> None:
             start_date=pd.Timestamp(start_date),
             end_date=pd.Timestamp(end_date),
             engine_name=engine_name,
-            strategy_name=strategy_name,
-            ma_short=ma_short,
-            ma_long=ma_long,
+            strategy_preset=selected_strategy,
         )
 
 
@@ -70,9 +88,7 @@ def _run_backtest(
     start_date: pd.Timestamp,
     end_date: pd.Timestamp,
     engine_name: str,
-    strategy_name: str,
-    ma_short: int,
-    ma_long: int,
+    strategy_preset: dict[str, object],
 ) -> None:
     if not _TW_SYMBOL_PATTERN.fullmatch(symbol):
         st.error("股票代碼格式錯誤，請輸入 4 到 6 碼台股代碼。")
@@ -83,9 +99,6 @@ def _run_backtest(
     if end_exclusive <= start_ts:
         st.error("結束日期必須晚於開始日期。")
         return
-    if ma_short >= ma_long:
-        st.error("短均線期間必須小於長均線期間。")
-        return
 
     try:
         data = _load_backtest_data(symbol=symbol, start_ts=start_ts, end_exclusive=end_exclusive)
@@ -93,40 +106,146 @@ def _run_backtest(
         st.error(f"讀取資料失敗：{exc}")
         return
 
-    if data.empty:
+    strategy_type = str(strategy_preset.get("type", "")).strip().lower()
+    strategy_params = strategy_preset.get("params", {}) if isinstance(strategy_preset.get("params"), dict) else {}
+
+    if data.empty and strategy_type != "dollar_cost_averaging":
         st.warning("資料區間內沒有可用日線資料。")
         return
 
-    if strategy_name != "MA Cross":
-        st.error(f"目前不支援策略：{strategy_name}")
-        return
-
     try:
-        strategy = MACrossStrategy(ma_short=ma_short, ma_long=ma_long)
-        engine = VectorizedBacktester() if engine_name == _VECTOR_ENGINE_LABEL else EventDrivenBacktester()
-        result = engine.run(strategy=strategy, data=data)
+        if strategy_type == "moving_average_cross":
+            ma_short = int(strategy_params.get("short_window", 20))
+            ma_long = int(strategy_params.get("long_window", 60))
+            if ma_short >= ma_long:
+                st.error("策略參數錯誤：short_window 必須小於 long_window。")
+                return
 
-        report = TearsheetReport(result)
-        figures = report.get_streamlit_figures()
+            strategy = MACrossStrategy(ma_short=ma_short, ma_long=ma_long)
+            engine = VectorizedBacktester() if engine_name == _VECTOR_ENGINE_LABEL else EventDrivenBacktester()
+            result = engine.run(strategy=strategy, data=data)
 
-        m0, m1, m2, m3, m4 = st.columns(5)
-        m0.metric("交易次數", f"{int(result.total_trades)}")
-        m1.metric("總報酬率", f"{result.total_return * 100:.2f}%")
-        m2.metric("年化報酬率", f"{result.annual_return * 100:.2f}%")
-        m3.metric("最大回撤", f"{result.max_drawdown * 100:.2f}%")
-        m4.metric("Sharpe", f"{result.sharpe_ratio:.2f}")
+            report = TearsheetReport(result)
+            figures = report.get_streamlit_figures()
 
-        st.plotly_chart(figures["equity"], use_container_width=True)
-        st.plotly_chart(figures["drawdown"], use_container_width=True)
-        st.plotly_chart(figures["monthly"], use_container_width=True)
-        st.plotly_chart(figures["summary"], use_container_width=True)
+            m0, m1, m2, m3, m4 = st.columns(5)
+            m0.metric("交易次數", f"{int(result.total_trades)}")
+            m1.metric("總報酬率", f"{result.total_return * 100:.2f}%")
+            m2.metric("年化報酬率", f"{result.annual_return * 100:.2f}%")
+            m3.metric("最大回撤", f"{result.max_drawdown * 100:.2f}%")
+            m4.metric("Sharpe", f"{result.sharpe_ratio:.2f}")
 
-        st.divider()
-        _render_price_panel(price_df=data, trades=result.trades, symbol=symbol)
-        st.divider()
-        _render_eps_panel(symbol=symbol, end_ts=end_exclusive - pd.Timedelta(days=1))
+            st.plotly_chart(figures["equity"], use_container_width=True)
+            st.plotly_chart(figures["drawdown"], use_container_width=True)
+            st.plotly_chart(figures["monthly"], use_container_width=True)
+            st.plotly_chart(figures["summary"], use_container_width=True)
+
+            st.divider()
+            _render_price_panel(price_df=data, trades=result.trades, symbol=symbol)
+            st.divider()
+            _render_eps_panel(symbol=symbol, end_ts=end_exclusive - pd.Timedelta(days=1))
+            return
+
+        if strategy_type == "dollar_cost_averaging":
+            if engine_name != _VECTOR_ENGINE_LABEL:
+                st.info("定期定額策略使用專用回測流程，已忽略回測引擎選擇。")
+
+            dca_result = run_dca_backtest(
+                data=data,
+                symbol=symbol,
+                start_ts=start_ts,
+                end_exclusive=end_exclusive,
+                params=strategy_params,
+            )
+            _render_dca_summary(dca_result)
+            _render_dca_transactions(dca_result.transactions)
+
+            trade_markers = _dca_transactions_to_trade_markers(dca_result.transactions)
+            st.divider()
+            _render_price_panel(price_df=data, trades=trade_markers, symbol=symbol)
+            st.divider()
+            _render_eps_panel(symbol=symbol, end_ts=end_exclusive - pd.Timedelta(days=1))
+            return
+
+        st.error(f"目前不支援策略類型：{strategy_type}")
     except Exception as exc:  # noqa: BLE001
         st.error(f"回測執行失敗：{exc}")
+
+
+def _render_dca_summary(result: DcaBacktestResult) -> None:
+    st.subheader("定期定額回測摘要")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("累積投入金額", f"{result.cumulative_invested:,.2f}")
+    c2.metric("目前市值", f"{result.market_value:,.2f}")
+    c3.metric("帳戶現金", f"{result.cash_balance:,.2f}")
+    c4.metric("未實現損益", f"{result.unrealized_pnl:,.2f}")
+
+    c5, c6, c7, c8 = st.columns(4)
+    c5.metric("總報酬率", f"{result.total_return_rate * 100:.2f}%")
+    c6.metric("累積買入股數", f"{result.cumulative_shares:,}")
+    c7.metric("平均成本", f"{result.average_cost:,.4f}")
+    c8.metric("投入次數", f"{result.contribution_count}")
+
+
+def _render_dca_transactions(transactions: pd.DataFrame) -> None:
+    st.subheader("定期定額交易紀錄")
+    if transactions is None or transactions.empty:
+        st.info("尚無定期定額交易紀錄。")
+        return
+
+    reason_labels = {
+        "": "",
+        "NO_TRADING_DATES": "無交易日資料",
+        "NO_TRADING_DAY_UNTIL_MONTH_END": "指定日後至月底無交易日",
+        "NO_TRADING_DAY_AFTER_MONTH_END": "月底後無可順延交易日",
+        "BUY_DATE_PRICE_MISSING": "買入日價格缺失",
+        "INVALID_BUY_PRICE": "買入價無效",
+        "INSUFFICIENT_FOR_MIN_BUY_UNIT": "投入金額不足買入最小單位",
+    }
+
+    view = transactions.copy()
+    view["date"] = pd.to_datetime(view["date"], errors="coerce")
+    view["reason"] = view["reason"].map(lambda v: reason_labels.get(str(v), str(v)))
+    view["status"] = view["status"].map(lambda v: "成功" if str(v).upper() == "FILLED" else "略過")
+
+    display = pd.DataFrame(
+        {
+            "日期": view["date"].dt.strftime("%Y-%m-%d"),
+            "狀態": view["status"],
+            "原因": view["reason"],
+            "投入金額": view["invested_amount"],
+            "買入價格": view["buy_price"],
+            "買入股數": view["buy_shares"],
+            "手續費": view["commission"],
+            "實際花費": view["spend"],
+            "剩餘現金": view["cash_balance"],
+            "累積股數": view["cumulative_shares"],
+            "累積投入": view["cumulative_invested"],
+            "平均成本": view["average_cost"],
+        }
+    )
+    st.dataframe(display, use_container_width=True, hide_index=True)
+
+
+def _dca_transactions_to_trade_markers(transactions: pd.DataFrame) -> pd.DataFrame:
+    if transactions is None or transactions.empty:
+        return pd.DataFrame(columns=["entry_date", "entry_price", "quantity", "exit_date", "exit_price"])
+
+    filled = transactions.copy()
+    filled["status"] = filled["status"].astype(str).str.upper()
+    filled = filled[(filled["status"] == "FILLED") & (pd.to_numeric(filled["buy_shares"], errors="coerce") > 0)].copy()
+    if filled.empty:
+        return pd.DataFrame(columns=["entry_date", "entry_price", "quantity", "exit_date", "exit_price"])
+
+    return pd.DataFrame(
+        {
+            "entry_date": pd.to_datetime(filled["date"], errors="coerce"),
+            "entry_price": pd.to_numeric(filled["buy_price"], errors="coerce"),
+            "quantity": pd.to_numeric(filled["buy_shares"], errors="coerce"),
+            "exit_date": pd.NaT,
+            "exit_price": float("nan"),
+        }
+    )
 
 
 def _load_backtest_data(*, symbol: str, start_ts: pd.Timestamp, end_exclusive: pd.Timestamp) -> pd.DataFrame:

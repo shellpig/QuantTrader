@@ -6,6 +6,7 @@ from src.core.constants import TAIPEI_TZ
 from src.ui.pages.backtest import (
     _build_eps_display_table,
     _build_price_features,
+    _dca_transactions_to_trade_markers,
     _extract_trade_markers,
     _nearest_trading_indices,
 )
@@ -79,3 +80,21 @@ def test_extract_trade_markers_preserves_quantity() -> None:
 
     assert buy_marks.iloc[0]["quantity"] == 3000
     assert sell_marks.iloc[0]["quantity"] == 3000
+
+
+def test_dca_transactions_to_trade_markers_only_keeps_filled_rows() -> None:
+    tx = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2026-02-05", "2026-03-05"], utc=True),
+            "status": ["FILLED", "SKIPPED"],
+            "buy_price": [100.0, 101.0],
+            "buy_shares": [10, 0],
+        }
+    )
+
+    trades = _dca_transactions_to_trade_markers(tx)
+    buy_marks, sell_marks = _extract_trade_markers(trades=trades)
+
+    assert len(buy_marks) == 1
+    assert buy_marks.iloc[0]["quantity"] == 10
+    assert sell_marks.empty
