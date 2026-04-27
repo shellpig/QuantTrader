@@ -24,6 +24,17 @@ def _make_daily_df(symbol: str, start: str, periods: int, close_base: float = 10
     return df[STANDARD_COLUMNS]
 
 
+def _make_splits_df(symbol: str) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2025-06-18", "2026-01-01"]).tz_localize(TAIPEI_TZ),
+            "before_price": [188.65, 120.0],
+            "after_price": [47.16, 60.0],
+            "symbol": [symbol, symbol],
+        }
+    )
+
+
 def test_save_and_load_daily_roundtrip(tmp_path) -> None:
     storage = ParquetStorage(data_dir=tmp_path)
     source = _make_daily_df(symbol="2330", start="2025-01-01", periods=5)
@@ -57,6 +68,17 @@ def test_load_nonexistent_returns_empty(tmp_path) -> None:
 
     assert loaded.empty
     assert loaded.columns.tolist() == STANDARD_COLUMNS
+
+
+def test_save_and_load_splits_roundtrip(tmp_path) -> None:
+    storage = ParquetStorage(data_dir=tmp_path)
+    source = _make_splits_df(symbol="0050")
+
+    storage.save_splits("0050", source)
+    loaded = storage.load_splits("0050")
+
+    expected = source.sort_values("date").reset_index(drop=True)
+    pd.testing.assert_frame_equal(loaded, expected)
 
 
 @pytest.mark.parametrize(

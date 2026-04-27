@@ -101,7 +101,12 @@ def _run_backtest(
         return
 
     try:
-        data = _load_backtest_data(symbol=symbol, start_ts=start_ts, end_exclusive=end_exclusive)
+        data = _load_backtest_data(
+            symbol=symbol,
+            start_ts=start_ts,
+            end_exclusive=end_exclusive,
+            require_adjusted=True,
+        )
     except Exception as exc:  # noqa: BLE001
         st.error(f"讀取資料失敗：{exc}")
         return
@@ -248,9 +253,19 @@ def _dca_transactions_to_trade_markers(transactions: pd.DataFrame) -> pd.DataFra
     )
 
 
-def _load_backtest_data(*, symbol: str, start_ts: pd.Timestamp, end_exclusive: pd.Timestamp) -> pd.DataFrame:
+def _load_backtest_data(
+    *,
+    symbol: str,
+    start_ts: pd.Timestamp,
+    end_exclusive: pd.Timestamp,
+    require_adjusted: bool = True,
+) -> pd.DataFrame:
     storage = ParquetStorage()
     df = storage.load_adjusted(symbol)
+    if df.empty and require_adjusted:
+        raise FetcherError(
+            f"{symbol} adjusted data is missing. Please run rebuild_adj_factors (or rebuild_symbol) before backtest."
+        )
     if df.empty:
         df = storage.load_daily(symbol)
     if df.empty:

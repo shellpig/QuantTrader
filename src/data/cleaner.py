@@ -152,7 +152,11 @@ class DataCleaner:
         return out, stats
 
 
-def compute_adjustment_factors(daily_df: pd.DataFrame, dividends_df: pd.DataFrame) -> pd.DataFrame:
+def compute_adjustment_factors(
+    daily_df: pd.DataFrame,
+    dividends_df: pd.DataFrame,
+    splits_df: pd.DataFrame | None = None,
+) -> pd.DataFrame:
     """
     Compute forward-adjustment factors for daily bars.
 
@@ -174,53 +178,79 @@ def compute_adjustment_factors(daily_df: pd.DataFrame, dividends_df: pd.DataFram
     if daily.empty:
         return daily
 
-    if dividends_df is None or dividends_df.empty:
-        return daily
-
-    divs = dividends_df.copy(deep=True)
-    if "date" not in divs.columns:
-        return daily
-
-    for col in ("cash_dividend", "stock_dividend"):
-        if col not in divs.columns:
-            divs[col] = 0.0
-
-    divs["date"] = pd.to_datetime(divs["date"], errors="coerce")
-    divs = divs.dropna(subset=["date"]).copy()
-    if divs.empty:
-        return daily
-
-    divs["cash_dividend"] = pd.to_numeric(divs["cash_dividend"], errors="coerce").fillna(0.0)
-    divs["stock_dividend"] = pd.to_numeric(divs["stock_dividend"], errors="coerce").fillna(0.0)
-    divs["date_key"] = divs["date"].dt.strftime("%Y-%m-%d")
-    grouped = divs.groupby("date_key", as_index=False)[["cash_dividend", "stock_dividend"]].sum()
-
     daily_close = pd.to_numeric(daily["close"], errors="coerce")
     daily["close"] = daily_close
     daily["date_key"] = daily["date"].dt.strftime("%Y-%m-%d")
     date_to_index = {key: idx for idx, key in enumerate(daily["date_key"].tolist())}
 
     event_factor_by_idx: dict[int, float] = {}
-    for _, row in grouped.iterrows():
-        date_key = str(row["date_key"])
-        idx = date_to_index.get(date_key)
-        if idx is None or idx <= 0:
-            continue
 
-        prev_close = daily.loc[idx - 1, "close"]
-        if pd.isna(prev_close) or float(prev_close) <= 0:
-            continue
+    if dividends_df is not None and not dividends_df.empty:
+        divs = dividends_df.copy(deep=True)
+        if "date" in divs.columns:
+            for col in ("cash_dividend", "stock_dividend"):
+                if col not in divs.columns:
+                    divs[col] = 0.0
 
-        cash_dividend = float(row["cash_dividend"])
-        stock_dividend = float(row["stock_dividend"])
+            divs["date"] = pd.to_datetime(divs["date"], errors="coerce")
+            divs = divs.dropna(subset=["date"]).copy()
+            if not divs.empty:
+                divs["cash_dividend"] = pd.to_numeric(divs["cash_dividend"], errors="coerce").fillna(0.0)
+                divs["stock_dividend"] = pd.to_numeric(divs["stock_dividend"], errors="coerce").fillna(0.0)
+                divs["date_key"] = divs["date"].dt.strftime("%Y-%m-%d")
+                grouped = divs.groupby("date_key", as_index=False)[["cash_dividend", "stock_dividend"]].sum()
+                for _, row in grouped.iterrows():
+                    date_key = str(row["date_key"])
+                    idx = date_to_index.get(date_key)
+                    if idx is None or idx <= 0:
+                        continue
 
-        factor = 1.0 - (cash_dividend / float(prev_close))
-        if stock_dividend > 0:
-            factor *= 1.0 / (1.0 + (stock_dividend / 10.0))
-        if factor <= 0:
-            continue
+                    prev_close = daily.loc[idx - 1, "close"]
+                    if pd.isna(prev_close) or float(prev_close) <= 0:
+                        continue
 
-        event_factor_by_idx[idx] = event_factor_by_idx.get(idx, 1.0) * factor
+                    cash_dividend = float(row["cash_dividend"])
+                    stock_dividend = float(row["stock_dividend"])
+
+                    factor = 1.0 - (cash_dividend / float(prev_close))
+                    if stock_dividend > 0:
+                        factor *= 1.0 / (1.0 + (stock_dividend / 10.0))
+                    if factor <= 0:
+                        continue
+
+                    event_factor_by_idx[idx] = event_factor_by_idx.get(idx, 1.0) * factor
+
+    if splits_df is not None and not splits_df.empty:
+        splits = splits_df.copy(deep=True)
+        if "date" in splits.columns:
+            for col in ("before_price", "after_price"):
+                if col not in splits.columns:
+                    splits[col] = pd.NA
+
+            splits["date"] = pd.to_datetime(splits["date"], errors="coerce")
+            splits = splits.dropna(subset=["date"]).copy()
+            if not splits.empty:
+                splits["before_price"] = pd.to_numeric(splits["before_price"], errors="coerce")
+                splits["after_price"] = pd.to_numeric(splits["after_price"], errors="coerce")
+                splits = splits[
+                    splits["before_price"].notna()
+                    & splits["after_price"].notna()
+                    & (splits["before_price"] > 0)
+                    & (splits["after_price"] > 0)
+                ].copy()
+                if not splits.empty:
+                    splits["split_factor"] = splits["after_price"] / splits["before_price"]
+                    splits["date_key"] = splits["date"].dt.strftime("%Y-%m-%d")
+                    split_grouped = splits.groupby("date_key", as_index=False)["split_factor"].prod()
+                    for _, row in split_grouped.iterrows():
+                        date_key = str(row["date_key"])
+                        idx = date_to_index.get(date_key)
+                        if idx is None:
+                            continue
+                        split_factor = float(row["split_factor"])
+                        if split_factor <= 0:
+                            continue
+                        event_factor_by_idx[idx] = event_factor_by_idx.get(idx, 1.0) * split_factor
 
     cumulative = 1.0
     factors = [1.0] * len(daily)
@@ -234,7 +264,12 @@ def compute_adjustment_factors(daily_df: pd.DataFrame, dividends_df: pd.DataFram
     return daily
 
 
-def adjust_prices(df: pd.DataFrame, dividends: pd.DataFrame, method: str = "forward") -> pd.DataFrame:
+def adjust_prices(
+    df: pd.DataFrame,
+    dividends: pd.DataFrame,
+    splits: pd.DataFrame | None = None,
+    method: str = "forward",
+) -> pd.DataFrame:
     """
     Apply dividend adjustment to OHLC prices.
 
@@ -247,7 +282,7 @@ def adjust_prices(df: pd.DataFrame, dividends: pd.DataFrame, method: str = "forw
     if method != "forward":
         raise ValueError("method must be 'forward' or 'raw'")
 
-    adjusted = compute_adjustment_factors(df, dividends)
+    adjusted = compute_adjustment_factors(df, dividends, splits)
     out = adjusted.copy(deep=True)
     for col in ("open", "high", "low", "close"):
         if col in out.columns:

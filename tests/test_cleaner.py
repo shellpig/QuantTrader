@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pandas as pd
 import pandas.testing as pdt
+import pytest
 
 from src.data.cleaner import DataCleaner, adjust_prices, compute_adjustment_factors
 
@@ -177,3 +178,68 @@ def test_raw_method_returns_unchanged() -> None:
 
     out = adjust_prices(daily, divs, method="raw")
     pdt.assert_frame_equal(out, daily)
+
+
+def test_compute_adj_factor_with_split_only() -> None:
+    daily = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2025-06-17", "2025-06-18", "2025-06-19"]),
+            "open": [188.65, 47.16, 47.5],
+            "high": [189.0, 48.0, 48.0],
+            "low": [188.0, 46.5, 47.0],
+            "close": [188.65, 47.16, 47.8],
+            "volume": [1000, 1000, 1000],
+            "symbol": ["0050", "0050", "0050"],
+        }
+    )
+    splits = pd.DataFrame(
+        {
+            "date": [pd.Timestamp("2025-06-18")],
+            "before_price": [188.65],
+            "after_price": [47.16],
+            "symbol": ["0050"],
+        }
+    )
+
+    adjusted = adjust_prices(daily, dividends=pd.DataFrame(), splits=splits, method="forward")
+
+    pre_close = adjusted.loc[adjusted["date"] == pd.Timestamp("2025-06-17"), "close"].iloc[0]
+    ex_close = adjusted.loc[adjusted["date"] == pd.Timestamp("2025-06-18"), "close"].iloc[0]
+    assert pre_close == pytest.approx(ex_close, abs=0.01)
+
+
+def test_compute_adj_factor_with_split_and_dividend_same_day() -> None:
+    daily = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2025-06-17", "2025-06-18", "2025-06-19"]),
+            "open": [188.65, 47.16, 47.5],
+            "high": [189.0, 48.0, 48.0],
+            "low": [188.0, 46.5, 47.0],
+            "close": [188.65, 47.16, 47.8],
+            "volume": [1000, 1000, 1000],
+            "symbol": ["0050", "0050", "0050"],
+        }
+    )
+    splits = pd.DataFrame(
+        {
+            "date": [pd.Timestamp("2025-06-18")],
+            "before_price": [188.65],
+            "after_price": [47.16],
+            "symbol": ["0050"],
+        }
+    )
+    dividends = pd.DataFrame(
+        {
+            "date": [pd.Timestamp("2025-06-18")],
+            "cash_dividend": [0.36],
+            "stock_dividend": [0.0],
+            "symbol": ["0050"],
+        }
+    )
+
+    adjusted = adjust_prices(daily, dividends=dividends, splits=splits, method="forward")
+
+    expected_factor = (47.16 / 188.65) * (1.0 - 0.36 / 188.65)
+    expected_pre_close = 188.65 * expected_factor
+    pre_close = adjusted.loc[adjusted["date"] == pd.Timestamp("2025-06-17"), "close"].iloc[0]
+    assert pre_close == pytest.approx(expected_pre_close, rel=1e-6)

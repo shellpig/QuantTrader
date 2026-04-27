@@ -12,7 +12,7 @@ import requests
 import yfinance as yf
 
 from src.core.config import get_config
-from src.core.constants import STANDARD_COLUMNS, TAIPEI_TZ
+from src.core.constants import SPLITS_COLUMNS, STANDARD_COLUMNS, TAIPEI_TZ
 from src.core.exceptions import FetcherError
 
 
@@ -39,6 +39,17 @@ def _empty_dividends_dataframe() -> pd.DataFrame:
             "symbol": pd.Series(dtype="object"),
         }
     )[["date", "cash_dividend", "stock_dividend", "symbol"]]
+
+
+def _empty_splits_dataframe() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "date": pd.Series(dtype=f"datetime64[ns, {TAIPEI_TZ}]"),
+            "before_price": pd.Series(dtype="float64"),
+            "after_price": pd.Series(dtype="float64"),
+            "symbol": pd.Series(dtype="object"),
+        }
+    )[SPLITS_COLUMNS]
 
 
 def _empty_eps_dataframe() -> pd.DataFrame:
@@ -221,6 +232,25 @@ class FinMindFetcher(IDataFetcher):
         )
         return self._normalize_eps(raw, symbol=symbol)
 
+    def fetch_splits(self, symbol: str, start_date: str = "2000-01-01") -> pd.DataFrame:
+        """
+        Fetch Taiwan stock split events from FinMind.
+
+        Returns columns:
+        - date: split trading date (tz-aware Asia/Taipei)
+        - before_price: theoretical pre-split reference price
+        - after_price: post-split reference/opening price
+        - symbol: stock id
+        """
+        raw = self._request_data(
+            {
+                "dataset": "TaiwanStockSplitPrice",
+                "data_id": symbol,
+                "start_date": start_date,
+            }
+        )
+        return self._normalize_splits(raw, symbol=symbol)
+
     def _request_data(self, params: dict[str, Any]) -> pd.DataFrame:
         headers = {"Authorization": f"Bearer {self._token}"}
         last_error: Exception | None = None
@@ -387,6 +417,41 @@ class FinMindFetcher(IDataFetcher):
         normalized = normalized.drop_duplicates(subset=["year", "quarter", "symbol"], keep="first")
         normalized = normalized.sort_values(["year", "quarter"]).reset_index(drop=True)
         return normalized[["year", "quarter", "eps", "symbol", "report_date"]]
+
+    def _normalize_splits(self, raw: pd.DataFrame, symbol: str) -> pd.DataFrame:
+        if raw.empty:
+            return _empty_splits_dataframe()
+
+        out = raw.copy()
+        for col in ("date", "before_price", "after_price", "stock_id"):
+            if col not in out.columns:
+                out[col] = pd.NA
+
+        normalized = pd.DataFrame(
+            {
+                "date": out["date"],
+                "before_price": pd.to_numeric(out["before_price"], errors="coerce"),
+                "after_price": pd.to_numeric(out["after_price"], errors="coerce"),
+                "symbol": out["stock_id"].fillna(symbol).astype(str),
+            }
+        )
+        normalized["date"] = pd.to_datetime(normalized["date"], errors="coerce")
+        normalized = normalized.dropna(subset=["date", "before_price", "after_price"]).copy()
+        if normalized.empty:
+            return _empty_splits_dataframe()
+
+        normalized = normalized[
+            (normalized["before_price"] > 0) & (normalized["after_price"] > 0)
+        ].copy()
+        if normalized.empty:
+            return _empty_splits_dataframe()
+
+        normalized = localize_to_taipei(normalized, col="date")
+        normalized["before_price"] = normalized["before_price"].astype("float64")
+        normalized["after_price"] = normalized["after_price"].astype("float64")
+        normalized = normalized[SPLITS_COLUMNS]
+        normalized = normalized.sort_values("date").drop_duplicates(subset=["date", "symbol"], keep="last").reset_index(drop=True)
+        return normalized
 
 
 def _parse_quarter_value(value: Any) -> float:

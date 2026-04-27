@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from src.core.constants import TAIPEI_TZ
+from src.core.exceptions import FetcherError
 from src.ui.pages.backtest import (
     _build_eps_display_table,
     _build_price_features,
     _dca_transactions_to_trade_markers,
     _extract_trade_markers,
+    _load_backtest_data,
     _nearest_trading_indices,
 )
 
@@ -98,3 +101,54 @@ def test_dca_transactions_to_trade_markers_only_keeps_filled_rows() -> None:
     assert len(buy_marks) == 1
     assert buy_marks.iloc[0]["quantity"] == 10
     assert sell_marks.empty
+
+
+def test_load_backtest_data_raises_when_adjusted_missing(monkeypatch) -> None:
+    class StubStorage:
+        def load_adjusted(self, symbol: str) -> pd.DataFrame:  # noqa: ARG002
+            return pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume", "symbol"])
+
+        def load_daily(self, symbol: str) -> pd.DataFrame:  # noqa: ARG002
+            return pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume", "symbol"])
+
+    monkeypatch.setattr("src.ui.pages.backtest.ParquetStorage", lambda: StubStorage())
+
+    with pytest.raises(FetcherError, match="adjusted data is missing"):
+        _load_backtest_data(
+            symbol="0050",
+            start_ts=pd.Timestamp("2025-01-01", tz=TAIPEI_TZ),
+            end_exclusive=pd.Timestamp("2025-12-31", tz=TAIPEI_TZ),
+            require_adjusted=True,
+        )
+
+
+def test_load_backtest_data_allows_daily_fallback_when_disabled(monkeypatch) -> None:
+    daily = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2025-01-02", "2025-01-03"]).tz_localize(TAIPEI_TZ),
+            "open": [100.0, 101.0],
+            "high": [101.0, 102.0],
+            "low": [99.0, 100.0],
+            "close": [100.5, 101.5],
+            "volume": [1000, 1000],
+            "symbol": ["0050", "0050"],
+        }
+    )
+
+    class StubStorage:
+        def load_adjusted(self, symbol: str) -> pd.DataFrame:  # noqa: ARG002
+            return pd.DataFrame(columns=daily.columns)
+
+        def load_daily(self, symbol: str) -> pd.DataFrame:  # noqa: ARG002
+            return daily.copy(deep=True)
+
+    monkeypatch.setattr("src.ui.pages.backtest.ParquetStorage", lambda: StubStorage())
+
+    out = _load_backtest_data(
+        symbol="0050",
+        start_ts=pd.Timestamp("2025-01-01", tz=TAIPEI_TZ),
+        end_exclusive=pd.Timestamp("2025-01-10", tz=TAIPEI_TZ),
+        require_adjusted=False,
+    )
+
+    assert len(out) == 2

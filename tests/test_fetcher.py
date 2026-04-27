@@ -112,6 +112,39 @@ def test_finmind_fetch_eps_normalization_prefers_basic_eps() -> None:
     assert TAIPEI_TZ in str(eps_df["report_date"].dtype)
 
 
+def test_finmind_fetch_splits_normalizes_schema() -> None:
+    class DummyResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "data": [
+                    {
+                        "date": "2025-06-18",
+                        "before_price": "188.65",
+                        "after_price": "47.16",
+                        "stock_id": "0050",
+                        "open_price": "47.16",
+                    }
+                ]
+            }
+
+    class DummySession:
+        def get(self, *args, **kwargs) -> DummyResponse:  # noqa: ANN002, ANN003
+            return DummyResponse()
+
+    fetcher = FinMindFetcher(token="dummy-token", session=DummySession())
+    split_df = fetcher.fetch_splits(symbol="0050", start_date="2025-01-01")
+
+    assert split_df.columns.tolist() == ["date", "before_price", "after_price", "symbol"]
+    assert len(split_df) == 1
+    assert split_df.loc[0, "symbol"] == "0050"
+    assert split_df.loc[0, "before_price"] == pytest.approx(188.65)
+    assert split_df.loc[0, "after_price"] == pytest.approx(47.16)
+    assert str(split_df["date"].dtype) == f"datetime64[ns, {TAIPEI_TZ}]"
+
+
 @pytest.mark.integration
 def test_finmind_daily_2330() -> None:
     token = _resolve_finmind_token()

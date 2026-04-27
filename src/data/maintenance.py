@@ -22,6 +22,17 @@ def _empty_dividends() -> pd.DataFrame:
     )
 
 
+def _empty_splits() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "date": pd.Series(dtype="datetime64[ns]"),
+            "before_price": pd.Series(dtype="float64"),
+            "after_price": pd.Series(dtype="float64"),
+            "symbol": pd.Series(dtype="object"),
+        }
+    )
+
+
 class DataMaintenance:
     """
     Data maintenance operations.
@@ -55,11 +66,8 @@ class DataMaintenance:
         today = datetime.now().strftime("%Y-%m-%d")
         raw_df = self.fetcher.fetch_daily(symbol=symbol, start="2000-01-01", end=today)
         cleaned_df, report = self.cleaner.clean(raw_df, symbol=symbol)
-        dividends = self._fetch_dividends(symbol)
-        adjusted_df = adjust_prices(cleaned_df, dividends, method="forward")
-
         self.storage.save_daily(symbol, cleaned_df)
-        self.storage.save_adjusted(symbol, adjusted_df)
+        self._rebuild_adjusted_from_raw(symbol=symbol, raw_df=cleaned_df)
         self._update_meta(symbol=symbol, freq="daily", source=self._source_name(), df=cleaned_df)
         return report
 
@@ -69,9 +77,7 @@ class DataMaintenance:
         if raw_df.empty:
             return
 
-        dividends = self._fetch_dividends(symbol)
-        adjusted_df = adjust_prices(raw_df, dividends, method="forward")
-        self.storage.save_adjusted(symbol, adjusted_df)
+        self._rebuild_adjusted_from_raw(symbol=symbol, raw_df=raw_df)
 
     def validate_data(self, symbol: str) -> QualityReport:
         """Run L1/L2 validation against stored raw data."""
@@ -112,6 +118,7 @@ class DataMaintenance:
 
         new_df = self.fetcher.fetch_daily(symbol=symbol, start=start, end=today)
         if new_df.empty:
+            self._rebuild_adjusted_from_raw(symbol=symbol, raw_df=existing)
             self._update_meta(symbol=symbol, freq="daily", source=self._source_name(), df=existing)
             return 0
 
@@ -119,14 +126,33 @@ class DataMaintenance:
         before_count = len(existing)
         self.storage.save_daily(symbol, cleaned_new)
         merged = self.storage.load_daily(symbol)
+        self._rebuild_adjusted_from_raw(symbol=symbol, raw_df=merged)
         self._update_meta(symbol=symbol, freq="daily", source=self._source_name(), df=merged)
         return max(0, len(merged) - before_count)
+
+    def _rebuild_adjusted_from_raw(self, symbol: str, raw_df: pd.DataFrame) -> None:
+        if raw_df.empty:
+            return
+
+        dividends = self._fetch_dividends(symbol)
+        splits = self._fetch_splits(symbol)
+        adjusted_df = adjust_prices(raw_df, dividends, splits=splits, method="forward")
+        self.storage.save_adjusted(symbol, adjusted_df)
+        if not splits.empty:
+            self.storage.save_splits(symbol, splits)
+            self._update_meta(symbol=symbol, freq="splits", source=self._source_name(), df=splits)
 
     def _fetch_dividends(self, symbol: str) -> pd.DataFrame:
         method = getattr(self.fetcher, "fetch_dividends", None)
         if callable(method):
             return method(symbol=symbol)
         return _empty_dividends()
+
+    def _fetch_splits(self, symbol: str) -> pd.DataFrame:
+        method = getattr(self.fetcher, "fetch_splits", None)
+        if callable(method):
+            return method(symbol=symbol)
+        return _empty_splits()
 
     def _source_name(self) -> str:
         cls = self.fetcher.__class__.__name__.lower()
