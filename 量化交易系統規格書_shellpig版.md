@@ -10,6 +10,7 @@
 | **V1.3** | 2026/04/27 | 新增 Phase 5-A：回測頁個股股價走勢、週/月/季均線、買賣點標記、互動 tooltip，以及近 15 年季度 EPS + 年度 EPS 紀錄。 |
 | **V1.4** | 2026/04/27 | 新增 Phase 5-B：定期定額策略、最小買入單位 1 股、多策略設定架構與策略參數保存格式。 |
 | **V1.5** | 2026/04/30 | 新增 Phase 6（UI/UX 強化）章節與 Phase 6-A：執行期主題切換（light / dark / finance_green）、CSS 注入即時生效、`config.yaml` `ui` 區塊、可選的 `streamlit-extras` 與 `streamlit-option-menu` 元件庫整合。 |
+| **V1.6** | 2026/04/30 | Phase 6-A 主題清單對齊實作：由原訂 3 套（`light` / `dark` / `finance_green`）擴充為 6 套（`arctic_light` / `obsidian_dark` / `finance_green` / `midnight_blue` / `cyberpunk` / `warm_sepia`）；預設主題與 fallback 改為 `arctic_light`；同步更新 Plotly template 對應表。 |
 
 ---
 
@@ -1070,27 +1071,30 @@ strategies:
 **主題架構規格：**
 - 主題以 CSS 變數與 selector 定義，在 `src/ui/app.py` 載入後第一個 Streamlit 元件之前透過 `st.markdown(..., unsafe_allow_html=True)` 注入。
 - 不依賴 `.streamlit/config.toml` 的 `[theme]` 區塊，因為 `config.toml` 需重啟才能生效。`config.toml` 只保留 `layout`、`runOnSave` 等基礎設定。
-- 預設提供至少三套主題：
-  - `light`（預設淺色）
-  - `dark`（深色）
-  - `finance_green`（深底 + 金融綠強調色，建議 `#00C896` / `#1E2329`）
-- 主題定義集中在 `src/ui/themes.py`，每套主題以 dict 形式提供 CSS 字串與調色盤常數。
+- 預設提供 6 套主題（V1.6 修訂後）：
+  - `arctic_light`（預設淺色，北極白藍）
+  - `obsidian_dark`（深色，Streamlit 預設黑）
+  - `finance_green`（深底 + 金融綠強調色）
+  - `midnight_blue`（深色海軍藍）
+  - `cyberpunk`（黑底霓虹紅）
+  - `warm_sepia`（淺色暖棕）
+- 主題定義集中在 `src/ui/themes.py`，每套主題以 dict 形式提供調色盤（`background` / `surface` / `primary` / `text` / `muted`）與 `plotly_template` 欄位。
 
 **設定保存規格：**
 - `config.yaml` 新增 `ui` 區塊：
   ```yaml
   ui:
-    theme: light            # light | dark | finance_green
+    theme: arctic_light     # arctic_light | obsidian_dark | finance_green | midnight_blue | cyberpunk | warm_sepia
     use_extras: true        # 啟用 streamlit-extras 元件
     use_option_menu: true   # 啟用 streamlit-option-menu 側邊欄
   ```
-- 缺少 `ui` 區塊或缺少其中欄位時，系統採預設 `theme=light`、`use_extras=true`、`use_option_menu=true`，不報錯。
+- 缺少 `ui` 區塊或缺少其中欄位時，系統採預設 `theme=arctic_light`、`use_extras=true`、`use_option_menu=true`，不報錯。
 - 此設定採 lazy migration：啟動或讀取設定時不自動改寫 `config.yaml`；只在使用者於設定頁儲存時才寫回 `ui:` 區塊。
-- 主題值未在合法清單內時，回退到 `light` 並在 UI 顯示警告。
+- 主題值未在合法清單內時，回退到 `arctic_light` 並在 UI 顯示警告。
 
 **設定頁規格：**
 - 在 `src/ui/pages/settings.py` 新增「外觀」區塊，提供：
-  - 主題下拉選單（`light` / `dark` / `finance_green`）
+  - 主題下拉選單（`arctic_light` / `obsidian_dark` / `finance_green` / `midnight_blue` / `cyberpunk` / `warm_sepia`）
   - 「使用 streamlit-extras 元件」開關
   - 「使用 option_menu 側邊欄」開關
 - 「儲存」後同步寫入 `config.yaml` 的 `ui` 區塊並呼叫 `st.rerun()`，下一輪頁面渲染套用新主題，無需重啟 Streamlit。
@@ -1104,14 +1108,16 @@ strategies:
 - 側邊欄頁面切換在 `use_option_menu=true` 且套件已安裝時，改用 `option_menu` 取代 `st.radio`，否則維持 `st.radio`。
 
 **主題與 Plotly 互動規格：**
-- 主題切換不得影響 Plotly 圖表內部資料；圖表需依當前主題傳入對應 `template`：`light` → `plotly_white`、`dark` 與 `finance_green` → `plotly_dark`。
-- 圖表底色需與主題背景一致，避免「白底圖表貼在深色頁面」破版。
+- 主題切換不得影響 Plotly 圖表內部資料；圖表需依當前主題傳入對應 `template`：
+  - `arctic_light` / `warm_sepia` → `plotly_white`
+  - `obsidian_dark` / `finance_green` / `midnight_blue` / `cyberpunk` → `plotly_dark`
+- 圖表底色（`paper_bgcolor` / `plot_bgcolor`）需與主題 `surface` 色一致，避免「白底圖表貼在深色頁面」破版。
 
 **驗收指標：**
 - 設定頁可選擇主題與兩個元件開關並儲存；切換後立即生效，不需重啟 Streamlit。
 - 主題設定寫入 `config.yaml` 的 `ui` 區塊；其他原有區塊（`ai`、`risk`、`backtest`、`strategies`）不受影響。
 - 缺少 `ui` 區塊時系統使用預設值並可正常啟動，不報錯。
-- 三套主題（`light` / `dark` / `finance_green`）皆能完整渲染四頁（資料管理、回測、AI 問答、設定），無破版、無 console 錯誤。
+- 6 套主題（`arctic_light` / `obsidian_dark` / `finance_green` / `midnight_blue` / `cyberpunk` / `warm_sepia`）皆能完整渲染四頁（資料管理、回測、AI 問答、設定），無破版、無 console 錯誤。
 - Plotly 圖表（回測股價走勢、Tearsheet 權益曲線）在深色主題下底色一致且可讀。
 - `streamlit-extras` 與 `streamlit-option-menu` 任一未安裝時，系統 fallback 到原生元件並顯示提示，不 crash。
 - 既有功能（資料下載、回測、AI 問答、策略設定儲存讀取）行為與資料不因主題切換而異常。
