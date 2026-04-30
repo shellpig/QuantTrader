@@ -13,6 +13,12 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - optional in some runtime environments
     go = None
 
+try:
+    from streamlit_extras.metric_cards import style_metric_cards
+    HAS_EXTRAS = True
+except ImportError:
+    HAS_EXTRAS = False
+
 from src.backtest.engine_event import EventDrivenBacktester
 from src.backtest.engine_vec import VectorizedBacktester
 from src.backtest.report import TearsheetReport
@@ -140,6 +146,12 @@ def _run_backtest(
             m3.metric("最大回撤", f"{result.max_drawdown * 100:.2f}%")
             m4.metric("Sharpe", f"{result.sharpe_ratio:.2f}")
 
+            config = get_config()
+            ui_section = config.get("ui", {}) if isinstance(config, dict) else {}
+            use_extras = bool(ui_section.get("use_extras", True))
+            if use_extras and HAS_EXTRAS:
+                style_metric_cards()
+
             st.plotly_chart(figures["equity"], use_container_width=True)
             st.plotly_chart(figures["drawdown"], use_container_width=True)
             st.plotly_chart(figures["monthly"], use_container_width=True)
@@ -190,6 +202,12 @@ def _render_dca_summary(result: DcaBacktestResult) -> None:
     c6.metric("累積買入股數", f"{result.cumulative_shares:,}")
     c7.metric("平均成本", f"{result.average_cost:,.4f}")
     c8.metric("投入次數", f"{result.contribution_count}")
+
+    config = get_config()
+    ui_section = config.get("ui", {}) if isinstance(config, dict) else {}
+    use_extras = bool(ui_section.get("use_extras", True))
+    if use_extras and HAS_EXTRAS:
+        style_metric_cards()
 
 
 def _render_dca_transactions(transactions: pd.DataFrame) -> None:
@@ -383,7 +401,16 @@ def _render_price_panel(*, price_df: pd.DataFrame, trades: pd.DataFrame, symbol:
         )
     )
 
+    from src.ui.themes import get_theme
+    config = get_config()
+    ui_section = config.get("ui", {}) if isinstance(config, dict) else {}
+    theme_name = str(ui_section.get("theme", "arctic_light"))
+    _, palette = get_theme(theme_name)
+
     fig.update_layout(
+        template=palette["plotly_template"],
+        paper_bgcolor=palette["surface"],
+        plot_bgcolor=palette["surface"],
         title=f"{symbol} 回測區間走勢",
         xaxis_title="日期",
         yaxis_title="價格",

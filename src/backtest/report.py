@@ -69,7 +69,7 @@ class TearsheetReport:
             )
         )
         fig.update_layout(title="Equity Curve", xaxis_title="Date", yaxis_title="Equity")
-        return fig
+        return self._apply_theme(fig)
 
     def create_drawdown_chart(self) -> go.Figure:
         equity = self.result.equity_curve
@@ -90,7 +90,7 @@ class TearsheetReport:
             )
         )
         fig.update_layout(title="Drawdown", xaxis_title="Date", yaxis_title="Drawdown")
-        return fig
+        return self._apply_theme(fig)
 
     def create_monthly_heatmap(self) -> go.Figure:
         monthly = calculate_monthly_returns(self.result.equity_curve)
@@ -112,7 +112,7 @@ class TearsheetReport:
             )
         )
         fig.update_layout(title="Monthly Returns Heatmap", xaxis_title="Month", yaxis_title="Year")
-        return fig
+        return self._apply_theme(fig)
 
     def create_summary_table(self) -> go.Figure:
         metrics = [
@@ -145,7 +145,7 @@ class TearsheetReport:
             ]
         )
         fig.update_layout(title="Performance Summary")
-        return fig
+        return self._apply_theme(fig)
 
     def create_full_tearsheet(self) -> go.Figure:
         full = make_subplots(
@@ -168,7 +168,7 @@ class TearsheetReport:
             full.add_trace(trace, row=4, col=1)
 
         full.update_layout(height=1200, showlegend=False, title="Backtest Tearsheet")
-        return full
+        return self._apply_theme(full)
 
     def save_html(self, filepath: str) -> None:
         path = Path(filepath)
@@ -183,6 +183,22 @@ class TearsheetReport:
             "monthly": self.create_monthly_heatmap(),
             "summary": self.create_summary_table(),
         }
+
+    def _apply_theme(self, fig: go.Figure) -> go.Figure:
+        from src.core.config import get_config
+        from src.ui.themes import get_theme
+
+        config = get_config()
+        ui_section = config.get("ui", {}) if isinstance(config, dict) else {}
+        theme_name = str(ui_section.get("theme", "arctic_light"))
+        _, palette = get_theme(theme_name)
+
+        fig.update_layout(
+            template=palette["plotly_template"],
+            paper_bgcolor=palette["surface"],
+            plot_bgcolor=palette["surface"],
+        )
+        return fig
 
     @staticmethod
     def _format_percent(value: float) -> str:

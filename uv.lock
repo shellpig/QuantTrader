@@ -1363,6 +1363,10 @@ dev = [
     { name = "pytest-cov" },
     { name = "ruff" },
 ]
+ui = [
+    { name = "streamlit-extras" },
+    { name = "streamlit-option-menu" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -1379,9 +1383,11 @@ requires-dist = [
     { name = "requests", specifier = ">=2.32" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.5" },
     { name = "streamlit", specifier = ">=1.37" },
+    { name = "streamlit-extras", marker = "extra == 'ui'", specifier = ">=0.4.3" },
+    { name = "streamlit-option-menu", marker = "extra == 'ui'", specifier = ">=0.3.12" },
     { name = "yfinance", specifier = ">=0.2.40" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["dev", "ui"]
 
 [[package]]
 name = "referencing"
@@ -1595,6 +1601,31 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/03/85/7c669b3a1336d34ef39fa9760fbd343185f3b15db2ad0838fd78423d1c7f/streamlit-1.56.0.tar.gz", hash = "sha256:1176acfa89ae1318b79078e8efe689a9d02e8d58e325c00fc0e55fa2f3fe8d6a", size = 8559239, upload-time = "2026-03-31T22:29:38.59Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e4/91/cb6f13a89e376ef179309d74f37a70ea0041d5e4b5ba5c4836dbf6e020ad/streamlit-1.56.0-py3-none-any.whl", hash = "sha256:8677a335734a30a51bc57ad0ec910e365d95f7c456fc02c60032927cd0729dc5", size = 9052089, upload-time = "2026-03-31T22:29:36.342Z" },
+]
+
+[[package]]
+name = "streamlit-extras"
+version = "1.5.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "plotly" },
+    { name = "streamlit" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/3c/aa/140b13f426c1f373f91e6ff4a99160596c36c1e12d83f890abc36a82566c/streamlit_extras-1.5.0.tar.gz", hash = "sha256:6647ceeeda580cbc0d0d1515e46ad9b03dc59ff19871876949bf9616ded9f5a0", size = 389970, upload-time = "2026-04-21T14:46:14.735Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/58/8e/c47bc018930338d697989acb5cb36ee4fbb66fa1e3386b1c2b95dd4ec09b/streamlit_extras-1.5.0-py3-none-any.whl", hash = "sha256:1879ac1f5b4e65dbd8fed332b4a5248acaa482c0427d4cbb50848bdf39cec0c2", size = 983226, upload-time = "2026-04-21T14:46:16.426Z" },
+]
+
+[[package]]
+name = "streamlit-option-menu"
+version = "0.4.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "streamlit" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/5e/27/72dc451cdaef1714fd0d75cc430e50a06c12c9046295fdf1f94af1b766eb/streamlit-option-menu-0.4.0.tar.gz", hash = "sha256:48ec69d59e547fa2fa4bfae001620df8af56a80de2f765ddbb9fcbfb84017129", size = 827290, upload-time = "2024-10-09T14:51:01.685Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fd/52/2f525ad4262dc83d67297f69ec5afcee1438b9e9ae22aa318396725ddbed/streamlit_option_menu-0.4.0-py3-none-any.whl", hash = "sha256:a55fc7554047b6db371595af2182e435b8a2c715ee6124e8543685bd4670b07e", size = 829255, upload-time = "2024-10-09T14:50:59.707Z" },
 ]
 
 [[package]]

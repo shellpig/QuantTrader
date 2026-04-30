@@ -14,17 +14,34 @@ from src.core.strategy_config import get_strategy_presets, make_strategy_label
 
 def render() -> None:
     st.title("設定")
-    st.caption("調整 AI、回測與風控參數，並儲存為預設。")
+    if "restore_success_msg" in st.session_state:
+        st.success(st.session_state.pop("restore_success_msg"))
+    st.caption("調整外觀、AI、回測與風控參數，並儲存為預設。")
 
     config = get_config()
+    ui = config.get("ui", {}) if isinstance(config, dict) else {}
     ai = config.get("ai", {}) if isinstance(config, dict) else {}
     risk = config.get("risk", {}) if isinstance(config, dict) else {}
     backtest = config.get("backtest", {}) if isinstance(config, dict) else {}
     secrets = config.get("secrets", {}) if isinstance(config, dict) else {}
     strategy_presets = get_strategy_presets(config)
 
+    st.subheader("外觀")
+    theme_options = ["arctic_light", "obsidian_dark", "finance_green", "midnight_blue", "cyberpunk", "warm_sepia"]
+    current_theme = str(ui.get("theme", "arctic_light")).strip()
+    if current_theme not in theme_options:
+        current_theme = "arctic_light"
+    theme = st.selectbox("主題", options=theme_options, index=theme_options.index(current_theme))
+    from src.ui.themes import render_theme_css
+    st.markdown(render_theme_css(theme), unsafe_allow_html=True)
+    
+    current_use_extras = bool(ui.get("use_extras", True))
+    use_extras = st.toggle("使用 streamlit-extras 元件", value=current_use_extras)
+    current_use_option_menu = bool(ui.get("use_option_menu", True))
+    use_option_menu = st.toggle("使用 option_menu 側邊欄", value=current_use_option_menu)
+
     st.subheader("AI 設定")
-    ai_enabled = st.toggle("啟用 AI 問答（ai.enabled）", value=bool(ai.get("enabled", True)))
+    ai_enabled = st.toggle("啟用 AI 問答（ai.enabled）", value=bool(ai.get("enabled", False)))
     provider_options = ["anthropic", "openai", "gemini"]
     provider_default = str(ai.get("provider", "anthropic")).strip().lower()
     if provider_default not in provider_options:
@@ -152,7 +169,13 @@ def render() -> None:
             },
         }
 
-    if st.button("儲存為預設", type="primary"):
+    btn_col1, btn_col2 = st.columns(2)
+    with btn_col1:
+        save_clicked = st.button("儲存", type="primary", use_container_width=True)
+    with btn_col2:
+        restore_clicked = st.button("恢復預設值", use_container_width=True)
+
+    if save_clicked:
         try:
             normalized_edited = _normalize_edited_strategy(edited_strategy)
             merged_strategies = _merge_strategy_presets(
@@ -161,6 +184,9 @@ def render() -> None:
                 replace_name=selected_existing_name,
             )
             _save_config_and_env(
+                theme=theme,
+                use_extras=use_extras,
+                use_option_menu=use_option_menu,
                 ai_enabled=ai_enabled,
                 provider=provider,
                 model=model,
@@ -175,9 +201,12 @@ def render() -> None:
             )
             clear_config_cache()
             st.success("設定已儲存。")
-            st.info("若要立即反映在頁面切換邏輯，可重新整理頁面。")
+            st.rerun()
         except Exception as exc:  # noqa: BLE001
             st.error(f"儲存失敗：{exc}")
+
+    if restore_clicked:
+        _confirm_restore_dialog()
 
     st.subheader("目前策略清單")
     strategy_table_rows = [
@@ -202,6 +231,7 @@ def render() -> None:
     st.subheader("當前設定快照")
     st.json(
         {
+            "ui": {"theme": theme, "use_extras": use_extras, "use_option_menu": use_option_menu},
             "ai": {"enabled": ai_enabled, "provider": provider, "model": model},
             "risk": {
                 "max_daily_loss_pct": max_daily_loss_pct,
@@ -319,8 +349,30 @@ def _next_strategy_name(strategies: list[dict[str, Any]], *, base: str) -> str:
         suffix += 1
 
 
+def _restore_defaults_and_env(clear_strategies: bool) -> None:
+    root = get_project_root()
+    config_path = root / "config.yaml"
+    if config_path.exists():
+        import yaml
+        config = get_config().copy()
+        config.pop("ui", None)
+        config.pop("ai", None)
+        config.pop("risk", None)
+        config.pop("backtest", None)
+        if clear_strategies:
+            config.pop("strategies", None)
+            config.pop("strategy", None)
+        config.pop("secrets", None)
+        config_path.write_text(
+            yaml.safe_dump(config, sort_keys=False, allow_unicode=True),
+            encoding="utf-8",
+        )
+
 def _save_config_and_env(
     *,
+    theme: str,
+    use_extras: bool,
+    use_option_menu: bool,
     ai_enabled: bool,
     provider: str,
     model: str,
@@ -339,12 +391,18 @@ def _save_config_and_env(
 
     config = get_config().copy()
     config.pop("secrets", None)
+    if "ui" not in config or not isinstance(config["ui"], dict):
+        config["ui"] = {}
     if "ai" not in config or not isinstance(config["ai"], dict):
         config["ai"] = {}
     if "risk" not in config or not isinstance(config["risk"], dict):
         config["risk"] = {}
     if "backtest" not in config or not isinstance(config["backtest"], dict):
         config["backtest"] = {}
+
+    config["ui"]["theme"] = str(theme).strip()
+    config["ui"]["use_extras"] = bool(use_extras)
+    config["ui"]["use_option_menu"] = bool(use_option_menu)
 
     config["ai"]["enabled"] = bool(ai_enabled)
     config["ai"]["provider"] = str(provider).strip().lower()
@@ -391,6 +449,23 @@ def _write_env(path: Path, updates: dict[str, str]) -> None:
 
     rendered = [f"{key}={value}" for key, value in sorted(by_key.items())]
     path.write_text("\n".join(rendered) + "\n", encoding="utf-8")
+
+
+@st.dialog("恢復預設值確認")
+def _confirm_restore_dialog() -> None:
+    st.write("此操作將會恢復外觀、AI 模型、與風控參數的預設值。請問是否要一併清除所有已儲存的自訂策略？")
+    if st.button("確定要清除已儲存的策略？", type="primary", use_container_width=True):
+        _restore_defaults_and_env(clear_strategies=True)
+        clear_config_cache()
+        st.session_state["restore_success_msg"] = "已恢復預設值（含自訂策略）。"
+        st.rerun()
+    if st.button("不清除已儲存的策略", use_container_width=True):
+        _restore_defaults_and_env(clear_strategies=False)
+        clear_config_cache()
+        st.session_state["restore_success_msg"] = "已恢復預設值（保留自訂策略）。"
+        st.rerun()
+    if st.button("取消", use_container_width=True):
+        st.rerun()
 
 
 if __name__ == "__main__":

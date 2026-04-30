@@ -23,6 +23,10 @@ dev = [
     "pytest-cov>=5.0",
     "ruff>=0.5",
 ]
+ui = [
+    "streamlit-extras>=0.4.3",
+    "streamlit-option-menu>=0.3.12",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
