@@ -19,3 +19,37 @@ strategies:
     min_buy_unit: 1
     non_trading_day_policy: next_trading_day
     buy_price_field: close
+- name: RSI_14
+  type: rsi
+  params:
+    period: 14
+    oversold: 30.0
+    overbought: 70.0
+- name: KD_Cross
+  type: kd_cross
+  params:
+    k_period: 9
+    d_period: 3
+    smooth_k: 3
+- name: MACD_Cross
+  type: macd_cross
+  params:
+    fast: 12
+    slow: 26
+    signal: 9
+- name: BB_20
+  type: bollinger_band
+  params:
+    period: 20
+    std_dev: 2.0
+- name: BIAS_20
+  type: bias
+  params:
+    ma_period: 20
+    buy_bias: -10.0
+    sell_bias: 10.0
+- name: Donchian_20_10
+  type: donchian_breakout
+  params:
+    entry_period: 20
+    exit_period: 10

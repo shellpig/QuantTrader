@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from src.core.config import clear_config_cache, get_config
 from src.core.strategy_config import (
     STRATEGY_META,
     format_param_caption,
@@ -184,3 +185,10 @@ def test_format_param_caption_unknown_type_fallback() -> None:
     caption = format_param_caption("unknown_type", {"foo": 1, "bar": 2})
     assert "foo=1" in caption
     assert "bar=2" in caption
+
+
+def test_config_yaml_exposes_all_8_strategy_types() -> None:
+    clear_config_cache()
+    presets = get_strategy_presets(get_config())
+    types = {p["type"] for p in presets}
+    assert types == _ALL_STRATEGY_TYPES
