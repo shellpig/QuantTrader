@@ -175,9 +175,13 @@ class VectorizedBacktester(BacktesterBase):
 
     @staticmethod
     def _drop_warmup_signals(strategy: StrategyBase, signals: pd.Series) -> pd.Series:
-        ma_short = int(getattr(strategy, "ma_short", 0) or 0)
-        ma_long = int(getattr(strategy, "ma_long", 0) or 0)
-        warmup = max(ma_short, ma_long)
+        # Prefer explicit warmup_period; fall back to legacy ma_short/ma_long attributes.
+        if hasattr(strategy, "warmup_period"):
+            warmup = int(strategy.warmup_period)  # type: ignore[attr-defined]
+        else:
+            ma_short = int(getattr(strategy, "ma_short", 0) or 0)
+            ma_long = int(getattr(strategy, "ma_long", 0) or 0)
+            warmup = max(ma_short, ma_long)
         out = signals.copy()
         if warmup > 0:
             out.iloc[:warmup] = 0

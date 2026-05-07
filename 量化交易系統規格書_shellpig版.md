@@ -11,6 +11,7 @@
 | **V1.4** | 2026/04/27 | 新增 Phase 5-B：定期定額策略、最小買入單位 1 股、多策略設定架構與策略參數保存格式。 |
 | **V1.5** | 2026/04/30 | 新增 Phase 6（UI/UX 強化）章節與 Phase 6-A：執行期主題切換（light / dark / finance_green）、CSS 注入即時生效、`config.yaml` `ui` 區塊、可選的 `streamlit-extras` 與 `streamlit-option-menu` 元件庫整合。 |
 | **V1.6** | 2026/04/30 | Phase 6-A 主題清單對齊實作：由原訂 3 套（`light` / `dark` / `finance_green`）擴充為 6 套（`arctic_light` / `obsidian_dark` / `finance_green` / `midnight_blue` / `cyberpunk` / `warm_sepia`）；預設主題與 fallback 改為 `arctic_light`；同步更新 Plotly template 對應表。 |
+| **V1.7** | 2026/05/07 | 新增 Phase 7（策略擴充）章節與 Phase 7-A：6 種技術分析策略（RSI 超買超賣、KD 交叉、MACD 交叉、布林通道、乖離率、突破策略），含向量化 + 事件驅動雙介面、`strategy_config.py` preset 正規化、UI 回測頁分派。 |
 
 ---
 
@@ -1125,6 +1126,196 @@ strategies:
 
 ---
 
+### Phase 7：策略擴充（彈性）
+
+#### 7-A　六種技術分析策略（2-3 天）
+
+**建置內容：** 新增 6 種台股常見技術分析策略，每種策略皆實作向量化（`generate_signals`）與事件驅動（`on_bar`）雙介面，可透過 `config.yaml` 的 `strategies[]` preset 設定參數，並在回測頁選擇執行。
+
+**新增策略清單：**
+
+| # | 策略類型 ID | 策略類別名稱 | 買進條件 | 賣出條件 | 預設參數 |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| 1 | `rsi` | `RSIStrategy` | RSI < `oversold` | RSI > `overbought` | `period=14, oversold=30, overbought=70` |
+| 2 | `kd_cross` | `KDCrossStrategy` | K 線上穿 D 線 | K 線下穿 D 線 | `k_period=9, d_period=3, smooth_k=3` |
+| 3 | `macd_cross` | `MACDCrossStrategy` | MACD 上穿 Signal 線 | MACD 下穿 Signal 線 | `fast=12, slow=26, signal=9` |
+| 4 | `bollinger_band` | `BollingerBandStrategy` | 收盤價跌破下軌 | 收盤價突破上軌 | `period=20, std_dev=2.0` |
+| 5 | `bias` | `BiasStrategy` | BIAS < `buy_bias`（偏離過深） | BIAS > `sell_bias`（偏離過高） | `ma_period=20, buy_bias=-10.0, sell_bias=10.0` |
+| 6 | `donchian_breakout` | `DonchianBreakoutStrategy` | 收盤價突破 `entry_period` 日最高價 | 收盤價跌破 `exit_period` 日最低價 | `entry_period=20, exit_period=10` |
+
+**策略邏輯詳細規格：**
+
+**1. RSI 超買超賣（`rsi`）**
+- 使用 Wilder RSI，以 `period` 日為計算週期。
+- 當 RSI 從高位下穿 `oversold` 門檻時產生買進訊號（+1）。
+- 當 RSI 從低位上穿 `overbought` 門檻時產生賣出訊號（-1）。
+- RSI 尚未計算完成的 warm-up 期間，訊號為 0。
+
+**2. KD 交叉（`kd_cross`）**
+- 使用隨機指標 Stochastic Oscillator（K 值、D 值），參數為 `k_period`（回看期間）、`d_period`（D 值平滑期間）、`smooth_k`（K 值平滑期間）。
+- 當 K 線從下方上穿 D 線時產生買進訊號（+1）。
+- 當 K 線從上方下穿 D 線時產生賣出訊號（-1）。
+- 指標尚未計算完成的 warm-up 期間，訊號為 0。
+
+**3. MACD 交叉（`macd_cross`）**
+- 使用 MACD 指標，參數為 `fast`（快線 EMA 週期）、`slow`（慢線 EMA 週期）、`signal`（訊號線 EMA 週期）。
+- 當 MACD 線從下方上穿 Signal 線時產生買進訊號（+1）。
+- 當 MACD 線從上方下穿 Signal 線時產生賣出訊號（-1）。
+- 指標尚未計算完成的 warm-up 期間，訊號為 0。
+
+**4. 布林通道（`bollinger_band`）**
+- 使用布林通道，參數為 `period`（中軌 SMA 週期）、`std_dev`（標準差倍數）。
+- 當收盤價從上方跌破下軌（Lower Band）時產生買進訊號（+1）。
+- 當收盤價從下方突破上軌（Upper Band）時產生賣出訊號（-1）。
+- 指標尚未計算完成的 warm-up 期間，訊號為 0。
+
+**5. 乖離率（`bias`）**
+- BIAS = (收盤價 - MA) / MA × 100（單位：百分比）。
+- 使用 `ma_period` 日簡單移動平均線計算。
+- 當 BIAS < `buy_bias`（例如 -10，代表股價低於均線 10%）時產生買進訊號（+1）。
+- 當 BIAS > `sell_bias`（例如 10，代表股價高於均線 10%）時產生賣出訊號（-1）。
+- MA 尚未計算完成的 warm-up 期間，訊號為 0。
+- `buy_bias` 應為負數或零，`sell_bias` 應為正數或零，且 `buy_bias < sell_bias`。
+
+**6. 突破策略 / Donchian Channel（`donchian_breakout`）**
+- 當收盤價突破前 `entry_period` 日的最高價（不含當日）時產生買進訊號（+1）。
+- 當收盤價跌破前 `exit_period` 日的最低價（不含當日）時產生賣出訊號（-1）。
+- 最高/最低價使用 `high` / `low` 欄位計算。
+- 回看期間不足時，訊號為 0。
+- `entry_period` 與 `exit_period` 皆須為正整數。
+
+**策略實作規格：**
+- 所有新策略皆繼承 `StrategyBase`，實作 `generate_signals(df)` 與 `on_bar(bar, account)` 兩個方法。
+- `generate_signals` 使用 pandas-ta 或 pandas 原生 rolling 計算指標，產生與 `df.index` 對齊的 `pd.Series`，值只有 `{-1, 0, +1}`。
+- `on_bar` 在事件驅動模式下逐 bar 計算指標並判斷交叉/突破條件，回傳 `list[OrderEvent]`。
+- `on_bar` 買進時以 `_BUY_INTENT_QUANTITY`（極大值）表達「全額買進」意圖，由執行層依實際成交價和帳戶現金決定最終可買股數。
+- 每個策略實作 `reset_runtime_state()` 以清除 `on_bar` 的累計狀態（如歷史收盤價 list）。
+
+**策略參數驗證規格：**
+- 所有數值參數在 `__init__` 中驗證：必須為正數（period/window 類）或符合邏輯（buy_bias < sell_bias）。
+- 不合法參數拋 `ValueError`，錯誤訊息包含參數名與限制。
+
+**策略設定 preset 規格：**
+- `strategy_config.py` 新增各策略類型的 `_normalize_*_params()` 函式，負責從 `config.yaml` preset 讀取並正規化參數。
+- 建議 `config.yaml` preset 格式：
+  ```yaml
+  strategies:
+    - name: RSI_14
+      type: rsi
+      params:
+        period: 14
+        oversold: 30
+        overbought: 70
+
+    - name: KD_Cross
+      type: kd_cross
+      params:
+        k_period: 9
+        d_period: 3
+        smooth_k: 3
+
+    - name: MACD_Cross
+      type: macd_cross
+      params:
+        fast: 12
+        slow: 26
+        signal: 9
+
+    - name: BB_20
+      type: bollinger_band
+      params:
+        period: 20
+        std_dev: 2.0
+
+    - name: BIAS_20
+      type: bias
+      params:
+        ma_period: 20
+        buy_bias: -10.0
+        sell_bias: 10.0
+
+    - name: Donchian_20_10
+      type: donchian_breakout
+      params:
+        entry_period: 20
+        exit_period: 10
+  ```
+
+**策略中文 metadata 規格：**
+- 在 `strategy_config.py` 新增 `STRATEGY_META` 字典，為所有 8 種策略類型（含既有 `moving_average_cross` 與 `dollar_cost_averaging`）提供中文 metadata。
+- 每種策略類型的 metadata 包含以下欄位：
+
+| 欄位 | 型別 | 說明 |
+| :--- | :--- | :--- |
+| `label` | `str` | 策略中文名稱，顯示在 UI 下拉選單 |
+| `description` | `str` | 一句話策略說明 |
+| `buy_hint` | `str` | 買進條件中文說明 |
+| `sell_hint` | `str` | 賣出條件中文說明 |
+| `param_labels` | `dict[str, str]` | 參數 key → 中文名稱對應 |
+
+- 完整 metadata 定義：
+
+| 策略類型 | label | description | buy_hint | sell_hint |
+| :--- | :--- | :--- | :--- | :--- |
+| `moving_average_cross` | 均線交叉 | 短均線上穿長均線買進，下穿賣出 | 短均線 > 長均線（黃金交叉） | 短均線 < 長均線（死亡交叉） |
+| `dollar_cost_averaging` | 定期定額 | 每月固定日期以固定金額買入 | 每月指定日自動買入 | 不主動賣出（持有至回測結束） |
+| `rsi` | RSI 超買超賣 | RSI 低於超賣線買進，高於超買線賣出 | RSI < 超賣門檻（如 30） | RSI > 超買門檻（如 70） |
+| `kd_cross` | KD 交叉 | K 線上穿 D 線買進，下穿賣出 | K 線上穿 D 線（黃金交叉） | K 線下穿 D 線（死亡交叉） |
+| `macd_cross` | MACD 交叉 | MACD 上穿訊號線買進，下穿賣出 | MACD 線上穿 Signal 線 | MACD 線下穿 Signal 線 |
+| `bollinger_band` | 布林通道 | 跌破下軌買進，突破上軌賣出 | 收盤價跌破下軌（超跌反轉） | 收盤價突破上軌（超漲反轉） |
+| `bias` | 乖離率 | 乖離率過低買進，過高賣出 | BIAS < 買進門檻（如 -10%） | BIAS > 賣出門檻（如 10%） |
+| `donchian_breakout` | 突破策略 | 突破 N 日高點買進，跌破 M 日低點賣出 | 收盤價突破前 N 日最高價 | 收盤價跌破前 M 日最低價 |
+
+- 參數中文名稱對應表：
+
+| 策略類型 | 參數 key | 中文名稱 |
+| :--- | :--- | :--- |
+| `moving_average_cross` | `short_window` | 短均線週期 |
+| `moving_average_cross` | `long_window` | 長均線週期 |
+| `dollar_cost_averaging` | `monthly_day` | 每月投入日 |
+| `dollar_cost_averaging` | `monthly_amount` | 每月投入金額 |
+| `dollar_cost_averaging` | `min_buy_unit` | 最小買入單位（股） |
+| `dollar_cost_averaging` | `non_trading_day_policy` | 非交易日處理 |
+| `dollar_cost_averaging` | `buy_price_field` | 買入價格欄位 |
+| `rsi` | `period` | RSI 週期 |
+| `rsi` | `oversold` | 超賣門檻 |
+| `rsi` | `overbought` | 超買門檻 |
+| `kd_cross` | `k_period` | K 值回看期間 |
+| `kd_cross` | `d_period` | D 值平滑期間 |
+| `kd_cross` | `smooth_k` | K 值平滑期間 |
+| `macd_cross` | `fast` | 快線 EMA 週期 |
+| `macd_cross` | `slow` | 慢線 EMA 週期 |
+| `macd_cross` | `signal` | 訊號線 EMA 週期 |
+| `bollinger_band` | `period` | 中軌 SMA 週期 |
+| `bollinger_band` | `std_dev` | 標準差倍數 |
+| `bias` | `ma_period` | 均線週期 |
+| `bias` | `buy_bias` | 買進乖離率門檻（%） |
+| `bias` | `sell_bias` | 賣出乖離率門檻（%） |
+| `donchian_breakout` | `entry_period` | 進場回看天數 |
+| `donchian_breakout` | `exit_period` | 出場回看天數 |
+
+**回測頁 UI 規格：**
+- 回測頁的策略選擇下拉選單顯示 `{preset.name} ({STRATEGY_META[type].label})`，例如「MA20_MA60 (均線交叉)」。
+- 選擇策略後，以 `st.caption` 顯示：
+  - 策略說明（`description`）
+  - 買進條件（`buy_hint`）與賣出條件（`sell_hint`）
+  - 各參數值以中文名稱顯示，例如「短均線週期=20, 長均線週期=60」
+- 各策略類型透過 `strategy_config.py` 正規化後，回測頁依 `type` 分派到對應策略類別。
+- 所有新策略使用 `VectorizedBacktester` 或 `EventDrivenBacktester` 執行，結果顯示與既有 MA Cross 一致（Tearsheet + 股價走勢 + EPS）。
+
+**驗收指標：**
+- 6 個策略類別各自可透過 `generate_signals()` 產生正確的 `{-1, 0, +1}` 向量訊號。
+- 6 個策略類別各自可透過 `on_bar()` 在事件驅動模式下產生正確的 `OrderEvent`。
+- `strategy_config.py` 能正確正規化 6 種新策略類型的 preset 參數，不合法值回傳 `None`。
+- `STRATEGY_META` 涵蓋全部 8 種策略類型，每種包含 `label`、`description`、`buy_hint`、`sell_hint`、`param_labels`。
+- 回測頁策略選擇下拉選單顯示中文策略名稱，選擇後顯示中文買賣條件與參數說明。
+- 回測頁可選擇任一新策略並成功執行回測，顯示 Tearsheet、股價走勢與 EPS。
+- 既有策略（MA Cross、DCA）不受新增策略影響，且同步顯示中文 metadata。
+- 所有策略的 warm-up 期間不產生虛假訊號。
+- 不合法策略參數（負週期、buy_bias >= sell_bias 等）拋 `ValueError`。
+
+---
+
 ### 子階段總覽
 
 | Phase | 子階段 | 工期 | 有 AI 輔助 |
@@ -1135,7 +1326,8 @@ strategies:
 | **4** AI 問答 + UI | 4-A → 4-D（4 段） | 5 天 | ✅ |
 | **5** 回測體驗與 UI 補充 | 5-A → 5-B（2 段） | 3-5 天 | ✅ |
 | **6** UI/UX 強化 | 6-A（1 段） | 1-2 天 | ✅ |
-| **合計** | 20 個子階段 | **33-36 天（約 7-8 週）** | |
+| **7** 策略擴充 | 7-A（1 段） | 2-3 天 | |
+| **合計** | 21 個子階段 | **35-39 天（約 8-9 週）** | |
 
 ---
 

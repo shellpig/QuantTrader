@@ -26,10 +26,16 @@ from src.backtest.dca import DcaBacktestResult, run_dca_backtest
 from src.core.config import get_config
 from src.core.constants import TAIPEI_TZ
 from src.core.exceptions import FetcherError
-from src.core.strategy_config import get_strategy_presets, make_strategy_label
+from src.core.strategy_config import format_param_caption, get_strategy_presets, make_strategy_label
 from src.data.fetcher import FinMindFetcher
 from src.data.storage import ParquetStorage
+from src.strategy.examples.bias import BiasStrategy
+from src.strategy.examples.bollinger_band import BollingerBandStrategy
+from src.strategy.examples.donchian_breakout import DonchianBreakoutStrategy
+from src.strategy.examples.kd_cross import KDCrossStrategy
 from src.strategy.examples.ma_cross import MACrossStrategy
+from src.strategy.examples.macd_cross import MACDCrossStrategy
+from src.strategy.examples.rsi import RSIStrategy
 
 _TW_SYMBOL_PATTERN = re.compile(r"^\d{4,6}$")
 _VECTOR_ENGINE_LABEL = "向量化引擎"
@@ -61,20 +67,18 @@ def render() -> None:
     selected_type = str(selected_strategy.get("type", "")).strip().lower()
     selected_params = selected_strategy.get("params", {}) if isinstance(selected_strategy.get("params"), dict) else {}
 
-    if selected_type == "moving_average_cross":
-        st.caption(
-            f"策略參數：short_window={int(selected_params.get('short_window', 20))}, "
-            f"long_window={int(selected_params.get('long_window', 60))}"
-        )
-    elif selected_type == "dollar_cost_averaging":
-        st.caption(
-            "策略參數："
-            f"monthly_day={int(selected_params.get('monthly_day', 5))}, "
-            f"monthly_amount={float(selected_params.get('monthly_amount', 10_000)):.0f}, "
-            f"min_buy_unit={int(selected_params.get('min_buy_unit', 1))}, "
-            f"non_trading_day_policy={str(selected_params.get('non_trading_day_policy', 'next_trading_day'))}, "
-            f"buy_price_field={str(selected_params.get('buy_price_field', 'close'))}"
-        )
+    _SUPPORTED_TYPES = {
+        "moving_average_cross", "dollar_cost_averaging",
+        "rsi", "kd_cross", "macd_cross", "bollinger_band", "bias", "donchian_breakout",
+    }
+    if selected_type in _SUPPORTED_TYPES:
+        from src.core.strategy_config import get_strategy_meta
+        meta = get_strategy_meta(selected_type)
+        if meta:
+            st.caption(f"{meta['description']}　買進：{meta['buy_hint']}　賣出：{meta['sell_hint']}")
+        param_caption = format_param_caption(selected_type, selected_params)
+        if param_caption:
+            st.caption(f"策略參數：{param_caption}")
     else:
         st.warning(f"此策略類型目前未支援執行：{selected_type}")
 
@@ -133,34 +137,7 @@ def _run_backtest(
                 return
 
             strategy = MACrossStrategy(ma_short=ma_short, ma_long=ma_long)
-            engine = VectorizedBacktester() if engine_name == _VECTOR_ENGINE_LABEL else EventDrivenBacktester()
-            result = engine.run(strategy=strategy, data=data)
-
-            report = TearsheetReport(result)
-            figures = report.get_streamlit_figures()
-
-            m0, m1, m2, m3, m4 = st.columns(5)
-            m0.metric("交易次數", f"{int(result.total_trades)}")
-            m1.metric("總報酬率", f"{result.total_return * 100:.2f}%")
-            m2.metric("年化報酬率", f"{result.annual_return * 100:.2f}%")
-            m3.metric("最大回撤", f"{result.max_drawdown * 100:.2f}%")
-            m4.metric("Sharpe", f"{result.sharpe_ratio:.2f}")
-
-            config = get_config()
-            ui_section = config.get("ui", {}) if isinstance(config, dict) else {}
-            use_extras = bool(ui_section.get("use_extras", True))
-            if use_extras and HAS_EXTRAS:
-                style_metric_cards()
-
-            st.plotly_chart(figures["equity"], use_container_width=True)
-            st.plotly_chart(figures["drawdown"], use_container_width=True)
-            st.plotly_chart(figures["monthly"], use_container_width=True)
-            st.plotly_chart(figures["summary"], use_container_width=True)
-
-            st.divider()
-            _render_price_panel(price_df=data, trades=result.trades, symbol=symbol)
-            st.divider()
-            _render_eps_panel(symbol=symbol, end_ts=end_exclusive - pd.Timedelta(days=1))
+            _run_standard_backtest(strategy, data, engine_name, symbol, start_ts, end_exclusive)
             return
 
         if strategy_type == "dollar_cost_averaging":
@@ -184,9 +161,101 @@ def _run_backtest(
             _render_eps_panel(symbol=symbol, end_ts=end_exclusive - pd.Timedelta(days=1))
             return
 
+        if strategy_type == "rsi":
+            strategy = RSIStrategy(
+                period=int(strategy_params.get("period", 14)),
+                oversold=float(strategy_params.get("oversold", 30)),
+                overbought=float(strategy_params.get("overbought", 70)),
+            )
+            _run_standard_backtest(strategy, data, engine_name, symbol, start_ts, end_exclusive)
+            return
+
+        if strategy_type == "kd_cross":
+            strategy = KDCrossStrategy(
+                k_period=int(strategy_params.get("k_period", 9)),
+                d_period=int(strategy_params.get("d_period", 3)),
+                smooth_k=int(strategy_params.get("smooth_k", 3)),
+            )
+            _run_standard_backtest(strategy, data, engine_name, symbol, start_ts, end_exclusive)
+            return
+
+        if strategy_type == "macd_cross":
+            strategy = MACDCrossStrategy(
+                fast=int(strategy_params.get("fast", 12)),
+                slow=int(strategy_params.get("slow", 26)),
+                signal=int(strategy_params.get("signal", 9)),
+            )
+            _run_standard_backtest(strategy, data, engine_name, symbol, start_ts, end_exclusive)
+            return
+
+        if strategy_type == "bollinger_band":
+            strategy = BollingerBandStrategy(
+                period=int(strategy_params.get("period", 20)),
+                std_dev=float(strategy_params.get("std_dev", 2.0)),
+            )
+            _run_standard_backtest(strategy, data, engine_name, symbol, start_ts, end_exclusive)
+            return
+
+        if strategy_type == "bias":
+            strategy = BiasStrategy(
+                ma_period=int(strategy_params.get("ma_period", 20)),
+                buy_bias=float(strategy_params.get("buy_bias", -10.0)),
+                sell_bias=float(strategy_params.get("sell_bias", 10.0)),
+            )
+            _run_standard_backtest(strategy, data, engine_name, symbol, start_ts, end_exclusive)
+            return
+
+        if strategy_type == "donchian_breakout":
+            strategy = DonchianBreakoutStrategy(
+                entry_period=int(strategy_params.get("entry_period", 20)),
+                exit_period=int(strategy_params.get("exit_period", 10)),
+            )
+            _run_standard_backtest(strategy, data, engine_name, symbol, start_ts, end_exclusive)
+            return
+
         st.error(f"目前不支援策略類型：{strategy_type}")
     except Exception as exc:  # noqa: BLE001
         st.error(f"回測執行失敗：{exc}")
+
+
+def _run_standard_backtest(
+    strategy: object,
+    data: pd.DataFrame,
+    engine_name: str,
+    symbol: str,
+    start_ts: pd.Timestamp,
+    end_exclusive: pd.Timestamp,
+) -> None:
+    """Run a standard signal-based backtest and render tearsheet + price panel + EPS."""
+    from src.strategy.base import StrategyBase
+    engine = VectorizedBacktester() if engine_name == _VECTOR_ENGINE_LABEL else EventDrivenBacktester()
+    result = engine.run(strategy=strategy, data=data)  # type: ignore[arg-type]
+
+    report = TearsheetReport(result)
+    figures = report.get_streamlit_figures()
+
+    m0, m1, m2, m3, m4 = st.columns(5)
+    m0.metric("交易次數", f"{int(result.total_trades)}")
+    m1.metric("總報酬率", f"{result.total_return * 100:.2f}%")
+    m2.metric("年化報酬率", f"{result.annual_return * 100:.2f}%")
+    m3.metric("最大回撤", f"{result.max_drawdown * 100:.2f}%")
+    m4.metric("Sharpe", f"{result.sharpe_ratio:.2f}")
+
+    config = get_config()
+    ui_section = config.get("ui", {}) if isinstance(config, dict) else {}
+    use_extras = bool(ui_section.get("use_extras", True))
+    if use_extras and HAS_EXTRAS:
+        style_metric_cards()
+
+    st.plotly_chart(figures["equity"], use_container_width=True)
+    st.plotly_chart(figures["drawdown"], use_container_width=True)
+    st.plotly_chart(figures["monthly"], use_container_width=True)
+    st.plotly_chart(figures["summary"], use_container_width=True)
+
+    st.divider()
+    _render_price_panel(price_df=data, trades=result.trades, symbol=symbol)
+    st.divider()
+    _render_eps_panel(symbol=symbol, end_ts=end_exclusive - pd.Timedelta(days=1))
 
 
 def _render_dca_summary(result: DcaBacktestResult) -> None:
