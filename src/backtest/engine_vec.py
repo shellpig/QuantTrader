@@ -6,21 +6,15 @@ from dataclasses import dataclass
 
 import pandas as pd
 
+from src.backtest._helpers import (
+    build_cost_calculator_from_config,
+    calculate_max_buy_quantity,
+    is_etf_symbol,
+)
 from src.backtest.base import BacktesterBase
 from src.backtest.cost import CostCalculator
 from src.backtest.metrics import BacktestResult, calculate_metrics
-from src.core.config import get_config
 from src.strategy.base import StrategyBase
-
-
-ETF_SYMBOLS = {
-    "0050",
-    "0051",
-    "0056",
-    "006208",
-    "00878",
-    "00919",
-}
 
 
 @dataclass
@@ -44,19 +38,21 @@ class VectorizedBacktester(BacktesterBase):
         cost_calculator: CostCalculator | None = None,
     ) -> None:
         self.initial_capital = float(initial_capital)
-        self.cost_calculator = cost_calculator or self._build_cost_calculator_from_config()
+        self.cost_calculator = cost_calculator or build_cost_calculator_from_config()
 
     def run(self, strategy: StrategyBase, data: pd.DataFrame) -> BacktestResult:
         df = self._prepare_data(data)
         if df.empty:
             return calculate_metrics(pd.Series(dtype="float64"), pd.DataFrame())
 
+        strategy.reset_runtime_state()
+
         raw_signals = strategy.generate_signals(df)
         signals = pd.Series(raw_signals, index=df.index).fillna(0).astype("int8")
         signals = self._drop_warmup_signals(strategy, signals)
 
         symbol = self._infer_symbol(df)
-        is_etf = self._is_etf_symbol(symbol)
+        is_etf = is_etf_symbol(symbol)
 
         cash = self.initial_capital
         quantity = 0
@@ -70,7 +66,7 @@ class VectorizedBacktester(BacktesterBase):
             close_price = float(row["close"])
 
             if pending_action == "BUY" and quantity == 0:
-                buy_qty = self._calculate_order_quantity(cash, open_price)
+                buy_qty = self._calculate_order_quantity(cash, open_price, is_etf)
                 if buy_qty > 0:
                     buy_cost = self.cost_calculator.calculate(
                         price=open_price,
@@ -187,39 +183,16 @@ class VectorizedBacktester(BacktesterBase):
             out.iloc[:warmup] = 0
         return out
 
-    @staticmethod
-    def _calculate_order_quantity(cash: float, price: float) -> int:
-        whole_lot_qty = int((cash // price) // 1000) * 1000
-        if whole_lot_qty > 0:
-            return whole_lot_qty
-        odd_lot_qty = int(cash // price)
-        return max(odd_lot_qty, 0)
+    def _calculate_order_quantity(self, cash: float, price: float, is_etf: bool) -> int:
+        return calculate_max_buy_quantity(
+            cash=cash,
+            price=price,
+            cost_calculator=self.cost_calculator,
+            is_etf=is_etf,
+        )
 
     @staticmethod
     def _infer_symbol(df: pd.DataFrame) -> str:
         if "symbol" not in df.columns or df["symbol"].dropna().empty:
             return "UNKNOWN"
         return str(df["symbol"].dropna().iloc[0])
-
-    @staticmethod
-    def _is_etf_symbol(symbol: str) -> bool:
-        if symbol in ETF_SYMBOLS:
-            return True
-        return len(symbol) == 4 and symbol.startswith("00")
-
-    @staticmethod
-    def _build_cost_calculator_from_config() -> CostCalculator:
-        try:
-            cfg = get_config().get("backtest", {})
-            if not isinstance(cfg, dict):
-                cfg = {}
-        except Exception:
-            cfg = {}
-
-        return CostCalculator(
-            commission_rate=float(cfg.get("commission_rate", 0.001425)),
-            commission_discount=float(cfg.get("commission_discount", 0.6)),
-            tax_rate=float(cfg.get("tax_rate", 0.003)),
-            etf_tax_rate=float(cfg.get("etf_tax_rate", 0.001)),
-            slippage_ticks=int(cfg.get("slippage_ticks", 1)),
-        )

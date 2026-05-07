@@ -8,29 +8,17 @@ from typing import Any
 
 import pandas as pd
 
+from src.backtest._helpers import (
+    build_cost_calculator_from_config,
+    calculate_max_buy_quantity,
+    is_etf_symbol,
+)
 from src.backtest.account import SimpleAccount
 from src.backtest.base import BacktesterBase
 from src.backtest.cost import CostCalculator
 from src.backtest.events import BarEvent, FillEvent, OrderEvent
 from src.backtest.metrics import BacktestResult, calculate_metrics
-from src.core.config import get_config
 from src.strategy.base import StrategyBase
-
-
-ETF_SYMBOLS = {
-    "0050",
-    "0051",
-    "0056",
-    "006208",
-    "00878",
-    "00919",
-}
-
-
-@dataclass(frozen=True)
-class _MatchContext:
-    symbol: str
-    is_etf: bool
 
 
 @dataclass
@@ -54,7 +42,7 @@ class EventDrivenBacktester(BacktesterBase):
         cost_calculator: CostCalculator | None = None,
     ) -> None:
         self.initial_capital = float(initial_capital)
-        self.cost_calculator = cost_calculator or self._build_cost_calculator_from_config()
+        self.cost_calculator = cost_calculator or build_cost_calculator_from_config()
 
     def run(self, strategy: StrategyBase, data: pd.DataFrame) -> BacktestResult:
         df = self._prepare_data(data)
@@ -67,17 +55,23 @@ class EventDrivenBacktester(BacktesterBase):
         equity_records: list[dict[str, Any]] = []
         trade_records: list[dict[str, Any]] = []
         open_positions: dict[str, _OpenPosition] = {}
+        latest_prices: dict[str, float] = {}
 
         bars = list(df.itertuples())
         freq = self._infer_freq(df.index)
 
         for bar in bars:
-            bar_event, match_ctx = self._to_bar_event(bar, freq=freq)
+            bar_event = self._to_bar_event(bar, freq=freq)
 
-            # Step 1: execute pending orders at current bar open.
+            # Step 1: execute pending orders whose symbol matches the current bar open.
+            # Orders for other symbols are deferred until their matching bar arrives.
             if pending_orders:
+                deferred: list[OrderEvent] = []
                 for order in pending_orders:
-                    fill = self._simulate_fill(order=order, bar=bar_event, match_ctx=match_ctx, account=account)
+                    if order.symbol != bar_event.symbol:
+                        deferred.append(order)
+                        continue
+                    fill = self._simulate_fill(order=order, bar=bar_event, account=account)
                     if fill is None:
                         continue
                     account.apply_fill(fill)
@@ -85,18 +79,18 @@ class EventDrivenBacktester(BacktesterBase):
                     round_trip = self._update_round_trip_records(fill=fill, open_positions=open_positions)
                     if round_trip is not None:
                         trade_records.append(round_trip)
-                pending_orders.clear()
+                pending_orders = deferred
 
             # Step 2: strategy generates orders on current bar.
             new_orders = strategy.on_bar(bar_event, account) or []
             pending_orders.extend(new_orders)
 
-            # Step 3: mark-to-market equity using current close.
-            current_prices = {bar_event.symbol: bar_event.close}
+            # Step 3: mark-to-market using latest known price for every held symbol.
+            latest_prices[bar_event.symbol] = bar_event.close
             equity_records.append(
                 {
                     "date": bar_event.timestamp,
-                    "equity": account.get_total_value(current_prices),
+                    "equity": account.get_total_value(latest_prices),
                 }
             )
 
@@ -187,13 +181,14 @@ class EventDrivenBacktester(BacktesterBase):
 
         return df.dropna(subset=["open", "high", "low", "close"]).sort_index()
 
-    def _to_bar_event(self, bar: Any, freq: str) -> tuple[BarEvent, _MatchContext]:
+    @staticmethod
+    def _to_bar_event(bar: Any, freq: str) -> BarEvent:
         timestamp = pd.Timestamp(bar.Index)
         if timestamp.tz is None:
             timestamp = timestamp.tz_localize("UTC")
 
         symbol = str(getattr(bar, "symbol", "UNKNOWN") or "UNKNOWN")
-        bar_event = BarEvent(
+        return BarEvent(
             symbol=symbol,
             timestamp=timestamp.to_pydatetime(),
             open=float(bar.open),
@@ -203,13 +198,11 @@ class EventDrivenBacktester(BacktesterBase):
             volume=int(getattr(bar, "volume", 0)),
             freq=freq,
         )
-        return bar_event, _MatchContext(symbol=symbol, is_etf=self._is_etf_symbol(symbol))
 
     def _simulate_fill(
         self,
         order: OrderEvent,
         bar: BarEvent,
-        match_ctx: _MatchContext,
         account: SimpleAccount,
     ) -> FillEvent | None:
         side = order.side.upper()
@@ -225,13 +218,14 @@ class EventDrivenBacktester(BacktesterBase):
         else:
             raise ValueError(f"Unsupported order type: {order.order_type}")
 
+        is_etf = is_etf_symbol(order.symbol)
         quantity = int(order.quantity)
         if side == "BUY":
             quantity = self._resolve_buy_quantity(
                 requested_qty=quantity,
                 cash=account.get_cash(),
                 fill_price=float(fill_price),
-                is_etf=match_ctx.is_etf,
+                is_etf=is_etf,
             )
             if quantity <= 0:
                 return None
@@ -240,11 +234,11 @@ class EventDrivenBacktester(BacktesterBase):
             price=fill_price,
             quantity=quantity,
             side=side,
-            is_etf=match_ctx.is_etf,
+            is_etf=is_etf,
         )
 
         return FillEvent(
-            symbol=match_ctx.symbol,
+            symbol=order.symbol,
             side=side,
             quantity=quantity,
             fill_price=float(fill_price),
@@ -263,74 +257,13 @@ class EventDrivenBacktester(BacktesterBase):
     ) -> int:
         if requested_qty <= 0 or cash <= 0 or fill_price <= 0:
             return 0
-
-        upper = min(int(requested_qty), int(cash // fill_price))
-        if upper <= 0:
-            return 0
-
-        # Keep quantity preference aligned with vectorized engine:
-        # first try whole-lot (1000 shares), then fallback to odd-lot.
-        whole_lot_upper = (upper // 1000) * 1000
-        if whole_lot_upper > 0:
-            whole_lot_qty = self._max_affordable_buy_quantity(
-                upper=whole_lot_upper,
-                step=1000,
-                cash=cash,
-                fill_price=fill_price,
-                is_etf=is_etf,
-            )
-            if whole_lot_qty > 0:
-                return whole_lot_qty
-
-        return self._max_affordable_buy_quantity(
-            upper=upper,
-            step=1,
+        max_qty = calculate_max_buy_quantity(
             cash=cash,
-            fill_price=fill_price,
+            price=fill_price,
+            cost_calculator=self.cost_calculator,
             is_etf=is_etf,
         )
-
-    def _max_affordable_buy_quantity(
-        self,
-        *,
-        upper: int,
-        step: int,
-        cash: float,
-        fill_price: float,
-        is_etf: bool,
-    ) -> int:
-        if upper <= 0 or step <= 0:
-            return 0
-
-        units_high = upper // step
-        if units_high <= 0:
-            return 0
-
-        quantity_upper = units_high * step
-        if self._buy_total_spend(fill_price=fill_price, quantity=quantity_upper, is_etf=is_etf) <= cash:
-            return quantity_upper
-
-        units_low = 1
-        best_units = 0
-        while units_low <= units_high:
-            units_mid = (units_low + units_high) // 2
-            quantity_mid = units_mid * step
-            if self._buy_total_spend(fill_price=fill_price, quantity=quantity_mid, is_etf=is_etf) <= cash:
-                best_units = units_mid
-                units_low = units_mid + 1
-            else:
-                units_high = units_mid - 1
-
-        return best_units * step
-
-    def _buy_total_spend(self, *, fill_price: float, quantity: int, is_etf: bool) -> float:
-        commission = self.cost_calculator.calculate(
-            price=fill_price,
-            quantity=quantity,
-            side="BUY",
-            is_etf=is_etf,
-        ).commission
-        return float((fill_price * quantity) + commission)
+        return min(int(requested_qty), max_qty)
 
     @staticmethod
     def _build_result(equity_records: list[dict[str, Any]], trade_records: list[dict[str, Any]]) -> BacktestResult:
@@ -362,26 +295,3 @@ class EventDrivenBacktester(BacktesterBase):
         if alias == "H":
             return "60min"
         return inferred.lower()
-
-    @staticmethod
-    def _is_etf_symbol(symbol: str) -> bool:
-        if symbol in ETF_SYMBOLS:
-            return True
-        return len(symbol) == 4 and symbol.startswith("00")
-
-    @staticmethod
-    def _build_cost_calculator_from_config() -> CostCalculator:
-        try:
-            cfg = get_config().get("backtest", {})
-            if not isinstance(cfg, dict):
-                cfg = {}
-        except Exception:
-            cfg = {}
-
-        return CostCalculator(
-            commission_rate=float(cfg.get("commission_rate", 0.001425)),
-            commission_discount=float(cfg.get("commission_discount", 0.6)),
-            tax_rate=float(cfg.get("tax_rate", 0.003)),
-            etf_tax_rate=float(cfg.get("etf_tax_rate", 0.001)),
-            slippage_ticks=int(cfg.get("slippage_ticks", 1)),
-        )

@@ -48,12 +48,11 @@ def test_tearsheet_renders_without_error() -> None:
     assert "N/A" in summary_values
 
 
-def test_tearsheet_save_html() -> None:
+def test_tearsheet_save_html(tmp_path: Path) -> None:
     result = make_mock_result()
     report = TearsheetReport(result)
 
-    out = Path("data/backtest/test_tearsheet_unit.html")
-    out.parent.mkdir(parents=True, exist_ok=True)
+    out = tmp_path / "tearsheet.html"
     report.save_html(str(out))
 
     assert out.exists()

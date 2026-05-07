@@ -10,7 +10,7 @@ from typing import Any
 import pandas as pd
 
 from src.backtest.cost import CostCalculator
-from src.backtest.engine_vec import ETF_SYMBOLS
+from src.backtest._helpers import ETF_SYMBOLS
 from src.core.constants import TAIPEI_TZ
 from src.core.config import get_config
 
