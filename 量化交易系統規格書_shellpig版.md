@@ -1582,7 +1582,13 @@ class SweepRunSummary:
 - 採 rolling calendar window：固定 IS 長度向前滾動，不做 anchored expanding window。
 - 不做 portfolio WFA、Monte Carlo、AI 自動解讀、walk-forward matrix、新資料源或新增策略。
 
-**7-D-1　Rolling 視窗切割**
+**7-D-1　核心引擎（window splitter + runner + report + stability + CSV）**
+
+核心引擎階段負責 WFA 的資料切割、IS 參數掃描、OOS 驗證、彙總報表、參數穩定性與 CSV 匯出，不包含 Streamlit UI。
+
+**狀態（2026-05-09）：** ✅ 已驗證完成。`tests/test_walk_forward.py tests/test_sweep.py` 為 62 passed, 1 warning；第一次一般權限執行因 Windows temp 目錄權限導致 pytest `tmp_path` setup error，依專案規則 elevated 重跑同範圍後通過。`warning_count` 已補 regression test，確認 per-window warnings 與 unstable-parameter aggregate warnings 會一併計數。
+
+**Rolling 視窗切割**
 
 - 新增 `src/backtest/walk_forward.py`。
 - 預設參數：
@@ -1609,7 +1615,7 @@ class SweepRunSummary:
 資料長度不足：目前資料僅 {actual} 個月，WFA 至少需要 {required} 個月（IS {is_months} + OOS {oos_months} + {min_windows - 1} 段步進 × {step_months}）。
 ```
 
-**7-D-2　IS sweep + OOS 驗證**
+**IS sweep + OOS 驗證**
 
 - 每段 window 流程：
   1. 切出 IS data。
@@ -1639,7 +1645,7 @@ class SweepRunSummary:
 - 執行中顯示 `st.progress`，標示目前跑到第幾段視窗。
 - 若資料可產生超過 10 段，MVP 只取最早 10 段或要求使用者縮短區間。
 
-**7-D-3　WFA 結果模型**
+**WFA 結果模型**
 
 ```python
 @dataclass(frozen=True)
@@ -1678,7 +1684,7 @@ class WalkForwardSummary:
 - `skipped=True` 的視窗不計入 aggregate。
 - `valid_window_count` 只計算 `skipped=False` 的視窗。
 
-**7-D-4　WFA 指標與 degradation**
+**WFA 指標與 degradation**
 
 每段 window 明細至少包含：
 
@@ -1720,7 +1726,7 @@ degradation = oos_metric - is_metric
 - `degradation < 0` 表示 OOS 比 IS 差。
 - 絕對差值在不同量級下可能誤導，例如 `IS Sharpe=5.0, OOS Sharpe=4.0` 與 `IS Sharpe=0.5, OOS Sharpe=-0.5` 都是 `-1.0`。比率型 degradation `(oos - is) / abs(is)` 列為 follow-up，MVP 不做。
 
-**7-D-5　參數穩定性**
+**參數穩定性**
 
 - 只使用有效 window 的最佳參數，跳過 sweep 失敗視窗。
 - 對每個 numeric parameter 計算 `min`、`max`、`mean`、`median`、`std`、`cv`。
@@ -1743,7 +1749,7 @@ else:
 最佳參數在 WFA 視窗間變動過大（{param_name} CV={cv:.2f}），可能代表策略對參數高度敏感。
 ```
 
-**7-D-6　警告與失敗處理**
+**警告與失敗處理**
 
 | 條件 | 警告 | 行為 |
 | :--- | :--- | :--- |
@@ -1758,7 +1764,20 @@ else:
 - window table 中對 sweep 失敗視窗標記「掃描失敗，跳過」。
 - 若跳過後有效視窗數 `< min_windows`，觸發可信度不足警告。
 
-**7-D-7　UI 整合**
+**結果保存**
+
+- WFA 結果保存為 CSV，路徑：`data/backtest/walk_forward/`。
+- 檔名格式：`{symbol}_{strategy_type}_wfa_{timestamp}.csv`。
+- 至少輸出兩份 CSV：
+  - window summary CSV
+  - parameter stability CSV
+- CSV 需包含 window 範圍、best params、IS/OOS metrics、degradation、warnings、skipped flag。
+
+**7-D-2　UI tab + 文件 + 回歸**
+
+UI 階段負責回測頁 Walk-Forward tab、中文說明、執行前檢查、進度條、結果呈現、CSV 下載、文件更新與回歸驗收。
+
+**UI 整合**
 
 - 在回測頁新增「Walk-Forward」tab；不假設既有 tab 數固定。
 - UI 主要顯示中文；必要英文研究術語需附中文說明：
@@ -1784,14 +1803,11 @@ else:
   3. 參數穩定性表（min / median / max / cv / status）
   4. CSV export（window summary、parameter stability）
 
-**7-D-8　結果保存**
+**文件與回歸**
 
-- WFA 結果保存為 CSV，路徑：`data/backtest/walk_forward/`。
-- 檔名格式：`{symbol}_{strategy_type}_wfa_{timestamp}.csv`。
-- 至少輸出兩份 CSV：
-  - window summary CSV
-  - parameter stability CSV
-- CSV 需包含 window 範圍、best params、IS/OOS metrics、degradation、warnings、skipped flag。
+- 更新 `量化交易系統規格書_shellpig版.md`、`開發設計方針.md`、`測試指南.md`、`PROJECT_BRIEF.md`。
+- 補手動驗收清單。
+- 跑 Phase 7-D 指定測試與全非 integration 回歸。
 
 **Follow-up（本 Phase 不做）：**
 

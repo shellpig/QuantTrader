@@ -24,6 +24,7 @@ from src.core.strategy_config import (
 )
 
 MAX_COMBOS = 200
+MAX_SWEEP_COMBOS = MAX_COMBOS
 
 # Sweepable strategies (DCA excluded) and their parameter keys in order.
 SWEEP_PARAM_SPECS: dict[str, list[str]] = {
