@@ -2,7 +2,7 @@
 
 本文件供新 session 快速了解專案全貌，取代逐份閱讀全部規格文件。需要深入某區段時，按行號索引讀取對應文件。
 
-最後更新：2026-05-07
+最後更新：2026-05-09
 
 ---
 
@@ -27,10 +27,13 @@ src/
 ├── core/           config.py, constants.py, exceptions.py, strategy_config.py
 ├── data/           fetcher.py, cleaner.py, storage.py, maintenance.py
 ├── backtest/       base.py, engine_vec.py, engine_event.py, account.py,
-│                   events.py, cost.py, metrics.py, report.py, dca.py
+│                   events.py, cost.py, metrics.py, report.py, dca.py,
+│                   batch.py, sweep.py
 ├── strategy/
 │   ├── base.py     StrategyBase ABC
-│   └── examples/   ma_cross.py, dca.py（Phase 7-A 將新增 6 個策略檔）
+│   └── examples/   ma_cross.py, dca.py, rsi.py, kd_cross.py,
+│                   macd_cross.py, bollinger_band.py, bias.py,
+│                   donchian_breakout.py
 ├── indicators/     calculator.py（pandas-ta 封裝 + 別名映射）
 ├── ai/             advisor.py（LLM Provider Tool Use）
 └── ui/
@@ -48,6 +51,7 @@ tests/
 ├── test_e2e.py, test_strategy_config.py
 ├── test_dca_backtest.py, test_maintenance.py
 ├── test_backtest_page.py, test_themes.py, test_config_ui_section.py
+├── test_strategies.py, test_batch.py, test_sweep.py
 
 data/                （gitignore，執行時自動建立）
   raw/tw/{symbol}/       daily.parquet, minute.parquet
@@ -82,6 +86,12 @@ class StrategyBase(ABC):
 |:---|:---|:---|
 | `MACrossStrategy` | `moving_average_cross` | 雙均線交叉 |
 | `DollarCostAveragingStrategy` | `dollar_cost_averaging` | 定期定額（專用回測流程） |
+| `RSIStrategy` | `rsi` | RSI 超買超賣 |
+| `KDCrossStrategy` | `kd_cross` | KD 黃金/死亡交叉 |
+| `MACDCrossStrategy` | `macd_cross` | MACD DIF/DEA 交叉 |
+| `BollingerBandStrategy` | `bollinger_band` | 布林通道上下緣反轉 |
+| `BiasStrategy` | `bias` | 乖離率均值回歸 |
+| `DonchianBreakoutStrategy` | `donchian_breakout` | Donchian 高低通道突破 |
 
 ### 回測引擎
 
@@ -134,25 +144,25 @@ ui:
 | 4 | ✅ 完成 | AI 問答 + Streamlit UI（AIAdvisor、IndicatorEngine、4 頁 UI、E2E） |
 | 5 | ✅ 完成 | 回測體驗補充（5-A 股價走勢+EPS、5-B DCA+多策略 preset） |
 | 6 | ✅ 完成 | UI/UX 強化（6-A 6 套主題切換） |
-| 7-A | 📋 規格已寫 | 策略擴充：RSI、KD 交叉、MACD 交叉、布林通道、乖離率、Donchian 突破 + 中文 metadata |
-| 7-B | 📋 規格已寫 | 策略研究工作台：批次比較、結果保存、UI tab 重構、K 線圖、Signal/Trade overlay、指標副圖 |
-| 7-C | 📋 規格已寫 | 參數掃描與防過度最佳化：Grid Search、參數過濾、組合上限、樣本不足警告 |
+| 7-A | ✅ 完成 | 策略擴充：RSI、KD 交叉、MACD 交叉、布林通道、乖離率、Donchian 突破 + 中文 metadata |
+| 7-B | ✅ 完成 | 策略研究工作台：批次比較、結果保存、UI tab 重構、K 線圖、Signal/Trade overlay、指標副圖 |
+| 7-C | ✅ 完成 | 參數掃描與防過度最佳化：Grid Search、參數過濾、組合上限、樣本不足警告 |
 
 ## 當前待辦
 
 見 `已知問題.md`（每次必讀）。
 
-主線：Phase 1-6 全部完成。Phase 7-A/7-B/7-C 規格已寫入三份文件，待實作。實作順序：7-A → 7-B → 7-C。
+主線：Phase 1-7-C 已完成。Phase 7 已把 6 個新策略、策略研究工作台、批次比較、K 線/Signal/Trade overlay、參數掃描與防過度最佳化守門整合進回測頁。
 
-2026-05-08 狀態：
-- 最新 commit：`61ea6aa docs: align Phase 6-A theme names with implementation (V1.6)`
-- 主分支 clean，無未提交變更
-- 單元測試：136 passed, 8 deselected（integration）
+2026-05-09 狀態：
+- 最新 commit：`b9bb217 docs: sync test guide with 7-B/7-C actual implementation`
+- 測試文件統計：158 個單元測試、7 個 integration 測試、53 項手動驗收項目
+- Phase 7 目標回歸：`tests/test_strategies.py tests/test_strategy_config.py tests/test_batch.py tests/test_sweep.py` 至少 73 個測試全通過
 
 已知設計限制：
 - 兩引擎是不同典範（signal-based vs order-based），跨引擎只能比 per-share PnL
 - 引擎不支援加倉/分批進出，維持「全進全出」
-- `_calculate_order_quantity` sizing 未預留交易成本，邊界情況可能觸發 `Insufficient cash`
+- 事件引擎的 1min / 5min 資料支援仍列在 `已知問題.md`，分鐘 K 事件驅動回測前需處理
 
 ## 規格文件索引
 
