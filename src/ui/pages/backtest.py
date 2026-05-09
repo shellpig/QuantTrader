@@ -30,6 +30,16 @@ except ImportError:
     HAS_EXTRAS = False
 
 from src.backtest.batch import BatchResult, run_strategy_batch, save_batch_result_csv
+from src.backtest.sweep import (
+    MAX_COMBOS,
+    SWEEP_PARAM_SPECS,
+    SweepResult,
+    SweepRunSummary,
+    generate_param_grid,
+    parse_param_values,
+    run_parameter_sweep,
+    save_sweep_result_csv,
+)
 from src.backtest.engine_event import EventDrivenBacktester
 from src.backtest.engine_vec import VectorizedBacktester
 from src.backtest.metrics import BacktestResult
@@ -78,7 +88,7 @@ def render() -> None:
     st.title("回測")
     st.caption("執行策略回測、查看 Tearsheet，並補充股價均線與 EPS 資訊。")
 
-    tab1, tab2, tab3 = st.tabs(["單次回測", "策略比較", "歷史結果"])
+    tab1, tab2, tab3, tab4 = st.tabs(["單次回測", "策略比較", "參數掃描", "歷史結果"])
 
     with tab1:
         _render_single_backtest_tab()
@@ -87,6 +97,9 @@ def render() -> None:
         _render_batch_comparison_tab()
 
     with tab3:
+        _render_sweep_tab()
+
+    with tab4:
         _render_history_tab()
 
 
@@ -276,6 +289,231 @@ def _render_history_tab() -> None:
             st.caption(f"檔案路徑：{filepath}")
         except Exception as exc:  # noqa: BLE001
             st.error(f"讀取檔案失敗：{exc}")
+
+
+# ---------------------------------------------------------------------------
+# Tab 3: parameter sweep
+# ---------------------------------------------------------------------------
+
+_SWEEP_DEFAULTS: dict[str, dict[str, str]] = {
+    "moving_average_cross": {"short_window": "5,10,20", "long_window": "40,60,120"},
+    "rsi": {"period": "7,14,21", "oversold": "20,30", "overbought": "70,80"},
+    "kd_cross": {"k_period": "9,14", "d_period": "3,5", "smooth_k": "3,5"},
+    "macd_cross": {"fast": "8,12", "slow": "20,26", "signal": "7,9"},
+    "bollinger_band": {"period": "10,20,30", "std_dev": "1.5,2.0,2.5"},
+    "bias": {"ma_period": "10,20,30", "buy_bias": "-15,-10,-5", "sell_bias": "5,10,15"},
+    "donchian_breakout": {"entry_period": "10,20,55", "exit_period": "5,10,20"},
+}
+
+
+def _render_sweep_tab() -> None:
+    symbol, start_date, end_date = _input_symbol_and_dates("sweep")
+
+    sweep_types = list(SWEEP_PARAM_SPECS.keys())
+    type_labels = [STRATEGY_META[t]["label"] for t in sweep_types]
+    type_label = st.selectbox("策略類型", options=type_labels, key="sweep_strategy_type")
+    strategy_type = sweep_types[type_labels.index(type_label)]
+
+    meta = STRATEGY_META[strategy_type]
+    param_specs = SWEEP_PARAM_SPECS[strategy_type]
+    param_label_map = meta["param_labels"]
+    defaults = _SWEEP_DEFAULTS.get(strategy_type, {})
+
+    st.markdown("**參數掃描範圍**（每個參數輸入逗號分隔的候選值，如 `5,10,20`）")
+    param_inputs: dict[str, str] = {}
+    for param_key in param_specs:
+        label = param_label_map.get(param_key, param_key)
+        param_inputs[param_key] = st.text_input(
+            label,
+            value=defaults.get(param_key, ""),
+            key=f"sweep_{strategy_type}_{param_key}",
+        )
+
+    param_candidates: dict[str, list[Any]] = {}
+    parse_error = False
+    for k, raw in param_inputs.items():
+        vals = parse_param_values(raw)
+        if not vals:
+            st.warning(f"參數「{param_label_map.get(k, k)}」格式無效，請輸入逗號分隔的數字。")
+            parse_error = True
+        else:
+            param_candidates[k] = vals
+
+    over_limit = False
+    if not parse_error:
+        total_count, valid_list = generate_param_grid(strategy_type, param_candidates)
+        n_valid = len(valid_list)
+        over_limit = n_valid > MAX_COMBOS
+        if over_limit:
+            st.warning(f"合法組合數 {n_valid} 超過上限 {MAX_COMBOS}，請縮小參數範圍。")
+        else:
+            st.info(f"{total_count} 組合中 {n_valid} 個合法")
+
+    initial_capital = st.number_input(
+        "初始資金", value=1_000_000, min_value=1, step=100_000, key="sweep_capital_input"
+    )
+
+    if st.button("開始掃描", type="primary", key="sweep_run", disabled=(parse_error or over_limit)):
+        if not _TW_SYMBOL_PATTERN.fullmatch(symbol):
+            st.error("股票代碼格式錯誤，請輸入 4 到 6 碼台股代碼。")
+            return
+        start_ts = _as_taipei_start(pd.Timestamp(start_date))
+        end_exclusive = _as_taipei_start(pd.Timestamp(end_date)) + pd.Timedelta(days=1)
+        if end_exclusive <= start_ts:
+            st.error("結束日期必須晚於開始日期。")
+            return
+
+        with st.spinner("載入資料並執行參數掃描…"):
+            try:
+                data = _load_backtest_data(
+                    symbol=symbol,
+                    start_ts=start_ts,
+                    end_exclusive=end_exclusive,
+                    require_adjusted=True,
+                )
+            except Exception as exc:  # noqa: BLE001
+                st.error(f"讀取資料失敗：{exc}")
+                return
+
+            if data.empty:
+                st.warning("資料區間內沒有可用日線資料。")
+                return
+
+            sweep = run_parameter_sweep(
+                data=data,
+                symbol=symbol,
+                start_date=start_ts.strftime("%Y-%m-%d"),
+                end_date=(end_exclusive - pd.Timedelta(days=1)).strftime("%Y-%m-%d"),
+                strategy_type=strategy_type,
+                param_candidates=param_candidates,
+                initial_capital=float(initial_capital),
+            )
+
+        st.session_state["sweep_result"] = sweep
+        st.session_state["sweep_data"] = data
+        st.session_state["sweep_run_capital"] = float(initial_capital)
+
+    sweep_result: SweepResult | None = st.session_state.get("sweep_result")
+    if sweep_result is None:
+        st.info("設定股票代碼、日期與參數範圍後，點選「開始掃描」。")
+        return
+
+    _render_sweep_results(
+        sweep_result,
+        st.session_state.get("sweep_data", pd.DataFrame()),
+        initial_capital=st.session_state.get("sweep_run_capital", 1_000_000.0),
+    )
+
+
+def _render_sweep_results(
+    sweep: SweepResult,
+    data: pd.DataFrame,
+    initial_capital: float,
+) -> None:
+    meta = STRATEGY_META.get(sweep.strategy_type)
+    type_label = meta["label"] if meta else sweep.strategy_type
+
+    st.subheader(f"{sweep.symbol} 參數掃描結果（{sweep.start_date} ~ {sweep.end_date}）")
+    st.caption(
+        f"策略：{type_label}　"
+        f"{sweep.total_combos} 組合中 {sweep.valid_combos} 個合法"
+    )
+
+    _SORT_OPTIONS: dict[str, tuple[str, bool]] = {
+        "Sharpe Ratio": ("sharpe_ratio", False),
+        "總報酬": ("total_return", False),
+        "年化報酬": ("annual_return", False),
+        "最大回撤（升序）": ("max_drawdown", True),
+        "勝率": ("win_rate", False),
+        "Profit Factor": ("profit_factor", False),
+    }
+    sort_label = st.selectbox(
+        "排序依據", options=list(_SORT_OPTIONS.keys()), index=0, key="sweep_sort"
+    )
+    sort_col, sort_asc = _SORT_OPTIONS[sort_label]
+    top_n = st.slider("顯示筆數", min_value=1, max_value=50, value=20, key="sweep_top_n")
+
+    param_keys = SWEEP_PARAM_SPECS.get(sweep.strategy_type, [])
+    rows = []
+    for s in sweep.results:
+        if s.error:
+            continue
+        pf = s.profit_factor
+        dd = s.max_drawdown
+
+        trades_display = f"⚠ {s.total_trades} (樣本不足)" if s.sample_warning else str(s.total_trades)
+        dd_display = f"⚠ {dd * 100:.2f}%" if dd > 0.5 else f"{dd * 100:.2f}%"
+        pf_display = "N/A" if pf >= 999.0 else f"{pf:.2f}"
+
+        row: dict[str, Any] = {k: s.params.get(k, "") for k in param_keys}
+        row.update({
+            "總報酬": f"{s.total_return * 100:.2f}%",
+            "年化報酬": f"{s.annual_return * 100:.2f}%",
+            "最大回撤": dd_display,
+            "Sharpe": f"{s.sharpe_ratio:.2f}",
+            "勝率": f"{s.win_rate * 100:.2f}%",
+            "Profit Factor": pf_display,
+            "交易次數": trades_display,
+            "_sharpe_ratio": s.sharpe_ratio,
+            "_total_return": s.total_return,
+            "_annual_return": s.annual_return,
+            "_max_drawdown": dd,
+            "_win_rate": s.win_rate,
+            "_profit_factor": pf,
+            "_summary": s,
+        })
+        rows.append(row)
+
+    if not rows:
+        st.warning("掃描結果全部出錯，無法顯示。")
+        return
+
+    df_all = pd.DataFrame(rows)
+    df_sorted = df_all.sort_values(f"_{sort_col}", ascending=sort_asc).head(top_n).reset_index(drop=True)
+
+    display_cols = param_keys + ["總報酬", "年化報酬", "最大回撤", "Sharpe", "勝率", "Profit Factor", "交易次數"]
+    display_df = df_sorted[[c for c in display_cols if c in df_sorted.columns]]
+
+    st.subheader(f"Top {min(top_n, len(df_sorted))} 結果（依 {sort_label}）")
+
+    sel = st.dataframe(
+        display_df,
+        use_container_width=True,
+        hide_index=True,
+        selection_mode="single-row",
+        on_select="rerun",
+        key="sweep_table",
+    )
+
+    if st.button("匯出掃描結果", key="sweep_export"):
+        saved_path = save_sweep_result_csv(sweep)
+        st.success(f"已儲存：{saved_path}")
+
+    selected_rows = sel.selection.get("rows", []) if sel and hasattr(sel, "selection") else []
+    if not selected_rows:
+        return
+
+    row_idx = selected_rows[0]
+    s: SweepRunSummary = df_sorted.iloc[row_idx]["_summary"]
+    param_str = ", ".join(f"{k}={s.params[k]}" for k in param_keys if k in s.params)
+
+    st.divider()
+    st.subheader(f"詳細結果：{param_str}")
+
+    if s.result is None:
+        st.warning("此組合無詳細結果（執行時出錯）。")
+        return
+
+    _render_tearsheet_metrics(s.result)
+    if not data.empty:
+        _render_price_and_indicator_panel(
+            price_df=data,
+            trades=s.result.trades,
+            signals=s.result.signals,
+            symbol=sweep.symbol,
+            strategy_type=sweep.strategy_type,
+            strategy_params=s.params,
+        )
 
 
 # ---------------------------------------------------------------------------
