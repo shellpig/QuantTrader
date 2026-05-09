@@ -149,7 +149,7 @@ class VectorizedBacktester(BacktesterBase):
             dtype="float64",
         )
         trades_df = pd.DataFrame(trade_records)
-        return calculate_metrics(equity_curve=equity_curve, trades=trades_df)
+        return calculate_metrics(equity_curve=equity_curve, trades=trades_df, signals=signals)
 
     @staticmethod
     def _prepare_data(data: pd.DataFrame) -> pd.DataFrame:

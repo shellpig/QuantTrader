@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -10,8 +12,16 @@ import streamlit as st
 
 try:
     import plotly.graph_objects as go
-except ModuleNotFoundError:  # pragma: no cover - optional in some runtime environments
+    from plotly.subplots import make_subplots
+except ModuleNotFoundError:  # pragma: no cover
     go = None
+    make_subplots = None
+
+try:
+    import pandas_ta
+    HAS_PANDAS_TA = True
+except ImportError:
+    HAS_PANDAS_TA = False
 
 try:
     from streamlit_extras.metric_cards import style_metric_cards
@@ -19,14 +29,22 @@ try:
 except ImportError:
     HAS_EXTRAS = False
 
+from src.backtest.batch import BatchResult, run_strategy_batch, save_batch_result_csv
 from src.backtest.engine_event import EventDrivenBacktester
 from src.backtest.engine_vec import VectorizedBacktester
+from src.backtest.metrics import BacktestResult
 from src.backtest.report import TearsheetReport
 from src.backtest.dca import DcaBacktestResult, run_dca_backtest
 from src.core.config import get_config
 from src.core.constants import TAIPEI_TZ
 from src.core.exceptions import FetcherError
-from src.core.strategy_config import format_param_caption, get_strategy_presets, make_strategy_label
+from src.core.strategy_config import (
+    STRATEGY_META,
+    format_param_caption,
+    get_strategy_meta,
+    get_strategy_presets,
+    make_strategy_label,
+)
 from src.data.fetcher import FinMindFetcher
 from src.data.storage import ParquetStorage
 from src.strategy.examples.bias import BiasStrategy
@@ -43,36 +61,55 @@ _EVENT_ENGINE_LABEL = "事件驅動引擎"
 _TRADE_MARKER_BASE_SIZE = 10
 _TRADE_MARKER_HEIGHT_MULTIPLIER = 2.5
 _TRADE_MARKER_STEM_SIZE = int(round(_TRADE_MARKER_BASE_SIZE * _TRADE_MARKER_HEIGHT_MULTIPLIER))
+_COMPARISONS_DIR = Path("data/backtest/strategy_comparisons")
+_SWEEPS_DIR = Path("data/backtest/parameter_sweeps")
 
+_SUPPORTED_TYPES = {
+    "moving_average_cross", "dollar_cost_averaging",
+    "rsi", "kd_cross", "macd_cross", "bollinger_band", "bias", "donchian_breakout",
+}
+
+
+# ---------------------------------------------------------------------------
+# Top-level render
+# ---------------------------------------------------------------------------
 
 def render() -> None:
     st.title("回測")
     st.caption("執行策略回測、查看 Tearsheet，並補充股價均線與 EPS 資訊。")
 
-    today = pd.Timestamp.today().date()
-    default_start = (pd.Timestamp.today() - pd.Timedelta(days=365 * 3)).date()
+    tab1, tab2, tab3 = st.tabs(["單次回測", "策略比較", "歷史結果"])
+
+    with tab1:
+        _render_single_backtest_tab()
+
+    with tab2:
+        _render_batch_comparison_tab()
+
+    with tab3:
+        _render_history_tab()
+
+
+# ---------------------------------------------------------------------------
+# Tab 1: single backtest
+# ---------------------------------------------------------------------------
+
+def _render_single_backtest_tab() -> None:
+    symbol, start_date, end_date = _input_symbol_and_dates("single")
 
     c1, c2 = st.columns(2)
     with c1:
-        symbol = st.text_input("股票代碼", value="2330").strip()
-        start_date = st.date_input("開始日期", value=default_start)
+        engine_name = st.selectbox("回測引擎", options=[_VECTOR_ENGINE_LABEL, _EVENT_ENGINE_LABEL], index=0, key="single_engine")
     with c2:
-        engine_name = st.selectbox("回測引擎", options=[_VECTOR_ENGINE_LABEL, _EVENT_ENGINE_LABEL], index=0)
-        end_date = st.date_input("結束日期", value=today)
+        strategy_presets = get_strategy_presets(get_config())
+        strategy_labels = [make_strategy_label(p) for p in strategy_presets]
+        strategy_label = st.selectbox("策略", options=strategy_labels, index=0, key="single_strategy")
 
-    strategy_presets = get_strategy_presets(get_config())
-    strategy_labels = [make_strategy_label(preset) for preset in strategy_presets]
-    strategy_label = st.selectbox("策略", options=strategy_labels, index=0)
     selected_strategy = strategy_presets[strategy_labels.index(strategy_label)]
     selected_type = str(selected_strategy.get("type", "")).strip().lower()
     selected_params = selected_strategy.get("params", {}) if isinstance(selected_strategy.get("params"), dict) else {}
 
-    _SUPPORTED_TYPES = {
-        "moving_average_cross", "dollar_cost_averaging",
-        "rsi", "kd_cross", "macd_cross", "bollinger_band", "bias", "donchian_breakout",
-    }
     if selected_type in _SUPPORTED_TYPES:
-        from src.core.strategy_config import get_strategy_meta
         meta = get_strategy_meta(selected_type)
         if meta:
             st.caption(f"{meta['description']}　買進：{meta['buy_hint']}　賣出：{meta['sell_hint']}")
@@ -82,7 +119,7 @@ def render() -> None:
     else:
         st.warning(f"此策略類型目前未支援執行：{selected_type}")
 
-    if st.button("開始回測", type="primary"):
+    if st.button("開始回測", type="primary", key="single_run"):
         _run_backtest(
             symbol=symbol,
             start_date=pd.Timestamp(start_date),
@@ -91,6 +128,175 @@ def render() -> None:
             strategy_preset=selected_strategy,
         )
 
+
+# ---------------------------------------------------------------------------
+# Tab 2: batch comparison
+# ---------------------------------------------------------------------------
+
+def _render_batch_comparison_tab() -> None:
+    symbol, start_date, end_date = _input_symbol_and_dates("batch")
+
+    if st.button("批次回測全部策略", type="primary", key="batch_run"):
+        if not _TW_SYMBOL_PATTERN.fullmatch(symbol):
+            st.error("股票代碼格式錯誤，請輸入 4 到 6 碼台股代碼。")
+            return
+        start_ts = _as_taipei_start(pd.Timestamp(start_date))
+        end_exclusive = _as_taipei_start(pd.Timestamp(end_date)) + pd.Timedelta(days=1)
+        if end_exclusive <= start_ts:
+            st.error("結束日期必須晚於開始日期。")
+            return
+
+        with st.spinner("載入資料並執行批次回測…"):
+            try:
+                data = _load_backtest_data(
+                    symbol=symbol,
+                    start_ts=start_ts,
+                    end_exclusive=end_exclusive,
+                    require_adjusted=True,
+                )
+            except Exception as exc:  # noqa: BLE001
+                st.error(f"讀取資料失敗：{exc}")
+                return
+
+            if data.empty:
+                st.warning("資料區間內沒有可用日線資料。")
+                return
+
+            presets = get_strategy_presets(get_config())
+            batch = run_strategy_batch(
+                data=data,
+                symbol=symbol,
+                start_date=start_ts.strftime("%Y-%m-%d"),
+                end_date=(end_exclusive - pd.Timedelta(days=1)).strftime("%Y-%m-%d"),
+                presets=presets,
+            )
+
+        st.session_state["batch_result"] = batch
+        st.session_state["batch_data"] = data
+        st.session_state["batch_presets"] = presets
+
+    batch: BatchResult | None = st.session_state.get("batch_result")
+    if batch is None:
+        st.info("設定股票代碼與日期後，點選「批次回測全部策略」。")
+        return
+
+    # Build comparison dataframe
+    rows = []
+    for s in batch.summaries:
+        meta = STRATEGY_META.get(s.strategy_type)
+        type_label = meta["label"] if meta else s.strategy_type
+        pf = s.profit_factor
+        rows.append({
+            "策略名稱": s.preset_name,
+            "策略類型": type_label,
+            "總報酬": f"{s.total_return * 100:.2f}%" if not s.error else "—",
+            "年化報酬": f"{s.annual_return * 100:.2f}%" if not s.error else "—",
+            "最大回撤": f"{s.max_drawdown * 100:.2f}%" if not s.error else "—",
+            "Sharpe": f"{s.sharpe_ratio:.2f}" if not s.error else "—",
+            "勝率": f"{s.win_rate * 100:.2f}%" if not s.error else "—",
+            "Profit Factor": ("N/A" if pf >= 999.0 else f"{pf:.2f}") if not s.error else "—",
+            "交易次數": s.total_trades if not s.error else "—",
+            "備註": s.error or "",
+        })
+
+    df_compare = pd.DataFrame(rows)
+
+    st.subheader(f"{batch.symbol} 策略比較（{batch.start_date} ~ {batch.end_date}）")
+
+    sel = st.dataframe(
+        df_compare,
+        use_container_width=True,
+        hide_index=True,
+        selection_mode="single-row",
+        on_select="rerun",
+        key="batch_table",
+    )
+
+    # Export button
+    if st.button("匯出結果為 CSV", key="batch_export"):
+        saved_path = save_batch_result_csv(batch)
+        st.success(f"已儲存：{saved_path}")
+
+    # Expand selected strategy
+    selected_rows = sel.selection.get("rows", []) if sel and hasattr(sel, "selection") else []
+    if selected_rows:
+        idx = selected_rows[0]
+        summary = batch.summaries[idx]
+        if summary.error:
+            st.warning(f"此策略回測失敗，無法展開詳細結果：{summary.error}")
+        elif summary.result is not None:
+            st.divider()
+            st.subheader(f"詳細結果：{summary.preset_name}")
+            result = summary.result
+            data: pd.DataFrame = st.session_state.get("batch_data", pd.DataFrame())
+            presets = st.session_state.get("batch_presets", [])
+            preset = next((p for p in presets if p.get("name") == summary.preset_name), {})
+            _render_tearsheet_metrics(result)
+            _render_price_and_indicator_panel(
+                price_df=data,
+                trades=result.trades,
+                signals=result.signals,
+                symbol=batch.symbol,
+                strategy_type=summary.strategy_type,
+                strategy_params=preset.get("params", {}),
+            )
+
+
+# ---------------------------------------------------------------------------
+# Tab 3: history
+# ---------------------------------------------------------------------------
+
+def _render_history_tab() -> None:
+    st.subheader("歷史比較結果")
+    _COMPARISONS_DIR.mkdir(parents=True, exist_ok=True)
+    _SWEEPS_DIR.mkdir(parents=True, exist_ok=True)
+
+    comparison_files = sorted(_COMPARISONS_DIR.glob("*.csv"), reverse=True)
+    sweep_files = sorted(_SWEEPS_DIR.glob("*.csv"), reverse=True)
+
+    # Build labelled list: show source directory prefix for disambiguation
+    file_entries: list[tuple[str, Path]] = (
+        [(f"[策略比較] {f.name}", f) for f in comparison_files]
+        + [(f"[參數掃描] {f.name}", f) for f in sweep_files]
+    )
+
+    if not file_entries:
+        st.info(
+            f"尚無歷史結果。執行批次回測並匯出後，檔案會出現在 {_COMPARISONS_DIR} 或 {_SWEEPS_DIR}。"
+        )
+        return
+
+    labels = [label for label, _ in file_entries]
+    chosen = st.selectbox("選擇歷史檔案", options=labels, key="history_file")
+    if chosen:
+        _, filepath = file_entries[labels.index(chosen)]
+        try:
+            df = pd.read_csv(filepath, encoding="utf-8-sig")
+            st.dataframe(df, use_container_width=True, hide_index=True)
+            st.caption(f"檔案路徑：{filepath}")
+        except Exception as exc:  # noqa: BLE001
+            st.error(f"讀取檔案失敗：{exc}")
+
+
+# ---------------------------------------------------------------------------
+# Shared input helper
+# ---------------------------------------------------------------------------
+
+def _input_symbol_and_dates(key_prefix: str) -> tuple[str, Any, Any]:
+    today = pd.Timestamp.today().date()
+    default_start = (pd.Timestamp.today() - pd.Timedelta(days=365 * 3)).date()
+    c1, c2 = st.columns(2)
+    with c1:
+        symbol = st.text_input("股票代碼", value="2330", key=f"{key_prefix}_symbol").strip()
+        start_date = st.date_input("開始日期", value=default_start, key=f"{key_prefix}_start")
+    with c2:
+        end_date = st.date_input("結束日期", value=today, key=f"{key_prefix}_end")
+    return symbol, start_date, end_date
+
+
+# ---------------------------------------------------------------------------
+# Single backtest execution
+# ---------------------------------------------------------------------------
 
 def _run_backtest(
     *,
@@ -135,15 +341,13 @@ def _run_backtest(
             if ma_short >= ma_long:
                 st.error("策略參數錯誤：short_window 必須小於 long_window。")
                 return
-
             strategy = MACrossStrategy(ma_short=ma_short, ma_long=ma_long)
-            _run_standard_backtest(strategy, data, engine_name, symbol, start_ts, end_exclusive)
+            _run_standard_backtest(strategy, data, engine_name, symbol, start_ts, end_exclusive, strategy_type, strategy_params)
             return
 
         if strategy_type == "dollar_cost_averaging":
             if engine_name != _VECTOR_ENGINE_LABEL:
                 st.info("定期定額策略使用專用回測流程，已忽略回測引擎選擇。")
-
             dca_result = run_dca_backtest(
                 data=data,
                 symbol=symbol,
@@ -153,10 +357,16 @@ def _run_backtest(
             )
             _render_dca_summary(dca_result)
             _render_dca_transactions(dca_result.transactions)
-
             trade_markers = _dca_transactions_to_trade_markers(dca_result.transactions)
             st.divider()
-            _render_price_panel(price_df=data, trades=trade_markers, symbol=symbol)
+            _render_price_and_indicator_panel(
+                price_df=data,
+                trades=trade_markers,
+                signals=None,
+                symbol=symbol,
+                strategy_type=strategy_type,
+                strategy_params=strategy_params,
+            )
             st.divider()
             _render_eps_panel(symbol=symbol, end_ts=end_exclusive - pd.Timedelta(days=1))
             return
@@ -167,53 +377,40 @@ def _run_backtest(
                 oversold=float(strategy_params.get("oversold", 30)),
                 overbought=float(strategy_params.get("overbought", 70)),
             )
-            _run_standard_backtest(strategy, data, engine_name, symbol, start_ts, end_exclusive)
-            return
-
-        if strategy_type == "kd_cross":
+        elif strategy_type == "kd_cross":
             strategy = KDCrossStrategy(
                 k_period=int(strategy_params.get("k_period", 9)),
                 d_period=int(strategy_params.get("d_period", 3)),
                 smooth_k=int(strategy_params.get("smooth_k", 3)),
             )
-            _run_standard_backtest(strategy, data, engine_name, symbol, start_ts, end_exclusive)
-            return
-
-        if strategy_type == "macd_cross":
+        elif strategy_type == "macd_cross":
             strategy = MACDCrossStrategy(
                 fast=int(strategy_params.get("fast", 12)),
                 slow=int(strategy_params.get("slow", 26)),
                 signal=int(strategy_params.get("signal", 9)),
             )
-            _run_standard_backtest(strategy, data, engine_name, symbol, start_ts, end_exclusive)
-            return
-
-        if strategy_type == "bollinger_band":
+        elif strategy_type == "bollinger_band":
             strategy = BollingerBandStrategy(
                 period=int(strategy_params.get("period", 20)),
                 std_dev=float(strategy_params.get("std_dev", 2.0)),
             )
-            _run_standard_backtest(strategy, data, engine_name, symbol, start_ts, end_exclusive)
-            return
-
-        if strategy_type == "bias":
+        elif strategy_type == "bias":
             strategy = BiasStrategy(
                 ma_period=int(strategy_params.get("ma_period", 20)),
                 buy_bias=float(strategy_params.get("buy_bias", -10.0)),
                 sell_bias=float(strategy_params.get("sell_bias", 10.0)),
             )
-            _run_standard_backtest(strategy, data, engine_name, symbol, start_ts, end_exclusive)
-            return
-
-        if strategy_type == "donchian_breakout":
+        elif strategy_type == "donchian_breakout":
             strategy = DonchianBreakoutStrategy(
                 entry_period=int(strategy_params.get("entry_period", 20)),
                 exit_period=int(strategy_params.get("exit_period", 10)),
             )
-            _run_standard_backtest(strategy, data, engine_name, symbol, start_ts, end_exclusive)
+        else:
+            st.error(f"目前不支援策略類型：{strategy_type}")
             return
 
-        st.error(f"目前不支援策略類型：{strategy_type}")
+        _run_standard_backtest(strategy, data, engine_name, symbol, start_ts, end_exclusive, strategy_type, strategy_params)
+
     except Exception as exc:  # noqa: BLE001
         st.error(f"回測執行失敗：{exc}")
 
@@ -225,12 +422,28 @@ def _run_standard_backtest(
     symbol: str,
     start_ts: pd.Timestamp,
     end_exclusive: pd.Timestamp,
+    strategy_type: str = "",
+    strategy_params: dict | None = None,
 ) -> None:
-    """Run a standard signal-based backtest and render tearsheet + price panel + EPS."""
-    from src.strategy.base import StrategyBase
     engine = VectorizedBacktester() if engine_name == _VECTOR_ENGINE_LABEL else EventDrivenBacktester()
     result = engine.run(strategy=strategy, data=data)  # type: ignore[arg-type]
 
+    _render_tearsheet_metrics(result)
+
+    st.divider()
+    _render_price_and_indicator_panel(
+        price_df=data,
+        trades=result.trades,
+        signals=result.signals,
+        symbol=symbol,
+        strategy_type=strategy_type,
+        strategy_params=strategy_params or {},
+    )
+    st.divider()
+    _render_eps_panel(symbol=symbol, end_ts=end_exclusive - pd.Timedelta(days=1))
+
+
+def _render_tearsheet_metrics(result: BacktestResult) -> None:
     report = TearsheetReport(result)
     figures = report.get_streamlit_figures()
 
@@ -243,8 +456,7 @@ def _run_standard_backtest(
 
     config = get_config()
     ui_section = config.get("ui", {}) if isinstance(config, dict) else {}
-    use_extras = bool(ui_section.get("use_extras", True))
-    if use_extras and HAS_EXTRAS:
+    if bool(ui_section.get("use_extras", True)) and HAS_EXTRAS:
         style_metric_cards()
 
     st.plotly_chart(figures["equity"], use_container_width=True)
@@ -252,11 +464,349 @@ def _run_standard_backtest(
     st.plotly_chart(figures["monthly"], use_container_width=True)
     st.plotly_chart(figures["summary"], use_container_width=True)
 
-    st.divider()
-    _render_price_panel(price_df=data, trades=result.trades, symbol=symbol)
-    st.divider()
-    _render_eps_panel(symbol=symbol, end_ts=end_exclusive - pd.Timedelta(days=1))
 
+# ---------------------------------------------------------------------------
+# Price + indicator chart (7-B-4, 7-B-5, 7-B-6)
+# ---------------------------------------------------------------------------
+
+def _render_price_and_indicator_panel(
+    *,
+    price_df: pd.DataFrame,
+    trades: pd.DataFrame,
+    signals: pd.Series | None,
+    symbol: str,
+    strategy_type: str | None = None,
+    strategy_params: dict | None = None,
+) -> None:
+    st.subheader("股價走勢、均線與成交點位")
+    if price_df.empty:
+        st.info("本區間沒有可顯示的股價資料。")
+        return
+    if go is None:
+        st.warning("缺少 plotly，無法顯示圖表。")
+        return
+
+    params = strategy_params or {}
+    features = _build_price_features(price_df)
+
+    has_ohlc = all(c in price_df.columns for c in ("open", "high", "low", "close"))
+    indicator_rows = _indicator_subplot_rows(strategy_type)
+    n_rows = 1 + len(indicator_rows)
+    row_heights = _compute_row_heights(n_rows)
+
+    if n_rows > 1:
+        subplot_titles = [""] + [r["title"] for r in indicator_rows]
+        fig = make_subplots(
+            rows=n_rows,
+            cols=1,
+            shared_xaxes=True,
+            vertical_spacing=0.04,
+            row_heights=row_heights,
+            subplot_titles=subplot_titles,
+        )
+    else:
+        fig = go.Figure()
+
+    def _add(trace: go.BaseTraceType, row: int = 1) -> None:
+        if n_rows > 1:
+            fig.add_trace(trace, row=row, col=1)
+        else:
+            fig.add_trace(trace)
+
+    # --- Main chart: candlestick or fallback line ---
+    dates = features["date"]
+    if has_ohlc:
+        _add(go.Candlestick(
+            x=dates,
+            open=price_df["open"],
+            high=price_df["high"],
+            low=price_df["low"],
+            close=price_df["close"],
+            name="K線",
+            increasing_line_color="#d62728",
+            decreasing_line_color="#2ca02c",
+            increasing_fillcolor="#d62728",
+            decreasing_fillcolor="#2ca02c",
+        ))
+    else:
+        _add(go.Scatter(x=dates, y=features["close"], mode="lines", name="收盤價",
+                        line={"color": "#1f77b4", "width": 2}, hoverinfo="skip"))
+
+    # MA lines
+    _add(go.Scatter(x=dates, y=features["ma5"], mode="lines", name="週線 MA5",
+                    line={"color": "#ff7f0e", "width": 1.4}, hoverinfo="skip"))
+    _add(go.Scatter(x=dates, y=features["ma20"], mode="lines", name="月線 MA20",
+                    line={"color": "#2ca02c", "width": 1.4}, hoverinfo="skip"))
+    _add(go.Scatter(x=dates, y=features["ma60"], mode="lines", name="季線 MA60",
+                    line={"color": "#9467bd", "width": 1.4}, hoverinfo="skip"))
+
+    # Overlays for BB and Donchian on main chart
+    if strategy_type == "bollinger_band" and HAS_PANDAS_TA:
+        period = int(params.get("period", 20))
+        std_dev = float(params.get("std_dev", 2.0))
+        close = pd.to_numeric(price_df["close"], errors="coerce")
+        bb = pandas_ta.bbands(close, length=period, std=std_dev)
+        if bb is not None:
+            upper_col = next((c for c in bb.columns if c.startswith("BBU_")), None)
+            mid_col = next((c for c in bb.columns if c.startswith("BBM_")), None)
+            lower_col = next((c for c in bb.columns if c.startswith("BBL_")), None)
+            bb_dates = dates if len(bb) == len(dates) else dates.iloc[-len(bb):]
+            if upper_col:
+                _add(go.Scatter(x=bb_dates, y=bb[upper_col], mode="lines", name="BB上軌",
+                                line={"color": "#aec7e8", "width": 1, "dash": "dot"}, hoverinfo="skip"))
+            if mid_col:
+                _add(go.Scatter(x=bb_dates, y=bb[mid_col], mode="lines", name="BB中軌",
+                                line={"color": "#aec7e8", "width": 1}, hoverinfo="skip"))
+            if lower_col:
+                _add(go.Scatter(x=bb_dates, y=bb[lower_col], mode="lines", name="BB下軌",
+                                line={"color": "#aec7e8", "width": 1, "dash": "dot"}, hoverinfo="skip"))
+
+    elif strategy_type == "donchian_breakout":
+        entry_period = int(params.get("entry_period", 20))
+        exit_period = int(params.get("exit_period", 10))
+        high = pd.to_numeric(price_df["high"], errors="coerce")
+        low = pd.to_numeric(price_df["low"], errors="coerce")
+        dc_upper = high.rolling(entry_period).max().shift(1)
+        dc_lower = low.rolling(exit_period).min().shift(1)
+        _add(go.Scatter(x=dates, y=dc_upper, mode="lines", name=f"DC上軌({entry_period})",
+                        line={"color": "#17becf", "width": 1, "dash": "dot"}, hoverinfo="skip"))
+        _add(go.Scatter(x=dates, y=dc_lower, mode="lines", name=f"DC下軌({exit_period})",
+                        line={"color": "#bcbd22", "width": 1, "dash": "dot"}, hoverinfo="skip"))
+
+    # Trade markers (7-B-5)
+    buy_marks, sell_marks = _extract_trade_markers(trades=trades)
+    _add_trade_marker_traces(fig=fig, marks=buy_marks, label="買進點", hover_title="買進",
+                             color="#d62728", tip_symbol="triangle-up", stem_symbol="line-ns-open",
+                             row=1, n_rows=n_rows)
+    _add_trade_marker_traces(fig=fig, marks=sell_marks, label="賣出點", hover_title="賣出",
+                             color="#17becf", tip_symbol="triangle-down", stem_symbol="line-ns-open",
+                             row=1, n_rows=n_rows)
+
+    # Signal markers (7-B-5) — only for vectorized engine
+    if signals is not None:
+        _add_signal_marker_traces(fig=fig, signals=signals, price_df=price_df, row=1, n_rows=n_rows)
+
+    # Hover alignment frame on main chart
+    hover_frame = _build_hover_alignment_frame(features)
+    hover_trace = go.Scatter(
+        x=hover_frame["calendar_date"],
+        y=hover_frame["close"],
+        mode="lines+markers",
+        showlegend=False,
+        name="",
+        line={"width": 1, "color": "rgba(0,0,0,0.001)"},
+        marker={"size": 8, "color": "rgba(0,0,0,0.001)"},
+        customdata=hover_frame[["trade_date_text", "close_text", "ma5_text", "ma20_text", "ma60_text"]].to_numpy(),
+        hovertemplate=(
+            "日期: %{customdata[0]}<br>"
+            "收盤價: %{customdata[1]}<br>"
+            "週線 MA5: %{customdata[2]}<br>"
+            "月線 MA20: %{customdata[3]}<br>"
+            "季線 MA60: %{customdata[4]}<extra></extra>"
+        ),
+    )
+    _add(hover_trace)
+
+    # Indicator subplots (7-B-6)
+    for subplot_idx, irow in enumerate(indicator_rows, start=2):
+        _add_indicator_subplot(
+            fig=fig,
+            row=subplot_idx,
+            n_rows=n_rows,
+            price_df=price_df,
+            strategy_type=strategy_type,
+            params=params,
+            irow_cfg=irow,
+        )
+
+    # Layout
+    from src.ui.themes import get_theme
+    config = get_config()
+    ui_section = config.get("ui", {}) if isinstance(config, dict) else {}
+    theme_name = str(ui_section.get("theme", "arctic_light"))
+    _, palette = get_theme(theme_name)
+
+    layout_kw: dict = dict(
+        template=palette["plotly_template"],
+        paper_bgcolor=palette["surface"],
+        plot_bgcolor=palette["surface"],
+        title=f"{symbol} 回測區間走勢",
+        hovermode="x unified" if n_rows > 1 else "closest",
+        legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "left", "x": 0},
+    )
+    if n_rows == 1:
+        layout_kw["xaxis_title"] = "日期"
+        layout_kw["yaxis_title"] = "價格"
+
+    fig.update_layout(**layout_kw)
+
+    # Hide rangeslider on all but last x-axis to keep layout tidy
+    if n_rows > 1:
+        fig.update_xaxes(rangeslider_visible=False)
+
+    st.plotly_chart(fig, use_container_width=True)
+    st.caption("K線：漲紅跌綠（台股慣例）。均線：MA5 / MA20 / MA60。Signal marker（菱形）為策略原始訊號，Trade marker（三角形）為引擎實際成交點。")
+
+
+def _indicator_subplot_rows(strategy_type: str | None) -> list[dict]:
+    """Return list of subplot row configs for the given strategy type."""
+    if strategy_type == "rsi":
+        return [{"title": "RSI", "kind": "rsi"}]
+    if strategy_type == "kd_cross":
+        return [{"title": "KD", "kind": "kd"}]
+    if strategy_type == "macd_cross":
+        return [{"title": "MACD", "kind": "macd"}]
+    if strategy_type == "bias":
+        return [{"title": "乖離率 BIAS", "kind": "bias"}]
+    return []
+
+
+def _compute_row_heights(n_rows: int) -> list[float]:
+    if n_rows == 1:
+        return [1.0]
+    main = 0.65
+    sub = (1.0 - main) / (n_rows - 1)
+    return [main] + [sub] * (n_rows - 1)
+
+
+def _add_indicator_subplot(
+    *,
+    fig: go.Figure,
+    row: int,
+    n_rows: int,
+    price_df: pd.DataFrame,
+    strategy_type: str | None,
+    params: dict,
+    irow_cfg: dict,
+) -> None:
+    if not HAS_PANDAS_TA:
+        return
+
+    kind = irow_cfg["kind"]
+    close = pd.to_numeric(price_df["close"], errors="coerce")
+    dates = pd.to_datetime(
+        price_df["date"] if "date" in price_df.columns else price_df.index, errors="coerce"
+    )
+
+    def _add(trace: go.BaseTraceType) -> None:
+        fig.add_trace(trace, row=row, col=1)
+
+    if kind == "rsi":
+        period = int(params.get("period", 14))
+        rsi = pandas_ta.rsi(close, length=period)
+        oversold = float(params.get("oversold", 30))
+        overbought = float(params.get("overbought", 70))
+        _add(go.Scatter(x=dates, y=rsi, mode="lines", name="RSI",
+                        line={"color": "#1f77b4", "width": 1.5}))
+        _add(go.Scatter(x=dates, y=[overbought] * len(dates), mode="lines", name=f"超買({overbought:.0f})",
+                        line={"color": "#d62728", "width": 1, "dash": "dash"}, hoverinfo="skip"))
+        _add(go.Scatter(x=dates, y=[oversold] * len(dates), mode="lines", name=f"超賣({oversold:.0f})",
+                        line={"color": "#2ca02c", "width": 1, "dash": "dash"}, hoverinfo="skip",
+                        fill="tonexty", fillcolor="rgba(44,160,44,0.05)"))
+
+    elif kind == "kd":
+        k_period = int(params.get("k_period", 9))
+        d_period = int(params.get("d_period", 3))
+        smooth_k = int(params.get("smooth_k", 3))
+        high = pd.to_numeric(price_df["high"], errors="coerce")
+        low = pd.to_numeric(price_df["low"], errors="coerce")
+        stoch = pandas_ta.stoch(high=high, low=low, close=close,
+                                k=k_period, d=d_period, smooth_k=smooth_k)
+        if stoch is not None:
+            k_col = next((c for c in stoch.columns if c.startswith("STOCHk_")), None)
+            d_col = next((c for c in stoch.columns if c.startswith("STOCHd_")), None)
+            if k_col:
+                _add(go.Scatter(x=dates, y=stoch[k_col], mode="lines", name="K值",
+                                line={"color": "#1f77b4", "width": 1.5}))
+            if d_col:
+                _add(go.Scatter(x=dates, y=stoch[d_col], mode="lines", name="D值",
+                                line={"color": "#ff7f0e", "width": 1.5}))
+
+    elif kind == "macd":
+        fast = int(params.get("fast", 12))
+        slow = int(params.get("slow", 26))
+        signal_p = int(params.get("signal", 9))
+        macd_df = pandas_ta.macd(close, fast=fast, slow=slow, signal=signal_p)
+        if macd_df is not None:
+            macd_col = next((c for c in macd_df.columns if c.startswith("MACD_")), None)
+            sig_col = next((c for c in macd_df.columns if c.startswith("MACDs_")), None)
+            hist_col = next((c for c in macd_df.columns if c.startswith("MACDh_")), None)
+            if hist_col:
+                hist = macd_df[hist_col]
+                bar_colors = ["#d62728" if v >= 0 else "#2ca02c" for v in hist.fillna(0)]
+                _add(go.Bar(x=dates, y=hist, name="Histogram", marker_color=bar_colors,
+                            opacity=0.6, showlegend=True))
+            if macd_col:
+                _add(go.Scatter(x=dates, y=macd_df[macd_col], mode="lines", name="MACD",
+                                line={"color": "#1f77b4", "width": 1.5}))
+            if sig_col:
+                _add(go.Scatter(x=dates, y=macd_df[sig_col], mode="lines", name="Signal",
+                                line={"color": "#ff7f0e", "width": 1.5}))
+
+    elif kind == "bias":
+        ma_period = int(params.get("ma_period", 20))
+        ma = close.rolling(ma_period, min_periods=ma_period).mean()
+        bias = (close - ma) / ma * 100
+        buy_bias = float(params.get("buy_bias", -10.0))
+        sell_bias = float(params.get("sell_bias", 10.0))
+        _add(go.Scatter(x=dates, y=bias, mode="lines", name="BIAS",
+                        line={"color": "#1f77b4", "width": 1.5}))
+        _add(go.Scatter(x=dates, y=[sell_bias] * len(dates), mode="lines",
+                        name=f"賣出門檻({sell_bias:.1f}%)",
+                        line={"color": "#d62728", "width": 1, "dash": "dash"}, hoverinfo="skip"))
+        _add(go.Scatter(x=dates, y=[buy_bias] * len(dates), mode="lines",
+                        name=f"買進門檻({buy_bias:.1f}%)",
+                        line={"color": "#2ca02c", "width": 1, "dash": "dash"}, hoverinfo="skip"))
+
+
+def _add_signal_marker_traces(
+    *,
+    fig: go.Figure,
+    signals: pd.Series,
+    price_df: pd.DataFrame,
+    row: int,
+    n_rows: int,
+) -> None:
+    """Add semi-transparent diamond markers for raw strategy signals."""
+    price_indexed = price_df.copy()
+    if "date" in price_indexed.columns:
+        price_indexed = price_indexed.set_index(pd.to_datetime(price_indexed["date"], errors="coerce"))
+    close_map = price_indexed["close"].to_dict()
+
+    sig_index = pd.to_datetime(signals.index, errors="coerce")
+    buy_dates = sig_index[signals.values == 1]
+    sell_dates = sig_index[signals.values == -1]
+
+    def _prices(dates: pd.DatetimeIndex) -> list[float]:
+        return [float(close_map.get(d, float("nan"))) for d in dates]
+
+    def _add(trace: go.BaseTraceType) -> None:
+        if n_rows > 1:
+            fig.add_trace(trace, row=row, col=1)
+        else:
+            fig.add_trace(trace)
+
+    if len(buy_dates):
+        _add(go.Scatter(
+            x=buy_dates, y=_prices(buy_dates),
+            mode="markers", name="買進訊號",
+            marker={"symbol": "diamond", "size": 9, "color": "rgba(214,39,40,0.4)",
+                    "line": {"width": 1, "color": "rgba(214,39,40,0.7)"}},
+            hovertemplate="買進訊號: %{x|%Y-%m-%d}<br>收盤: %{y:.2f}<extra></extra>",
+        ))
+    if len(sell_dates):
+        _add(go.Scatter(
+            x=sell_dates, y=_prices(sell_dates),
+            mode="markers", name="賣出訊號",
+            marker={"symbol": "diamond", "size": 9, "color": "rgba(23,190,207,0.4)",
+                    "line": {"width": 1, "color": "rgba(23,190,207,0.7)"}},
+            hovertemplate="賣出訊號: %{x|%Y-%m-%d}<br>收盤: %{y:.2f}<extra></extra>",
+        ))
+
+
+# ---------------------------------------------------------------------------
+# DCA helpers (unchanged)
+# ---------------------------------------------------------------------------
 
 def _render_dca_summary(result: DcaBacktestResult) -> None:
     st.subheader("定期定額回測摘要")
@@ -274,8 +824,7 @@ def _render_dca_summary(result: DcaBacktestResult) -> None:
 
     config = get_config()
     ui_section = config.get("ui", {}) if isinstance(config, dict) else {}
-    use_extras = bool(ui_section.get("use_extras", True))
-    if use_extras and HAS_EXTRAS:
+    if bool(ui_section.get("use_extras", True)) and HAS_EXTRAS:
         style_metric_cards()
 
 
@@ -300,22 +849,20 @@ def _render_dca_transactions(transactions: pd.DataFrame) -> None:
     view["reason"] = view["reason"].map(lambda v: reason_labels.get(str(v), str(v)))
     view["status"] = view["status"].map(lambda v: "成功" if str(v).upper() == "FILLED" else "略過")
 
-    display = pd.DataFrame(
-        {
-            "日期": view["date"].dt.strftime("%Y-%m-%d"),
-            "狀態": view["status"],
-            "原因": view["reason"],
-            "投入金額": view["invested_amount"],
-            "買入價格": view["buy_price"],
-            "買入股數": view["buy_shares"],
-            "手續費": view["commission"],
-            "實際花費": view["spend"],
-            "剩餘現金": view["cash_balance"],
-            "累積股數": view["cumulative_shares"],
-            "累積投入": view["cumulative_invested"],
-            "平均成本": view["average_cost"],
-        }
-    )
+    display = pd.DataFrame({
+        "日期": view["date"].dt.strftime("%Y-%m-%d"),
+        "狀態": view["status"],
+        "原因": view["reason"],
+        "投入金額": view["invested_amount"],
+        "買入價格": view["buy_price"],
+        "買入股數": view["buy_shares"],
+        "手續費": view["commission"],
+        "實際花費": view["spend"],
+        "剩餘現金": view["cash_balance"],
+        "累積股數": view["cumulative_shares"],
+        "累積投入": view["cumulative_invested"],
+        "平均成本": view["average_cost"],
+    })
     st.dataframe(display, use_container_width=True, hide_index=True)
 
 
@@ -329,16 +876,18 @@ def _dca_transactions_to_trade_markers(transactions: pd.DataFrame) -> pd.DataFra
     if filled.empty:
         return pd.DataFrame(columns=["entry_date", "entry_price", "quantity", "exit_date", "exit_price"])
 
-    return pd.DataFrame(
-        {
-            "entry_date": pd.to_datetime(filled["date"], errors="coerce"),
-            "entry_price": pd.to_numeric(filled["buy_price"], errors="coerce"),
-            "quantity": pd.to_numeric(filled["buy_shares"], errors="coerce"),
-            "exit_date": pd.NaT,
-            "exit_price": float("nan"),
-        }
-    )
+    return pd.DataFrame({
+        "entry_date": pd.to_datetime(filled["date"], errors="coerce"),
+        "entry_price": pd.to_numeric(filled["buy_price"], errors="coerce"),
+        "quantity": pd.to_numeric(filled["buy_shares"], errors="coerce"),
+        "exit_date": pd.NaT,
+        "exit_price": float("nan"),
+    })
 
+
+# ---------------------------------------------------------------------------
+# Data loading
+# ---------------------------------------------------------------------------
 
 def _load_backtest_data(
     *,
@@ -373,122 +922,9 @@ def _load_backtest_data(
     return data.sort_values("date").reset_index(drop=True)
 
 
-def _render_price_panel(*, price_df: pd.DataFrame, trades: pd.DataFrame, symbol: str) -> None:
-    st.subheader("股價走勢、均線與成交點位")
-    if price_df.empty:
-        st.info("本區間沒有可顯示的股價資料。")
-        return
-
-    features = _build_price_features(price_df)
-    if go is None:
-        st.warning("缺少 plotly，改以表格顯示。")
-        st.dataframe(features[["date", "close", "ma5", "ma20", "ma60"]], use_container_width=True)
-        return
-
-    fig = go.Figure()
-    fig.add_trace(
-        go.Scatter(
-            x=features["date"],
-            y=features["close"],
-            mode="lines",
-            name="收盤價",
-            line={"color": "#1f77b4", "width": 2},
-            hoverinfo="skip",
-        )
-    )
-    fig.add_trace(
-        go.Scatter(
-            x=features["date"],
-            y=features["ma5"],
-            mode="lines",
-            name="週線 MA5",
-            line={"color": "#ff7f0e", "width": 1.6},
-            hoverinfo="skip",
-        )
-    )
-    fig.add_trace(
-        go.Scatter(
-            x=features["date"],
-            y=features["ma20"],
-            mode="lines",
-            name="月線 MA20",
-            line={"color": "#2ca02c", "width": 1.6},
-            hoverinfo="skip",
-        )
-    )
-    fig.add_trace(
-        go.Scatter(
-            x=features["date"],
-            y=features["ma60"],
-            mode="lines",
-            name="季線 MA60",
-            line={"color": "#9467bd", "width": 1.6},
-            hoverinfo="skip",
-        )
-    )
-
-    buy_marks, sell_marks = _extract_trade_markers(trades=trades)
-    _add_trade_marker_traces(
-        fig=fig,
-        marks=buy_marks,
-        label="買進點",
-        hover_title="買進",
-        color="#d62728",
-        tip_symbol="triangle-up",
-        stem_symbol="line-ns-open",
-    )
-    _add_trade_marker_traces(
-        fig=fig,
-        marks=sell_marks,
-        label="賣出點",
-        hover_title="賣出",
-        color="#17becf",
-        tip_symbol="triangle-down",
-        stem_symbol="line-ns-open",
-    )
-
-    hover_frame = _build_hover_alignment_frame(features)
-    fig.add_trace(
-        go.Scatter(
-            x=hover_frame["calendar_date"],
-            y=hover_frame["close"],
-            mode="lines+markers",
-            showlegend=False,
-            name="",
-            line={"width": 1, "color": "rgba(0,0,0,0.001)"},
-            marker={"size": 8, "color": "rgba(0,0,0,0.001)"},
-            customdata=hover_frame[
-                ["trade_date_text", "close_text", "ma5_text", "ma20_text", "ma60_text"]
-            ].to_numpy(),
-            hovertemplate=(
-                "日期: %{customdata[0]}<br>"
-                "收盤價: %{customdata[1]}<br>"
-                "週線 MA5: %{customdata[2]}<br>"
-                "月線 MA20: %{customdata[3]}<br>"
-                "季線 MA60: %{customdata[4]}<extra></extra>"
-            ),
-        )
-    )
-
-    from src.ui.themes import get_theme
-    config = get_config()
-    ui_section = config.get("ui", {}) if isinstance(config, dict) else {}
-    theme_name = str(ui_section.get("theme", "arctic_light"))
-    _, palette = get_theme(theme_name)
-
-    fig.update_layout(
-        template=palette["plotly_template"],
-        paper_bgcolor=palette["surface"],
-        plot_bgcolor=palette["surface"],
-        title=f"{symbol} 回測區間走勢",
-        xaxis_title="日期",
-        yaxis_title="價格",
-        hovermode="closest",
-        legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "left", "x": 0},
-    )
-    st.plotly_chart(fig, use_container_width=True)
-    st.caption("均線使用日收盤價 rolling mean 計算：MA5、MA20、MA60。")
-
+# ---------------------------------------------------------------------------
+# Chart helpers
+# ---------------------------------------------------------------------------
 
 def _build_price_features(price_df: pd.DataFrame) -> pd.DataFrame:
     out = price_df[["date", "close"]].copy()
@@ -501,26 +937,21 @@ def _build_price_features(price_df: pd.DataFrame) -> pd.DataFrame:
 
 def _extract_trade_markers(*, trades: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     if trades is None or trades.empty:
-        return (
-            pd.DataFrame(columns=["date", "price", "quantity"]),
-            pd.DataFrame(columns=["date", "price", "quantity"]),
-        )
+        empty = pd.DataFrame(columns=["date", "price", "quantity"])
+        return empty, empty
 
-    buys = pd.DataFrame(
-        {
-            "date": pd.to_datetime(trades.get("entry_date"), errors="coerce"),
-            "price": pd.to_numeric(trades.get("entry_price"), errors="coerce"),
-            "quantity": pd.to_numeric(trades.get("quantity"), errors="coerce"),
-        }
-    ).dropna(subset=["date", "price"])
+    buys = pd.DataFrame({
+        "date": pd.to_datetime(trades.get("entry_date"), errors="coerce"),
+        "price": pd.to_numeric(trades.get("entry_price"), errors="coerce"),
+        "quantity": pd.to_numeric(trades.get("quantity"), errors="coerce"),
+    }).dropna(subset=["date", "price"])
 
-    sells = pd.DataFrame(
-        {
-            "date": pd.to_datetime(trades.get("exit_date"), errors="coerce"),
-            "price": pd.to_numeric(trades.get("exit_price"), errors="coerce"),
-            "quantity": pd.to_numeric(trades.get("quantity"), errors="coerce"),
-        }
-    ).dropna(subset=["date", "price"])
+    sells = pd.DataFrame({
+        "date": pd.to_datetime(trades.get("exit_date"), errors="coerce"),
+        "price": pd.to_numeric(trades.get("exit_price"), errors="coerce"),
+        "quantity": pd.to_numeric(trades.get("quantity"), errors="coerce"),
+    }).dropna(subset=["date", "price"])
+
     return buys.sort_values("date"), sells.sort_values("date")
 
 
@@ -533,6 +964,8 @@ def _add_trade_marker_traces(
     color: str,
     tip_symbol: str,
     stem_symbol: str,
+    row: int,
+    n_rows: int,
 ) -> None:
     if marks.empty:
         return
@@ -540,61 +973,43 @@ def _add_trade_marker_traces(
     enriched = marks.copy()
     enriched["quantity_text"] = enriched.get("quantity", pd.Series(dtype="float64")).map(_format_quantity_value)
 
-    # Invisible hover target to prioritize trade info around marker positions.
-    fig.add_trace(
-        go.Scatter(
-            x=enriched["date"],
-            y=enriched["price"],
-            mode="markers",
-            showlegend=False,
-            legendgroup=label,
-            marker={"symbol": "circle", "size": max(_TRADE_MARKER_STEM_SIZE, 24), "color": "rgba(0,0,0,0)"},
-            customdata=enriched[["quantity_text"]].to_numpy(),
-            hovertemplate=(
-                f"{hover_title}: %{{x|%Y-%m-%d}}<br>"
-                "成交價: %{y:.2f}<br>"
-                "數量: %{customdata[0]}<extra></extra>"
-            ),
-        )
-    )
+    def _add(trace: go.BaseTraceType) -> None:
+        if n_rows > 1:
+            fig.add_trace(trace, row=row, col=1)
+        else:
+            fig.add_trace(trace)
 
-    fig.add_trace(
-        go.Scatter(
-            x=enriched["date"],
-            y=enriched["price"],
-            mode="markers",
-            showlegend=False,
-            legendgroup=label,
-            marker={"symbol": stem_symbol, "size": _TRADE_MARKER_STEM_SIZE, "color": color, "line": {"width": 1}},
-            hoverinfo="skip",
-        )
-    )
-    fig.add_trace(
-        go.Scatter(
-            x=enriched["date"],
-            y=enriched["price"],
-            mode="markers",
-            name=label,
-            legendgroup=label,
-            marker={"symbol": tip_symbol, "size": _TRADE_MARKER_BASE_SIZE, "color": color},
-            hoverinfo="skip",
-        )
-    )
+    _add(go.Scatter(
+        x=enriched["date"], y=enriched["price"], mode="markers",
+        showlegend=False, legendgroup=label,
+        marker={"symbol": "circle", "size": max(_TRADE_MARKER_STEM_SIZE, 24), "color": "rgba(0,0,0,0)"},
+        customdata=enriched[["quantity_text"]].to_numpy(),
+        hovertemplate=(
+            f"{hover_title}: %{{x|%Y-%m-%d}}<br>"
+            "成交價: %{y:.2f}<br>"
+            "數量: %{customdata[0]}<extra></extra>"
+        ),
+    ))
+    _add(go.Scatter(
+        x=enriched["date"], y=enriched["price"], mode="markers",
+        showlegend=False, legendgroup=label,
+        marker={"symbol": stem_symbol, "size": _TRADE_MARKER_STEM_SIZE, "color": color, "line": {"width": 1}},
+        hoverinfo="skip",
+    ))
+    _add(go.Scatter(
+        x=enriched["date"], y=enriched["price"], mode="markers",
+        name=label, legendgroup=label,
+        marker={"symbol": tip_symbol, "size": _TRADE_MARKER_BASE_SIZE, "color": color},
+        hoverinfo="skip",
+    ))
 
 
 def _build_hover_alignment_frame(price_df: pd.DataFrame) -> pd.DataFrame:
     if price_df.empty:
-        return pd.DataFrame(
-            columns=[
-                "calendar_date",
-                "trade_date_text",
-                "close",
-                "close_text",
-                "ma5_text",
-                "ma20_text",
-                "ma60_text",
-            ]
-        )
+        return pd.DataFrame(columns=[
+            "calendar_date", "trade_date_text", "close", "close_text",
+            "ma5_text", "ma20_text", "ma60_text",
+        ])
 
     trading_dates = pd.DatetimeIndex(price_df["date"])
     calendar_dates = pd.date_range(
@@ -606,18 +1021,15 @@ def _build_hover_alignment_frame(price_df: pd.DataFrame) -> pd.DataFrame:
     nearest_idx = _nearest_trading_indices(calendar_dates, trading_dates)
     aligned = price_df.iloc[nearest_idx].reset_index(drop=True)
 
-    frame = pd.DataFrame(
-        {
-            "calendar_date": calendar_dates,
-            "trade_date_text": aligned["date"].dt.strftime("%Y-%m-%d"),
-            "close": aligned["close"],
-            "close_text": aligned["close"].map(_format_price_value),
-            "ma5_text": aligned["ma5"].map(_format_price_value),
-            "ma20_text": aligned["ma20"].map(_format_price_value),
-            "ma60_text": aligned["ma60"].map(_format_price_value),
-        }
-    )
-    return frame
+    return pd.DataFrame({
+        "calendar_date": calendar_dates,
+        "trade_date_text": aligned["date"].dt.strftime("%Y-%m-%d"),
+        "close": aligned["close"],
+        "close_text": aligned["close"].map(_format_price_value),
+        "ma5_text": aligned["ma5"].map(_format_price_value),
+        "ma20_text": aligned["ma20"].map(_format_price_value),
+        "ma60_text": aligned["ma60"].map(_format_price_value),
+    })
 
 
 def _nearest_trading_indices(target_dates: pd.DatetimeIndex, trading_dates: pd.DatetimeIndex) -> np.ndarray:
@@ -642,7 +1054,7 @@ def _nearest_trading_indices(target_dates: pd.DatetimeIndex, trading_dates: pd.D
     if np.any(between):
         prev_dist = np.abs(target_ns[between] - trade_ns[prev_idx[between]])
         next_dist = np.abs(trade_ns[next_idx[between]] - target_ns[between])
-        use_next = next_dist <= prev_dist  # tie goes to future trading day
+        use_next = next_dist <= prev_dist
         chosen[between] = np.where(use_next, next_idx[between], prev_idx[between])
 
     return chosen.astype("int64")
@@ -654,28 +1066,18 @@ def _to_utc_index(index: pd.DatetimeIndex) -> pd.DatetimeIndex:
     return index.tz_convert("UTC")
 
 
-def _format_price_value(value: float) -> str:
-    if pd.isna(value):
-        return "尚無資料"
-    return f"{float(value):.2f}"
-
-
-def _format_quantity_value(value: float) -> str:
-    if pd.isna(value):
-        return "尚無資料"
-    return f"{int(round(float(value))):,} 股"
-
+# ---------------------------------------------------------------------------
+# EPS panel (unchanged)
+# ---------------------------------------------------------------------------
 
 def _render_eps_panel(*, symbol: str, end_ts: pd.Timestamp) -> None:
     st.subheader("近 15 年 EPS 紀錄")
-
     end_year = pd.Timestamp(end_ts).year
     start_year = end_year - 14
-    start_date = f"{start_year}-01-01"
 
     try:
         fetcher = FinMindFetcher()
-        eps_df = fetcher.fetch_eps(symbol=symbol, start_date=start_date)
+        eps_df = fetcher.fetch_eps(symbol=symbol, start_date=f"{start_year}-01-01")
     except FetcherError as exc:
         st.info(f"EPS 資料暫時無法取得：{exc}")
         return
@@ -715,17 +1117,30 @@ def _build_eps_display_table(*, eps_df: pd.DataFrame, end_year: int) -> pd.DataF
     pivot = pivot.reindex(columns=[1, 2, 3, 4]).sort_index(ascending=False)
     annual = pivot.sum(axis=1, min_count=1)
 
-    display = pd.DataFrame(
-        {
-            "年度": pivot.index.astype("int64"),
-            "Q1 EPS": pivot[1].map(_format_eps_value),
-            "Q2 EPS": pivot[2].map(_format_eps_value),
-            "Q3 EPS": pivot[3].map(_format_eps_value),
-            "Q4 EPS": pivot[4].map(_format_eps_value),
-            "年度 EPS": annual.map(_format_eps_value),
-        }
-    ).reset_index(drop=True)
-    return display
+    return pd.DataFrame({
+        "年度": pivot.index.astype("int64"),
+        "Q1 EPS": pivot[1].map(_format_eps_value),
+        "Q2 EPS": pivot[2].map(_format_eps_value),
+        "Q3 EPS": pivot[3].map(_format_eps_value),
+        "Q4 EPS": pivot[4].map(_format_eps_value),
+        "年度 EPS": annual.map(_format_eps_value),
+    }).reset_index(drop=True)
+
+
+# ---------------------------------------------------------------------------
+# Formatting helpers
+# ---------------------------------------------------------------------------
+
+def _format_price_value(value: float) -> str:
+    if pd.isna(value):
+        return "尚無資料"
+    return f"{float(value):.2f}"
+
+
+def _format_quantity_value(value: float) -> str:
+    if pd.isna(value):
+        return "尚無資料"
+    return f"{int(round(float(value))):,} 股"
 
 
 def _format_eps_value(value: float) -> str:

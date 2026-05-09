@@ -28,6 +28,7 @@ class BacktestResult:
     total_trades: int
     avg_holding_days: float
     max_single_loss: float
+    signals: pd.Series | None = None
 
 
 def calculate_metrics(
@@ -35,6 +36,7 @@ def calculate_metrics(
     trades: pd.DataFrame,
     risk_free_rate: float = 0.01,
     trading_days: int = 252,
+    signals: pd.Series | None = None,
 ) -> BacktestResult:
     """Calculate common performance metrics from equity curve and trades."""
     equity = _prepare_equity_curve(equity_curve)
@@ -108,6 +110,7 @@ def calculate_metrics(
         total_trades=total_trades,
         avg_holding_days=avg_holding_days,
         max_single_loss=max_single_loss,
+        signals=signals,
     )
 
 
