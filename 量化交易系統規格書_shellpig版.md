@@ -16,6 +16,7 @@
 | **V1.9** | 2026/05/09 | 新增 Phase 7-D（Walk-Forward Analysis）：單標的向量化 WFA、rolling IS/OOS 視窗、IS 參數掃描 + OOS 驗證、OOS 彙總績效、IS/OOS degradation、參數穩定性 CV、執行量上限、UI 中文說明規則與 CSV 匯出。 |
 | **V1.10** | 2026/05/10 | Phase 7-D 驗收完成：7-D-1 核心引擎與 7-D-2 Walk-Forward tab、中文說明、回測次數預估、summary/window/stability table、CSV 匯出、Phase 7 回歸皆通過。 |
 | **V1.11** | 2026/05/10 | 新增 Phase 6-B：設定頁與側邊欄 UI 小修。包含隱藏 Streamlit 自動頁面入口、預設外觀改為 `midnight_blue`、一般設定與策略設定儲存/恢復流程分離、策略類型選項補齊 8 種並顯示中文說明、每種策略提供一組預設 preset、已儲存 preset 可單獨清除。 |
+| **V2.0** | 2026/05/10 | 新增 Phase 8（個股綜合分析儀表板）：8-A 技術面自動判讀引擎、8-B K 線型態辨識、8-C 籌碼分析管線、8-D 即時行情接入、8-E AI 綜合分析與操作劇本、8-F 儀表板 UI。新增 TWSE MIS 即時報價、FinMind 法人/融資融券管線、`src/analysis/` 模組群。 |
 
 ---
 
@@ -1929,6 +1930,339 @@ UI 階段負責回測頁 Walk-Forward tab、中文說明、執行前檢查、進
 
 ---
 
+### Phase 8：個股綜合分析儀表板（彈性）
+
+#### 8-A　技術面自動判讀引擎（1-2 天）
+
+**建置內容：** 把指標數值轉成人可讀的文字結論。給定一檔股票的日 K 資料，自動產出技術分析總覽（趨勢方向、MA 狀態、KD/MACD/量能判讀）、短線綜合分數（0~100%）、關鍵價位（壓力區/支撐區）、量價結構分析等文字化結論。
+
+**專案定位更新：** Phase 8 加入即時報價與操作劇本後，專案定位修改為「研究、回測、盤中觀察，不接實盤下單」。
+
+**設計決策：**
+
+| 決策 | 選擇 | 理由 |
+|:---|:---|:---|
+| UI 框架 | Streamlit（維持現有） | 不重寫前端，工程量可控 |
+| 排版策略 | Tab 分頁 + 滾動式 | Streamlit 無法單屏塞 12 面板；tab 分頁可讀性更好 |
+| 即時行情 | TWSE MIS API | 免費、免 key、盤中即時（約 5-15 秒延遲） |
+| 籌碼資料 | FinMind 免費層 | 三大法人買賣超可用；券商分點降級為法人替代 |
+| 刷新機制 | 手動按鈕 | Streamlit auto-rerun 會重跑整頁分析 |
+| K 線型態 | `pandas_ta.cdl_pattern(name=...)` + 自定規則 | 62 種型態可用 |
+| config 結構 | 獨立 `realtime:` section | 語意清楚，未來擴充不會污染 `data:` |
+| 籌碼更新時機 | 混合模式（on-demand + Parquet 落地 + 增量補抓） | 確保一定有資料，又避免頻繁打 API |
+| W 底/M 頭偵測 | 保守策略（寧可漏報不要誤報） | 偵測不到時顯示「未形成標準型態」 |
+
+**資料可信度等級：**
+
+| 等級 | 定義 | 適用區塊 |
+|:---|:---|:---|
+| 精準資料 | 直接來自日 K、即時報價、法人/融資融券原始資料或可重現公式 | MA、KD、MACD、成交量、法人買賣超、融資融券餘額 |
+| 規則估算 | 使用明確 rule-based 公式推導 | 支撐壓力、短線綜合分數、W 底/M 頭、量價結構 |
+| 資料降級 | 缺少 tick、券商分點或真正內外盤資料時以替代資料近似 | 主力出貨警示、籌碼集中度、買賣力道估算 |
+| AI 文字解讀 | AI 只根據已提供資料轉成中文分析，不得自行編造數字 | 公司/產業概況、隔日操作劇本、整體結論 |
+| 資料不足 | 資料列數不足、API 失敗或 local cache 不完整 | 對應區塊顯示「資料不足」或降級提示 |
+
+**依賴關係：**
+
+```
+8-A（技術面判讀）──┐
+8-B（K線型態）  ──┤
+                   ├──→ 8-E（AI分析）──→ 8-F（儀表板UI）
+8-C（籌碼管線）──┤
+8-D（即時行情）──┘
+```
+
+8-A / 8-B / 8-C / 8-D 四條線互相獨立，可平行開發。8-E 依賴 8-A + 8-C，8-F 最後整合。
+
+**新增模組：** `src/analysis/technical_summary.py`
+
+**輸入：** `pd.DataFrame`（日 K raw OHLCV）
+
+價格尺度規則：
+- K 線圖、即時價、支撐壓力、操作劇本價位一律使用 raw price。
+- adjusted price 僅供長期報酬、除權息調整後趨勢比較使用。
+
+**輸出：** `TechnicalSummary` dataclass：
+
+| 區塊 | 欄位 | 說明 |
+|:---|:---|:---|
+| 技術分析總覽 | `trend_direction` | "多頭趨勢" / "空頭趨勢" / "盤整" |
+| | `ma_status` | "多頭排列 (5>20>60)" / "空頭排列" / "糾結" |
+| | `kd_status` | "KD 高檔鈍化" / "KD 黃金交叉" / ... |
+| | `macd_status` | "正值收斂" / "負值擴張" / ... |
+| | `volume_status` | "量能放大" / "量能略縮" / "爆量" |
+| | `volume_price_relation` | "價漲量增" / "價漲量縮（短線整理）" / ... |
+| 短線綜合分數 | `short_term_score` | 0.0~1.0 |
+| | `short_term_label` | "強勢偏多" / "中等偏多" / "中性" / "偏空" |
+| | `short_term_components` | `{"ma": 0.8, "kd": 0.6, ...}` |
+| 關鍵價位 | `resistance_levels` | `list[PriceLevel]`（壓力區） |
+| | `support_levels` | `list[PriceLevel]`（支撐區） |
+| 量價結構 | `volume_price_divergence` | "量價背離：價漲量縮" / "量價同步" |
+| | `ma_bias` | "與 MA20 乖離約 +4.61%，偏高" |
+| | `chip_behavior` | 需 8-C 籌碼資料注入 |
+| | `operation_observation` | 綜合觀察文字 |
+
+**判讀規則（rule-based）：**
+
+| 指標 | 判讀邏輯 |
+|:---|:---|
+| 趨勢方向 | MA5 > MA20 > MA60 → 多頭；反之空頭；交錯 → 盤整 |
+| MA 狀態 | 三線排列順序 + 最新 close 相對位置 |
+| KD 狀態 | K > 80 → 高檔鈍化；K < 20 → 低檔鈍化；K 上穿 D → 黃金交叉 |
+| MACD 狀態 | DIF > 0 且 DIF > DEA → 正值擴張；DIF > 0 且 DIF < DEA → 正值收斂 |
+| 量能狀態 | 今日量 vs 5 日均量：> 1.5x 放大、0.7x~1.5x 正常、< 0.7x 略縮 |
+| 短線綜合分數 | MA 結構(30%) + KD 位置/交叉(25%) + 量價關係(25%) + 突破狀態(20%) |
+| 壓力區 | 近 60 日最高價、近 20 日最高價（取不重複的 2 個） |
+| 支撐區 | 近期低點、MA20、MA60（取最近的 2~3 個） |
+| 乖離率 | `(close - MA20) / MA20 × 100%` |
+
+**不使用 AI：** 純 rule-based template engine，`ai.enabled=false` 時照常運作。
+
+**驗收指標：**
+- 給定多頭排列 fixture，所有技術面欄位正確輸出多頭判讀
+- 給定空頭排列 fixture，正確輸出空頭判讀
+- 給定盤整 fixture，正確輸出盤整判讀
+- 資料不足（< 60 bar）時不 crash，相關欄位標示資料不足
+- 短線綜合分數在 0.0~1.0 範圍內
+
+---
+
+#### 8-B　K 線型態辨識（2-3 天）
+
+**建置內容：** candlestick pattern 辨識 + 圖表型態偵測（W 底 / M 頭）+ 多週期分析（日 / 週 / 月趨勢）。
+
+**新增模組：** `src/analysis/pattern.py`
+
+**K 線型態表：**
+
+| 型態 | 實作方式 | 判讀 |
+|:---|:---|:---|
+| 長紅 K / 長黑 K | 自定（body > 2× avg body） | 多方 / 空方力道 |
+| 十字線 | `cdl_doji(open, high, low, close)` | 多空拉鋸 |
+| 錘子 / 吊人 | `cdl_pattern(..., name=["hammer", "hangingman"])` | 反轉訊號 |
+| 吞噬 | `cdl_pattern(..., name="engulfing")` | 反轉確認 |
+| 晨星 / 夜星 | `cdl_pattern(..., name=["morningstar", "eveningstar"])` | 強反轉 |
+| 帶上影線 / 下影線 | 自定（shadow > 2× body） | 上檔壓力 / 下檔支撐 |
+
+**圖表型態偵測（保守策略）：**
+
+| 型態 | 偵測演算法 |
+|:---|:---|
+| W 底（雙底） | 近 N 日找 2 個相近低點（誤差 < 3%），中間有反彈高點 |
+| M 頭（雙頂） | 近 N 日找 2 個相近高點（誤差 < 3%），中間有回落低點 |
+| 頭肩（選配） | 三峰結構，中間最高，兩側對稱（複雜度高，列為選配） |
+
+偵測不到時明確標示「未形成標準 X 型態」，不硬套。
+
+**多週期分析：** 將日 K resample 為週 K / 月 K，對每個週期分別跑趨勢判讀。`strength` 依據 MA 排列 + RSI 位置分為「強 / 中強 / 中 / 弱」。
+
+**驗收指標：**
+- pandas-ta `cdl_pattern` 正確辨識已知型態 fixture
+- W 底/M 頭 fixture 正確偵測，非型態 fixture 正確標示「未形成」
+- 多週期 resample 正確，週/月趨勢判讀符合預期
+- 資料不足時不 crash
+
+---
+
+#### 8-C　籌碼分析管線（2-3 天）
+
+**建置內容：** 三大法人買賣超 + 融資融券資料接入，產出籌碼分析摘要與籌碼集中度指標。
+
+**新增管線：**
+
+| 資料 | FinMind Dataset | 儲存 | 免費 |
+|:---|:---|:---|:---|
+| 三大法人買賣超 | `TaiwanStockInstitutionalInvestorsBuySell` | Parquet + DuckDB meta | ✅ |
+| 融資融券 | `TaiwanStockMarginPurchaseShortSale` | Parquet + DuckDB meta | ✅ |
+
+**Fetcher 擴充：**
+
+- `fetch_institutional(symbol, start_date)` → 三大法人買賣超
+  - FinMind 原始為 long format（每日每法人一筆 row），單位為**股**
+  - `name` 值：`Foreign_Investor` / `Foreign_Dealer_Self` / `Investment_Trust` / `Dealer_self` / `Dealer_Hedging`
+  - normalize 時 pivot 為 wide format：外資 = Foreign_Investor + Foreign_Dealer_Self；自營商 = Dealer_self + Dealer_Hedging
+  - 回傳欄位：`date, foreign_buy, foreign_sell, foreign_net, trust_buy, trust_sell, trust_net, dealer_buy, dealer_sell, dealer_net, symbol`
+- `fetch_margin(symbol, start_date)` → 融資融券
+  - FinMind 原始為 wide format（每日一筆 row），單位為**張**
+  - 回傳欄位：`date, margin_buy, margin_sell, margin_balance, short_buy, short_sell, short_balance, symbol`
+
+**Storage 擴充：**
+
+- `save_institutional()` / `load_institutional()` → `data/raw/tw/{symbol}/institutional.parquet`
+- `save_margin()` / `load_margin()` → `data/raw/tw/{symbol}/margin.parquet`
+
+**籌碼更新策略（混合模式）：** on-demand 為主（確保一定有資料），抓完後落地 Parquet。下次查同一檔時先檢查本地資料最後日期，只增量補抓缺少天數。maintenance 可批次更新已追蹤的股票清單。
+
+**新增模組：** `src/analysis/chip_analysis.py`
+
+**輸出：** `ChipSummary` dataclass，含三大法人近 N 日淨買賣（張）、籌碼集中度/趨勢（法人版估算）、融資融券餘額變化。
+
+**資料單位規則：**
+- 法人資料 storage 存股數，analysis/UI 顯示時 `// 1000` 轉張數
+- 融資融券 storage 直接存張數
+- UI 標籤必須寫清楚「法人版籌碼估算」
+
+**驗收指標：**
+- `fetch_institutional` 回傳 wide format，欄位與單位正確
+- `fetch_margin` 回傳正確欄位
+- 儲存/載入 round-trip 一致
+- 增量補抓邏輯正確（本地有 30 天，只補抓之後的）
+- ChipSummary 各欄位依規則填入
+
+---
+
+#### 8-D　即時行情接入（1-2 天）
+
+**建置內容：** TWSE MIS 公開 API 即時報價，產出頂部行情條與買賣力道估算。
+
+**新增模組：** `src/data/realtime.py`
+
+**API 端點（技術已確認）：** 只需一個端點 `mis.twse.com.tw`，用 `ex_ch` 的 `tse_` / `otc_` prefix 區分上市/上櫃。
+
+| 市場 | `ex_ch` 格式 |
+|:---|:---|
+| 上市（tse） | `tse_{symbol}.tw` |
+| 上櫃（otc） | `otc_{symbol}.tw` |
+
+上市 / 上櫃判斷：FinMind `TaiwanStockInfo` 的 `type` 欄位（`twse` → `tse_`、`tpex` → `otc_`），啟動時載入一次快取。
+
+**SSL 注意：** TWSE 憑證缺 Subject Key Identifier，僅可對 `mis.twse.com.tw` 單一 host scoped `verify=False`，不得全域關閉 TLS 驗證。
+
+**TWSE API 欄位映射：**
+
+| API key | 意義 | 解析方式 |
+|:---|:---|:---|
+| `c` | 股票代碼 | 直接取 |
+| `n` | 股票名稱 | 直接取 |
+| `z` | 成交價 | `float(z)`，`"-"` 時為無成交 |
+| `y` | 昨收 | `float(y)` |
+| `o` / `h` / `l` | 開盤/最高/最低 | `float()` |
+| `v` | 累積成交量（張） | `int(v)` |
+| `t` | 最後成交時間 | `"HH:MM:SS"` |
+| `b` / `a` | 五檔買價/賣價 | `"_"` 分隔，filter 空字串 |
+| `g` / `f` | 五檔買量/賣量 | `"_"` 分隔，filter 空字串 |
+
+`change` 和 `change_pct` 由本地計算。
+
+**快取策略：** 同一 symbol 在 `cache_ttl`（預設 10 秒）內重複查詢直接回 cache。
+
+**config.yaml 新增：**
+
+```yaml
+realtime:
+  cache_ttl: 10
+  request_timeout: 5
+```
+
+**買賣力道估算：**
+- 盤中：五檔買賣量總量比
+- 盤後：`(close - open) / (high - low)` 近似
+- UI 標示「買賣力道估算」或「多空力道估算」，不得直接標為「內外盤」
+
+**盤後 fallback：** `is_market_open = False`，UI 顯示「盤後資料」標籤。
+
+**驗收指標：**
+- 上市/上櫃路由正確
+- API 回傳正確解析（含 `"-"` 無成交處理）
+- 快取在 TTL 內命中
+- 盤後不 crash，正確標示
+
+---
+
+#### 8-E　AI 綜合分析與操作劇本（2-3 天）
+
+**建置內容：** 用 AIAdvisor 生成產業/公司概況、量價結構增強版文字、隔日操作劇本（三情境）、整體結論。
+
+**前提：** 依賴 8-A（技術面數據）+ 8-C（籌碼數據）。`ai.enabled=false` 時顯示「請啟用 AI 功能」或留空，8-A 的 rule-based 文字仍正常顯示。
+
+**AIAdvisor 擴充：**
+
+新增 `generate_stock_dashboard_analysis()` tool-use function，輸入 TechnicalSummary + ChipSummary + 公司資料 + 近 60 日 OHLCV，輸出 `DashboardAnalysis`。
+
+**輸出結構：**
+- `industry_overview: list[str]` — 3-5 個 bullet points
+- `company_overview: list[str]` — 3-5 個 bullet points
+- `volume_price_analysis: str` — 2-3 句自然語言分析
+- `scenarios: list[TradingScenario]` — 3 個情境（name / entry_range / stop_loss / target）
+- `conclusion: str` — 1 句話總結
+
+**Prompt 設計原則：**
+- structured output（tool_use / JSON mode）
+- 注入 8-A 技術面 + 8-C 籌碼摘要
+- AI 不得自行編造數字，必須基於已提供數據
+- 操作劇本價位必須基於 8-A 支撐壓力計算結果
+- 劇本定位為「研究情境推演」，不使用「建議買進 / 必買 / 保證」語氣
+- 每次輸出附短免責：非投資建議，僅供研究與風險控管參考
+
+**降級策略：**
+
+| 條件 | 行為 |
+|:---|:---|
+| `ai.enabled = false` | 區塊顯示「請啟用 AI」；量價只顯示 rule-based |
+| AI 呼叫失敗 | 同上；UI 顯示 `st.warning` |
+| 無籌碼資料 | 仍可運作，prompt 省略籌碼段 |
+
+**驗收指標：**
+- AI 回傳格式可解析為 DashboardAnalysis
+- 操作劇本價位在合理範圍（基於支撐壓力）
+- `ai.enabled=false` 時不 crash
+- AI 失敗時降級正確
+
+---
+
+#### 8-F　個股儀表板 UI（3-4 天）
+
+**建置內容：** 新增 `src/ui/pages/dashboard.py`，以 tab 分頁呈現個股綜合分析。
+
+**頁面進入流程：**
+1. 使用者輸入股票代碼
+2. 點擊「分析」按鈕
+3. 系統依序載入：日 K → 即時報價 → 技術面判讀 → 籌碼 → AI 分析
+4. 以 tab 分頁呈現結果
+
+**Tab 分頁規劃：**
+
+| Tab | 內容 | 來源 |
+|:---|:---|:---|
+| Tab 1：總覽 | 頂部行情條、日 K 線圖 + MA + 支撐壓力、技術分析總覽、關鍵價位、短線綜合分數、「重新整理報價」按鈕 | 8-A + 8-D |
+| Tab 2：籌碼與量價 | 法人近 5/10/20 日買賣超、籌碼集中度、融資融券、買賣力道、量價結構 | 8-C + 8-D + 8-A |
+| Tab 3：型態與週期 | K 線型態表、W 底/M 頭分析、多週期分析 | 8-B |
+| Tab 4：AI 劇本 | 產業/公司概況、量價分析、三情境操作劇本、整體結論 | 8-E |
+
+`ai.enabled=false` 時 Tab 4 仍顯示但內容降級。
+
+**排版原則：**
+- 每個 tab 內 1~2 屏
+- `st.columns` 2~3 欄排版
+- `st.metric` 數字卡片
+- 不注入大量 CSS hack
+
+**側邊欄整合：** `option_menu` 新增「個股分析」入口，排在「回測」之後。
+
+**主題相容：** 使用 `get_plotly_template()` 取得對應配色。
+
+**驗收指標：**
+- 輸入股票代碼 → 4 個 tab 皆正確渲染
+- 即時報價正確顯示（盤中/盤後）
+- AI 區塊降級正確
+- 6 套主題皆相容
+- 不影響現有回測/設定/AI 問答頁面
+
+---
+
+#### Phase 8 已知限制
+
+| 限制 | 影響 | 降級方案 |
+|:---|:---|:---|
+| 無券商分點資料 | 主力追蹤精度降級 | 用三大法人淨買賣超替代 |
+| 無 tick 資料 | 無法精確區分內外盤 | 五檔報價估算 + 日頻多空近似 |
+| Streamlit 排版 | 無法單屏 12 面板 | Tab 分頁（4 tabs），每 tab 1~2 屏 |
+| TWSE MIS API 穩定性 | 偶爾回應慢或被擋 | 快取 + 逾時 fallback 到日頻收盤 |
+| AI 分析依賴外部 API | API key 缺失或額度用完 | 降級到純 rule-based |
+| 操作劇本接近交易建議 | 可能誤解為實盤指令 | 明確標為研究情境推演 + 免責文字 |
+
+---
+
 ### 子階段總覽
 
 | Phase | 子階段 | 工期 | 有 AI 輔助 |
@@ -1940,7 +2274,8 @@ UI 階段負責回測頁 Walk-Forward tab、中文說明、執行前檢查、進
 | **5** 回測體驗與 UI 補充 | 5-A → 5-B（2 段） | 3-5 天 | ✅ |
 | **6** UI/UX 強化 | 6-A → 6-B（2 段） | 1.5-3 天 | ✅ |
 | **7** 策略擴充 | 7-A → 7-D（4 段） | 9.5-14 天 | |
-| **合計** | 25 個子階段 | **43-51 天（約 10-12 週）** | |
+| **8** 個股綜合分析儀表板 | 8-A → 8-F（6 段） | 11-17 天 | ✅ |
+| **合計** | 31 個子階段 | **54-68 天（約 12-16 週）** | |
 
 ---
 

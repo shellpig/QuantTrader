@@ -25,7 +25,7 @@
 ```
 src/
 ├── core/           config.py, constants.py, exceptions.py, strategy_config.py
-├── data/           fetcher.py, cleaner.py, storage.py, maintenance.py
+├── data/           fetcher.py, cleaner.py, storage.py, maintenance.py, realtime.py
 ├── backtest/       base.py, engine_vec.py, engine_event.py, account.py,
 │                   events.py, cost.py, metrics.py, report.py, dca.py,
 │                   batch.py, sweep.py, walk_forward.py, _helpers.py
@@ -34,12 +34,14 @@ src/
 │   └── examples/   ma_cross.py, dca.py, rsi.py, kd_cross.py,
 │                   macd_cross.py, bollinger_band.py, bias.py,
 │                   donchian_breakout.py
+├── analysis/       technical_summary.py, pattern.py, chip_analysis.py
 ├── indicators/     calculator.py（pandas-ta 封裝 + 別名映射）
 ├── ai/             advisor.py（LLM Provider Tool Use）
 └── ui/
     ├── app.py      Streamlit 主程式
     ├── themes.py   6 套主題定義
-    └── pages/      backtest.py, data_management.py, ai_chat.py, settings.py
+    └── pages/      backtest.py, dashboard.py, data_management.py,
+                    ai_chat.py, settings.py
 
 tests/
 ├── fixtures/       手工構造的 CSV 測試資料
@@ -52,9 +54,12 @@ tests/
 ├── test_dca_backtest.py, test_maintenance.py
 ├── test_backtest_page.py, test_themes.py, test_config_ui_section.py
 ├── test_strategies.py, test_batch.py, test_sweep.py, test_walk_forward.py
+├── test_technical_summary.py, test_pattern.py
+├── test_chip_analysis.py, test_realtime.py, test_dashboard_page.py
 
 data/                （gitignore，執行時自動建立）
-  raw/tw/{symbol}/       daily.parquet, minute.parquet
+  raw/tw/{symbol}/       daily.parquet, minute.parquet,
+                         institutional.parquet, margin.parquet
   processed/tw/{symbol}/ adj_daily.parquet
   backtest/              回測結果快照
   quant.duckdb           元資料
@@ -141,6 +146,9 @@ ui:
   theme: warm_sepia
   use_extras: true
   use_option_menu: true
+realtime:
+  cache_ttl: 10
+  request_timeout: 5
 risk:
   max_daily_loss_pct: 0.03
   max_position_pct: 0.2
@@ -163,12 +171,13 @@ risk:
 | 7-B | ✅ 完成 | 策略研究工作台：批次比較、結果保存、UI tab 重構、K 線圖、Signal/Trade overlay、指標副圖 |
 | 7-C | ✅ 完成 | 參數掃描與防過度最佳化：Grid Search、參數過濾、組合上限、樣本不足警告 |
 | 7-D | ✅ 完成 | Walk-Forward Analysis：核心引擎、Walk-Forward tab、中文說明、回測次數預估、進度條、summary/window/stability table、CSV 匯出已驗收 |
+| 8 | 📋 規格完成 | 個股綜合分析儀表板：技術面判讀(8-A)、K線型態(8-B)、籌碼管線(8-C)、即時行情(8-D)、AI劇本(8-E)、儀表板UI(8-F) |
 
 ## 當前待辦
 
 見 `驗證後已知問題.md`（每次必讀）。
 
-主線：Phase 1-7-D 已完成；Phase 6-B / 6-C UI 驗證與收尾修正已完成。下一步可進入 Phase 8 規劃或 7-D 後續增強。
+主線：Phase 1-7-D 已完成；Phase 8 規格已併入正式文件，下一步進入 Phase 8 實作（8-A/B/C/D 四條線可平行開發）。
 
 2026-05-10 狀態：
 - 最新 commit：`70c3db4 Resolve UI contrast and event frequency issues`
@@ -188,11 +197,11 @@ risk:
 
 ## 規格文件索引
 
-### 量化交易系統規格書_shellpig版.md（~2031 行）
+### 量化交易系統規格書_shellpig版.md（~2366 行）
 
 | 區段 | 行範圍 | 何時讀 |
 |:---|:---|:---|
-| 修訂歷史 | 1-16 | 查版本變更 |
+| 修訂歷史 | 1-19 | 查版本變更 |
 | 專案願景與目標 | 41-56 | 理解定位 |
 | 技術語言與套件選型 | 58-84 | 技術決策參考 |
 | 系統架構（四層架構圖） | 87-169 | 理解整體結構 |
@@ -206,13 +215,14 @@ risk:
 | Phase 1-4 開發計畫 | 776-945 | 查歷史 phase 規格 |
 | Phase 5 回測體驗 | 948-1064 | 修改 DCA / 股價走勢 |
 | Phase 6 UI/UX | 1070-1219 | 修改主題切換、設定頁與側邊欄 UI 小修 |
-| **Phase 7-A 策略擴充** | **1221-1410** | **實作新策略時必讀** |
-| **Phase 7-B 策略研究工作台** | **1411-1536** | **實作批次比較/K 線圖/overlay 時必讀** |
-| **Phase 7-C 參數掃描** | **1537-1661** | **實作參數掃描時必讀** |
-| **Phase 7-D Walk-Forward Analysis** | **1662-1930** | **實作 WFA / OOS 驗證時必讀** |
-| 子階段總覽 + 費用估算 | 1932-1984 | 總覽 |
+| Phase 7-A 策略擴充 | 1221-1410 | 實作新策略時必讀 |
+| Phase 7-B 策略研究工作台 | 1411-1536 | 實作批次比較/K 線圖/overlay 時必讀 |
+| Phase 7-C 參數掃描 | 1537-1661 | 實作參數掃描時必讀 |
+| Phase 7-D Walk-Forward Analysis | 1662-1930 | 實作 WFA / OOS 驗證時必讀 |
+| **Phase 8 個股綜合分析儀表板** | **1933-2264** | **實作個股分析儀表板時必讀** |
+| 子階段總覽 + 費用估算 | 2266-2320 | 總覽 |
 
-### 開發設計方針.md（~3988 行）
+### 開發設計方針.md（~5231 行）
 
 | 區段 | 行範圍 | 何時讀 |
 |:---|:---|:---|
@@ -222,13 +232,14 @@ risk:
 | Phase 3 事件驅動引擎 | 1192-1614 | 修改 engine_event / account / events |
 | Phase 4 AI + Streamlit UI | 1616-2200 | 修改 ai/ / indicators/ / ui/ |
 | Phase 6-A 主題切換 | 2207-2321 | 修改 themes.py / settings.py |
-| **Phase 6-B 設定頁與側邊欄 UI 小修** | **2323-2479** | **修改 app.py / themes.py / config.py / strategy_config.py / settings.py 時必讀** |
-| **Phase 7-A 策略擴充** | **2481-2943** | **實作新策略時必讀** |
-| **Phase 7-B 策略研究工作台** | **2945-3325** | **實作批次比較/K 線圖/overlay 時必讀** |
-| **Phase 7-C 參數掃描** | **3327-3717** | **實作參數掃描時必讀** |
-| **Phase 7-D Walk-Forward Analysis** | **3719-4144** | **實作 WFA runner / UI tab 時必讀** |
+| Phase 6-B 設定頁與側邊欄 UI 小修 | 2323-2479 | 修改 app.py / themes.py / config.py / strategy_config.py / settings.py 時必讀 |
+| Phase 7-A 策略擴充 | 2481-2943 | 實作新策略時必讀 |
+| Phase 7-B 策略研究工作台 | 2945-3325 | 實作批次比較/K 線圖/overlay 時必讀 |
+| Phase 7-C 參數掃描 | 3327-3717 | 實作參數掃描時必讀 |
+| Phase 7-D Walk-Forward Analysis | 3719-4145 | 實作 WFA runner / UI tab 時必讀 |
+| **Phase 8 個股綜合分析儀表板** | **4148-5231** | **實作 analysis/ / realtime / dashboard 時必讀** |
 
-### 測試指南.md（~1944 行）
+### 測試指南.md（~2219 行）
 
 | 區段 | 行範圍 | 何時讀 |
 |:---|:---|:---|
@@ -238,12 +249,14 @@ risk:
 | Phase 3 測試 | 663-966 | 修改 events/account/engine_event 時 |
 | Phase 4 測試 | 970-1217 | 修改 ai/indicators/UI 時 |
 | Phase 6 測試 | 1219-1291 | 修改主題切換、設定頁與側邊欄時 |
-| **Phase 7-A 測試** | **1295-1495** | **新策略測試** |
-| **Phase 7-B 測試** | **1497-1584** | **批次比較測試** |
-| **Phase 7-C 測試** | **1586-1677** | **參數掃描測試** |
-| **Phase 7-D 測試** | **1698-1856** | **Walk-Forward 測試** |
+| Phase 7-A 測試 | 1295-1495 | 新策略測試 |
+| Phase 7-B 測試 | 1497-1584 | 批次比較測試 |
+| Phase 7-C 測試 | 1586-1677 | 參數掃描測試 |
+| Phase 7-D 測試 | 1698-1856 | Walk-Forward 測試 |
 | Phase 7 全階段回歸 | 1858-1876 | Phase 7-D 完成後 |
-| 全專案回歸 + 測試統計 | 1878-1944 | Phase 完成後 |
+| **Phase 8 測試** | **1878-2143** | **個股分析儀表板測試** |
+| Phase 8 全階段回歸 | 2126-2143 | Phase 8 完成後 |
+| 全專案回歸 + 測試統計 | 2146-2219 | Phase 完成後 |
 
 ### 驗證後已知問題.md（~737 行）
 
@@ -251,7 +264,7 @@ risk:
 
 ### 未涵蓋資料項目.md
 
-列管目前 fetcher / storage 不抓不存的資料（法人買賣超、融資融券、財報等）。策略需要這些資料時，需先回頭擴規格再走 Phase 1 管線。
+列管目前 fetcher / storage 不抓不存的資料。Phase 8 已接入法人買賣超與融資融券；剩餘項目（財報、股權分散等）仍需先擴規格再走管線。
 
 ## 測試速查
 
