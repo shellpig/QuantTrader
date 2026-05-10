@@ -28,7 +28,7 @@ src/
 ├── data/           fetcher.py, cleaner.py, storage.py, maintenance.py
 ├── backtest/       base.py, engine_vec.py, engine_event.py, account.py,
 │                   events.py, cost.py, metrics.py, report.py, dca.py,
-│                   batch.py, sweep.py
+│                   batch.py, sweep.py, walk_forward.py, _helpers.py
 ├── strategy/
 │   ├── base.py     StrategyBase ABC
 │   └── examples/   ma_cross.py, dca.py, rsi.py, kd_cross.py,
@@ -51,7 +51,7 @@ tests/
 ├── test_e2e.py, test_strategy_config.py
 ├── test_dca_backtest.py, test_maintenance.py
 ├── test_backtest_page.py, test_themes.py, test_config_ui_section.py
-├── test_strategies.py, test_batch.py, test_sweep.py
+├── test_strategies.py, test_batch.py, test_sweep.py, test_walk_forward.py
 
 data/                （gitignore，執行時自動建立）
   raw/tw/{symbol}/       daily.parquet, minute.parquet
@@ -120,18 +120,31 @@ backtest:
   tax_rate: 0.003
   etf_tax_rate: 0.001
   slippage_ticks: 1
-strategies:
+  initial_capital: 1000000.0
+strategies:              # 8 種 preset，詳見 config.yaml
+  - name: 定期定額
+    type: dollar_cost_averaging
+    params: { monthly_day: 5, monthly_amount: 10000.0, ... }
+  - name: RSI_14
+    type: rsi
+    params: { period: 14, oversold: 30.0, overbought: 70.0 }
+  - name: KD_Cross / MACD_Cross / BB_20 / BIAS_20 / Donchian_20_10
+    ...
   - name: MA20_MA60
     type: moving_average_cross
     params: { short_window: 20, long_window: 60 }
 ai:
   enabled: true
   provider: anthropic
-  model: claude-sonnet-4-20250514
+  model: claude-sonnet-4-6
 ui:
-  theme: midnight_blue
+  theme: warm_sepia
   use_extras: true
   use_option_menu: true
+risk:
+  max_daily_loss_pct: 0.03
+  max_position_pct: 0.2
+  max_drawdown_warning_pct: 0.1
 ```
 
 ## Phase 進度

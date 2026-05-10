@@ -24,6 +24,10 @@ htmlcov/
 *.egg-info/
 settings.local.json
 
+# local project state
+config.yaml
+舊文件/
+
 # streamlit logs
 .streamlit_*.log
 .streamlit_*.err.log
