@@ -2173,7 +2173,7 @@ realtime:
 
 **建置內容：** 用 AIAdvisor 生成產業/公司概況、量價結構增強版文字、隔日操作劇本（三情境）、整體結論。
 
-**前提：** 依賴 8-A（技術面數據）+ 8-C（籌碼數據）。`ai.enabled=false` 時顯示「請啟用 AI 功能」或留空，8-A 的 rule-based 文字仍正常顯示。
+**前提：** 依賴 8-A（技術面數據）+ 8-C（籌碼數據）。`ai.enabled=false` 時 8-E 不呼叫外部 AI；Dashboard 的 Tab 4 仍必須顯示，內容降級為「AI 功能未啟用」與 8-A 的 rule-based 結論，不得留空。
 
 **AIAdvisor 擴充：**
 
@@ -2198,8 +2198,8 @@ realtime:
 
 | 條件 | 行為 |
 |:---|:---|
-| `ai.enabled = false` | 區塊顯示「請啟用 AI」；量價只顯示 rule-based |
-| AI 呼叫失敗 | 同上；UI 顯示 `st.warning` |
+| `ai.enabled = false` | service 不呼叫 provider；UI catch 停用狀態並顯示「AI 功能未啟用」+ rule-based 結論 |
+| AI 呼叫失敗 | UI catch 受控錯誤並顯示 `st.warning` + rule-based 結論 |
 | 無籌碼資料 | 仍可運作，prompt 省略籌碼段 |
 
 **驗收指標：**
