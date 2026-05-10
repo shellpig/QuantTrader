@@ -2,7 +2,17 @@
 
 from __future__ import annotations
 
+import warnings
+
+import pandas as pd
 import streamlit as st
+
+warnings.filterwarnings(
+    "ignore",
+    message=r"The 'mode\.copy_on_write' option is deprecated\.",
+    category=pd.errors.Pandas4Warning,
+    module=r"pandas_ta(\..*)?$",
+)
 
 from src.core.config import get_config
 from src.ui.pages import ai_chat, backtest, data_management, settings
@@ -20,7 +30,7 @@ def main() -> None:
 
     config = get_config()
     ui_section = config.get("ui", {}) if isinstance(config, dict) else {}
-    theme_name = str(ui_section.get("theme", "arctic_light")).strip()
+    theme_name = str(ui_section.get("theme", "midnight_blue")).strip()
     use_option_menu = bool(ui_section.get("use_option_menu", True))
 
     valid_theme_name, _ = get_theme(theme_name)
@@ -64,4 +74,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

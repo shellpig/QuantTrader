@@ -242,7 +242,7 @@ def _render_batch_comparison_tab() -> None:
 
     sel = st.dataframe(
         df_compare,
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         selection_mode="single-row",
         on_select="rerun",
@@ -311,7 +311,7 @@ def _render_history_tab() -> None:
         _, filepath = file_entries[labels.index(chosen)]
         try:
             df = pd.read_csv(filepath, encoding="utf-8-sig")
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            st.dataframe(df, width="stretch", hide_index=True)
             st.caption(f"檔案路徑：{filepath}")
         except Exception as exc:  # noqa: BLE001
             st.error(f"讀取檔案失敗：{exc}")
@@ -504,7 +504,7 @@ def _render_sweep_results(
 
     sel = st.dataframe(
         display_df,
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         selection_mode="single-row",
         on_select="rerun",
@@ -812,7 +812,7 @@ def _render_wfa_results(summary: WalkForwardSummary, *, symbol: str) -> None:
 
         win_rows.append(row)
 
-    st.dataframe(pd.DataFrame(win_rows), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(win_rows), width="stretch", hide_index=True)
 
     if all_window_warnings:
         with st.expander(f"視窗警告詳情（共 {len(all_window_warnings)} 則）"):
@@ -846,7 +846,7 @@ def _render_wfa_results(summary: WalkForwardSummary, *, symbol: str) -> None:
             }
             for param, stat in stab_params.items()
         ]
-        st.dataframe(pd.DataFrame(stab_rows), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(stab_rows), width="stretch", hide_index=True)
 
     warnings_list = agg.get("warnings", [])
     if warnings_list:
@@ -1043,10 +1043,10 @@ def _render_tearsheet_metrics(result: BacktestResult) -> None:
     if bool(ui_section.get("use_extras", True)) and HAS_EXTRAS:
         style_metric_cards()
 
-    st.plotly_chart(figures["equity"], use_container_width=True)
-    st.plotly_chart(figures["drawdown"], use_container_width=True)
-    st.plotly_chart(figures["monthly"], use_container_width=True)
-    st.plotly_chart(figures["summary"], use_container_width=True)
+    st.plotly_chart(figures["equity"], width="stretch")
+    st.plotly_chart(figures["drawdown"], width="stretch")
+    st.plotly_chart(figures["monthly"], width="stretch")
+    st.plotly_chart(figures["summary"], width="stretch")
 
 
 # ---------------------------------------------------------------------------
@@ -1228,7 +1228,7 @@ def _render_price_and_indicator_panel(
     if n_rows > 1:
         fig.update_xaxes(rangeslider_visible=False)
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
     st.caption("K線：漲紅跌綠（台股慣例）。均線：MA5 / MA20 / MA60。Signal marker（菱形）為策略原始訊號，Trade marker（三角形）為引擎實際成交點。")
 
 
@@ -1447,7 +1447,7 @@ def _render_dca_transactions(transactions: pd.DataFrame) -> None:
         "累積投入": view["cumulative_invested"],
         "平均成本": view["average_cost"],
     })
-    st.dataframe(display, use_container_width=True, hide_index=True)
+    st.dataframe(display, width="stretch", hide_index=True)
 
 
 def _dca_transactions_to_trade_markers(transactions: pd.DataFrame) -> pd.DataFrame:
@@ -1674,7 +1674,7 @@ def _render_eps_panel(*, symbol: str, end_ts: pd.Timestamp) -> None:
         st.info("此股票在近 15 年範圍內沒有可用 EPS 資料。")
         return
 
-    st.dataframe(display, use_container_width=True, hide_index=True)
+    st.dataframe(display, width="stretch", hide_index=True)
     st.caption("年度 EPS 為已取得季度 EPS 加總，不補值、不推估。")
 
 

@@ -25,11 +25,11 @@ def render() -> None:
 
     col1, col2, col3 = st.columns([1, 1, 1])
     with col1:
-        do_refresh = st.button("重新整理列表", use_container_width=True)
+        do_refresh = st.button("重新整理列表", width="stretch")
     with col2:
-        do_update = st.button("更新", type="primary", use_container_width=True)
+        do_update = st.button("更新", type="primary", width="stretch")
     with col3:
-        do_rebuild = st.button("重建", use_container_width=True)
+        do_rebuild = st.button("重建", width="stretch")
 
     if do_update or do_rebuild:
         if not _TW_SYMBOL_PATTERN.fullmatch(symbol):
@@ -92,7 +92,7 @@ def _render_meta_table() -> None:
     for col in ("first_date", "last_date", "updated_at"):
         if col in out.columns:
             out[col] = pd.to_datetime(out[col], errors="coerce")
-    st.dataframe(out, use_container_width=True)
+    st.dataframe(out, width="stretch")
 
 
 def _build_fetcher() -> IDataFetcher:

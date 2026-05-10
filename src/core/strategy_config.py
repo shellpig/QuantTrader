@@ -113,9 +113,42 @@ STRATEGY_META: dict[str, StrategyMeta] = {
 }
 
 
+SUPPORTED_STRATEGY_TYPES: list[str] = list(STRATEGY_META.keys())
+
+DEFAULT_STRATEGY_PRESETS: list[dict[str, Any]] = [
+    {"name": "MA20_MA60", "type": "moving_average_cross", "params": {"short_window": 20, "long_window": 60}},
+    {"name": "定期定額", "type": "dollar_cost_averaging", "params": {"monthly_day": 5, "monthly_amount": 10000.0, "min_buy_unit": 1, "non_trading_day_policy": "next_trading_day", "buy_price_field": "close"}},
+    {"name": "RSI_14", "type": "rsi", "params": {"period": 14, "oversold": 30.0, "overbought": 70.0}},
+    {"name": "KD_Cross", "type": "kd_cross", "params": {"k_period": 9, "d_period": 3, "smooth_k": 3}},
+    {"name": "MACD_Cross", "type": "macd_cross", "params": {"fast": 12, "slow": 26, "signal": 9}},
+    {"name": "BB_20", "type": "bollinger_band", "params": {"period": 20, "std_dev": 2.0}},
+    {"name": "BIAS_20", "type": "bias", "params": {"ma_period": 20, "buy_bias": -10.0, "sell_bias": 10.0}},
+    {"name": "Donchian_20_10", "type": "donchian_breakout", "params": {"entry_period": 20, "exit_period": 10}},
+]
+
+
 def get_strategy_meta(strategy_type: str) -> StrategyMeta | None:
     """Return Chinese metadata for a strategy type, or None if unknown."""
     return STRATEGY_META.get(strategy_type)
+
+
+def make_strategy_type_label(strategy_type: str) -> str:
+    """Return display string for strategy type selectbox: '{type} ({中文說明})'."""
+    meta = STRATEGY_META.get(strategy_type)
+    if not meta:
+        return strategy_type
+    return f"{strategy_type} ({meta['label']})"
+
+
+def normalize_strategy_preset(raw: dict[str, Any]) -> dict[str, Any]:
+    """Validate and normalize a strategy preset. Raises ValueError if invalid."""
+    name = str(raw.get("name", "")).strip()
+    if not name:
+        raise ValueError("策略名稱不可為空。")
+    result = _normalize_one_preset(raw, fallback_name=name)
+    if result is None:
+        raise ValueError(f"策略參數無效：{raw.get('type', '')} — {raw.get('params', {})}")
+    return result
 
 
 def make_strategy_label(preset: dict[str, Any]) -> str:

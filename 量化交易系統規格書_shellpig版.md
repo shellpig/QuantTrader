@@ -15,6 +15,7 @@
 | **V1.8** | 2026/05/08 | 新增 Phase 7-B（策略研究工作台）：批次策略比較、結果保存、UI tab 重構、K 線圖升級、Signal/Trade 雙層標記、策略指標副圖。新增 Phase 7-C（參數掃描與防過度最佳化）：Grid Search、參數驗證過濾、組合數限制、樣本不足警告、排序與 Top N。 |
 | **V1.9** | 2026/05/09 | 新增 Phase 7-D（Walk-Forward Analysis）：單標的向量化 WFA、rolling IS/OOS 視窗、IS 參數掃描 + OOS 驗證、OOS 彙總績效、IS/OOS degradation、參數穩定性 CV、執行量上限、UI 中文說明規則與 CSV 匯出。 |
 | **V1.10** | 2026/05/10 | Phase 7-D 驗收完成：7-D-1 核心引擎與 7-D-2 Walk-Forward tab、中文說明、回測次數預估、summary/window/stability table、CSV 匯出、Phase 7 回歸皆通過。 |
+| **V1.11** | 2026/05/10 | 新增 Phase 6-B：設定頁與側邊欄 UI 小修。包含隱藏 Streamlit 自動頁面入口、預設外觀改為 `midnight_blue`、一般設定與策略設定儲存/恢復流程分離、策略類型選項補齊 8 種並顯示中文說明、每種策略提供一組預設 preset、已儲存 preset 可單獨清除。 |
 
 ---
 
@@ -1127,6 +1128,94 @@ strategies:
 - 既有功能（資料下載、回測、AI 問答、策略設定儲存讀取）行為與資料不因主題切換而異常。
 - 主題值或元件開關設為非法值時，系統回退到預設並顯示警告，不中斷頁面。
 
+#### 6-B 設定頁與側邊欄 UI 小修（0.5-1 天）
+
+**建置內容：** 修正 6-A 後設定頁與側邊欄的可用性問題。此階段只調整 UI 與設定保存邏輯，不改資料管線、回測引擎、策略訊號語意或 AI 問答核心。
+
+**側邊欄規格：**
+- 左側 sidebar 只顯示 QuantTrader 自訂導覽區塊，不得同時顯示 Streamlit 自動產生的 multipage 導覽。
+- 需移除或隱藏自動頁面入口：`app`、`ai chat`、`backtest`、`data management`、`settings`。
+- 保留自訂選單區塊與四個功能頁面：`資料管理`、`回測`、`AI 問答`、`設定`。
+- 若 AI 功能停用，`AI 問答` 頁仍可保留入口，但頁面內需清楚顯示停用狀態，不得發出 LLM API 呼叫。
+
+**預設外觀規格：**
+- 6-B 起，缺少 `ui.theme` 或 `ui` 區塊時，預設主題改為 `midnight_blue`。
+- `config.yaml` 建議值：
+  ```yaml
+  ui:
+    theme: midnight_blue   # arctic_light | obsidian_dark | finance_green | midnight_blue | cyberpunk | warm_sepia
+    use_extras: true
+    use_option_menu: true
+  ```
+- 若 `ui.theme` 為非法值，fallback 也改為 `midnight_blue`，並在 UI 顯示一次警告。
+
+**設定頁儲存/恢復規格：**
+- 設定頁需把「策略設定以外的設定」與「策略設定」分成兩組操作，避免使用者只想改外觀或 API key 時意外覆寫 `strategies[]`。
+- 在「策略設定」區塊上方（目前位於「回測參數」之後）新增一般設定操作按鈕：
+  - `儲存設定`：只儲存 `ui`、`ai`、`risk`、`backtest` 與 `.env` API keys；不得修改 `strategies[]` 或舊版 `strategy` 區塊。
+  - `恢復設定預設值`：只恢復策略以外設定的預設值；不得清除或改寫任何已儲存策略 preset。
+- 原策略區塊下方按鈕改名並限縮責任：
+  - `儲存策略`：只新增或更新目前編輯的策略 preset，寫回 `config.yaml` 的 `strategies[]`；不得改寫 `ui`、`ai`、`risk`、`backtest` 或 `.env`。
+  - `恢復策略預設值`：只把 `strategies[]` 恢復為 8 種策略各一組預設 preset；不得改寫其他設定。
+
+**策略 preset 預設值：**
+- `恢復策略預設值` 後，`strategies[]` 必須至少包含下列 8 筆：
+  ```yaml
+  strategies:
+    - name: MA20_MA60
+      type: moving_average_cross
+      params: { short_window: 20, long_window: 60 }
+    - name: 定期定額
+      type: dollar_cost_averaging
+      params: { monthly_day: 5, monthly_amount: 10000.0, min_buy_unit: 1, non_trading_day_policy: next_trading_day, buy_price_field: close }
+    - name: RSI_14
+      type: rsi
+      params: { period: 14, oversold: 30.0, overbought: 70.0 }
+    - name: KD_Cross
+      type: kd_cross
+      params: { k_period: 9, d_period: 3, smooth_k: 3 }
+    - name: MACD_Cross
+      type: macd_cross
+      params: { fast: 12, slow: 26, signal: 9 }
+    - name: BB_20
+      type: bollinger_band
+      params: { period: 20, std_dev: 2.0 }
+    - name: BIAS_20
+      type: bias
+      params: { ma_period: 20, buy_bias: -10.0, sell_bias: 10.0 }
+    - name: Donchian_20_10
+      type: donchian_breakout
+      params: { entry_period: 20, exit_period: 10 }
+  ```
+- 使用者可單獨刪除任何已儲存 preset；若刪到缺少某策略類型，下一次點 `恢復策略預設值` 必須重新建立完整 8 筆預設。
+
+**策略類型選項規格：**
+- 設定頁「策略類型」不得只列 `moving_average_cross` 與 `dollar_cost_averaging`，需補齊目前支援的 8 種策略類型。
+- 選項顯示需與「編輯策略」欄位一致，格式為 `{type} ({中文說明})`：
+  - `moving_average_cross (均線交叉)`
+  - `dollar_cost_averaging (定期定額)`
+  - `rsi (RSI 超買超賣)`
+  - `kd_cross (KD 交叉)`
+  - `macd_cross (MACD 交叉)`
+  - `bollinger_band (布林通道)`
+  - `bias (乖離率)`
+  - `donchian_breakout (突破策略)`
+- 選擇任一策略類型後，設定頁需顯示對應參數欄位並套用該策略的預設參數；不得因選到 7-A 新增策略而退回均線交叉或報「不支援」。
+
+**單筆清除規格：**
+- 「目前策略清單」中，每一筆已儲存 preset 前方需有清除按鈕。
+- 點擊單筆清除只刪除該 preset，並立即寫回 `config.yaml` 的 `strategies[]`。
+- 單筆清除不得修改其他 preset、不得修改策略以外設定、不得清除 `.env`。
+
+**驗收指標：**
+- 啟動 UI 後，左側 sidebar 不再出現 Streamlit 自動頁面入口，只保留 QuantTrader 自訂選單。
+- `config.yaml` 缺少 `ui` 區塊時，UI 預設套用 `midnight_blue`。
+- `儲存設定` / `恢復設定預設值` 只影響策略以外設定；`strategies[]` diff 不變。
+- `儲存策略` / `恢復策略預設值` 只影響 `strategies[]`；`ui`、`ai`、`risk`、`backtest` 與 `.env` diff 不變。
+- 「策略類型」可選 8 種策略，且每個選項都有中文括號說明。
+- `恢復策略預設值` 後，每種策略類型至少各有一筆 preset。
+- 單筆清除任一 preset 後，只有該 preset 被移除。
+
 ---
 
 ### Phase 7：策略擴充（彈性）
@@ -1849,9 +1938,9 @@ UI 階段負責回測頁 Walk-Forward tab、中文說明、執行前檢查、進
 | **3** 事件驅動引擎 | 3-A → 3-E（5 段） | 12 天 | ✅ |
 | **4** AI 問答 + UI | 4-A → 4-D（4 段） | 5 天 | ✅ |
 | **5** 回測體驗與 UI 補充 | 5-A → 5-B（2 段） | 3-5 天 | ✅ |
-| **6** UI/UX 強化 | 6-A（1 段） | 1-2 天 | ✅ |
+| **6** UI/UX 強化 | 6-A → 6-B（2 段） | 1.5-3 天 | ✅ |
 | **7** 策略擴充 | 7-A → 7-D（4 段） | 9.5-14 天 | |
-| **合計** | 24 個子階段 | **42.5-50 天（約 10-12 週）** | |
+| **合計** | 25 個子階段 | **43-51 天（約 10-12 週）** | |
 
 ---
 

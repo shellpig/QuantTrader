@@ -2,6 +2,8 @@ from typing import Literal, TypedDict
 
 ThemeName = Literal["obsidian_dark", "finance_green", "midnight_blue", "arctic_light", "cyberpunk", "warm_sepia"]
 
+DEFAULT_THEME: ThemeName = "midnight_blue"
+
 class ThemePalette(TypedDict):
     background: str
     surface: str
@@ -62,16 +64,20 @@ THEMES: dict[ThemeName, ThemePalette] = {
 }
 
 def get_theme(name: str) -> tuple[ThemeName, ThemePalette]:
-    """回傳合法主題；未知值回退到 arctic_light。"""
+    """回傳合法主題；未知值回退到 midnight_blue。"""
     if name in THEMES:
-        return name, THEMES[name] # type: ignore
-    return "arctic_light", THEMES["arctic_light"]
+        return name, THEMES[name]  # type: ignore
+    return DEFAULT_THEME, THEMES[DEFAULT_THEME]
 
 def render_theme_css(name: str) -> str:
     """產生注入用的 <style> 字串，包含 CSS 變數與 Streamlit selector overrides。"""
     _, palette = get_theme(name)
     return f"""
 <style>
+    /* 隱藏 Streamlit 自動產生的 multipage 導覽 */
+    [data-testid="stSidebarNav"] {{
+        display: none !important;
+    }}
     :root {{
         --primary-color: {palette["primary"]};
         --background-color: {palette["background"]};

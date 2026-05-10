@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from src.core.config import clear_config_cache, get_config
 from src.core.strategy_config import (
+    DEFAULT_STRATEGY_PRESETS,
     STRATEGY_META,
+    SUPPORTED_STRATEGY_TYPES,
     format_param_caption,
     get_strategy_meta,
     get_strategy_presets,
     make_strategy_label,
+    make_strategy_type_label,
 )
 
 
@@ -192,3 +195,32 @@ def test_config_yaml_exposes_all_8_strategy_types() -> None:
     presets = get_strategy_presets(get_config())
     types = {p["type"] for p in presets}
     assert types == _ALL_STRATEGY_TYPES
+
+
+# ---------------------------------------------------------------------------
+# Phase 6-B: DEFAULT_STRATEGY_PRESETS and type label tests
+# ---------------------------------------------------------------------------
+
+def test_default_strategy_presets_cover_all_strategy_types() -> None:
+    preset_types = {p["type"] for p in DEFAULT_STRATEGY_PRESETS}
+    assert preset_types == _ALL_STRATEGY_TYPES
+
+
+def test_default_strategy_presets_all_valid() -> None:
+    from src.core.strategy_config import normalize_strategy_preset
+    for preset in DEFAULT_STRATEGY_PRESETS:
+        result = normalize_strategy_preset(preset)
+        assert result["name"] == preset["name"]
+        assert result["type"] == preset["type"]
+
+
+def test_strategy_type_labels_include_chinese_metadata() -> None:
+    for strategy_type in SUPPORTED_STRATEGY_TYPES:
+        label = make_strategy_type_label(strategy_type)
+        assert "(" in label and ")" in label, f"{strategy_type} label missing parentheses: {label}"
+        meta = STRATEGY_META[strategy_type]
+        assert meta["label"] in label, f"Chinese label not found in: {label}"
+
+
+def test_supported_strategy_types_matches_meta() -> None:
+    assert set(SUPPORTED_STRATEGY_TYPES) == set(STRATEGY_META.keys())

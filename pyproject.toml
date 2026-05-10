@@ -34,6 +34,9 @@ pythonpath = ["."]
 markers = [
     "integration: tests that require external APIs or network connectivity",
 ]
+filterwarnings = [
+    "ignore::pandas.errors.Pandas4Warning:pandas_ta",
+]
 
 [tool.ruff]
 target-version = "py312"

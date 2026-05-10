@@ -2,7 +2,7 @@
 
 本文件供新 session 快速了解專案全貌，取代逐份閱讀全部規格文件。需要深入某區段時，按行號索引讀取對應文件。
 
-最後更新：2026-05-09
+最後更新：2026-05-10
 
 ---
 
@@ -129,7 +129,7 @@ ai:
   provider: anthropic
   model: claude-sonnet-4-20250514
 ui:
-  theme: arctic_light
+  theme: midnight_blue
   use_extras: true
   use_option_menu: true
 ```
@@ -143,7 +143,8 @@ ui:
 | 3 | ✅ 完成 | 事件驅動引擎（Events、Account、EventLoop、雙引擎一致性） |
 | 4 | ✅ 完成 | AI 問答 + Streamlit UI（AIAdvisor、IndicatorEngine、4 頁 UI、E2E） |
 | 5 | ✅ 完成 | 回測體驗補充（5-A 股價走勢+EPS、5-B DCA+多策略 preset） |
-| 6 | ✅ 完成 | UI/UX 強化（6-A 6 套主題切換） |
+| 6-A | ✅ 完成 | UI/UX 強化：6 套主題切換、metric card、option_menu 側邊欄 |
+| 6-B | ⏳ 待實作 | 設定頁與側邊欄 UI 小修：隱藏 Streamlit 自動頁面入口、預設 `midnight_blue`、設定/策略儲存分離、8 種策略 preset 與單筆清除 |
 | 7-A | ✅ 完成 | 策略擴充：RSI、KD 交叉、MACD 交叉、布林通道、乖離率、Donchian 突破 + 中文 metadata |
 | 7-B | ✅ 完成 | 策略研究工作台：批次比較、結果保存、UI tab 重構、K 線圖、Signal/Trade overlay、指標副圖 |
 | 7-C | ✅ 完成 | 參數掃描與防過度最佳化：Grid Search、參數過濾、組合上限、樣本不足警告 |
@@ -153,15 +154,16 @@ ui:
 
 見 `已知問題.md`（每次必讀）。
 
-主線：Phase 1-7-D 已完成。Phase 7-D Walk-Forward Analysis 已完成核心引擎與 UI tab 驗收；下一步可進入 Phase 8 規劃或 7-D 後續增強。
+主線：Phase 1-7-D 已完成。2026-05-10 新增 Phase 6-B 文件規格，作為下一個 UI 小修任務；完成後再進入 Phase 8 規劃或 7-D 後續增強。
 
 2026-05-10 狀態：
-- 最新 commit：`f712c4e Implement Phase 7-D-1 walk-forward core`
+- 最新 commit：`3947a3a Complete Phase 7-D walk-forward UI`
 - 已完成實作測試統計：191 個單元測試、7 個 integration 測試、65 項手動驗收項目（Phase 1-7-D）
 - 7-D-1 驗證結果：`tests/test_walk_forward.py tests/test_sweep.py` 為 62 passed, 1 warning（第一次因 Windows temp 權限失敗，elevated 重跑通過）
 - 7-D-1 已補 `warning_count` regression test：`test_warning_count_includes_per_window_and_unstable_param`
 - 7-D-2 驗收結果：Walk-Forward tab、英文術語中文說明、實際 window 回測次數預估、summary/window/stability table、CSV 匯出入口已驗收
 - Phase 7-D 完成回歸：`tests/test_strategies.py tests/test_strategy_config.py tests/test_batch.py tests/test_sweep.py tests/test_walk_forward.py` 為 116 passed, 1 warning（elevated 重跑通過）
+- Phase 6-B 已寫入文件，尚未實作與驗收；測試指南列出 10 項手動驗收與預計新增/調整的單元測試。
 
 已知設計限制：
 - 兩引擎是不同典範（signal-based vs order-based），跨引擎只能比 per-share PnL
@@ -170,7 +172,7 @@ ui:
 
 ## 規格文件索引
 
-### 量化交易系統規格書_shellpig版.md（~1942 行）
+### 量化交易系統規格書_shellpig版.md（~2031 行）
 
 | 區段 | 行範圍 | 何時讀 |
 |:---|:---|:---|
@@ -187,12 +189,12 @@ ui:
 | 測試策略 | 744-765 | 測試方針 |
 | Phase 1-4 開發計畫 | 776-945 | 查歷史 phase 規格 |
 | Phase 5 回測體驗 | 948-1064 | 修改 DCA / 股價走勢 |
-| Phase 6 UI/UX | 1067-1126 | 修改主題切換 |
-| **Phase 7-A 策略擴充** | **1130-1318** | **實作新策略時必讀** |
-| **Phase 7-B 策略研究工作台** | **1320-1444** | **實作批次比較/K 線圖/overlay 時必讀** |
-| **Phase 7-C 參數掃描** | **1446-1569** | **實作參數掃描時必讀** |
-| **Phase 7-D Walk-Forward Analysis** | **1573-1841** | **實作 WFA / OOS 驗證時必讀** |
-| 子階段總覽 + 費用估算 | 1843-1886 | 總覽 |
+| Phase 6 UI/UX | 1070-1219 | 修改主題切換、設定頁與側邊欄 UI 小修 |
+| **Phase 7-A 策略擴充** | **1221-1410** | **實作新策略時必讀** |
+| **Phase 7-B 策略研究工作台** | **1411-1536** | **實作批次比較/K 線圖/overlay 時必讀** |
+| **Phase 7-C 參數掃描** | **1537-1661** | **實作參數掃描時必讀** |
+| **Phase 7-D Walk-Forward Analysis** | **1662-1930** | **實作 WFA / OOS 驗證時必讀** |
+| 子階段總覽 + 費用估算 | 1932-1984 | 總覽 |
 
 ### 開發設計方針.md（~3988 行）
 
@@ -203,13 +205,14 @@ ui:
 | Phase 2 向量化回測 | 718-1190 | 修改 engine_vec / cost / metrics |
 | Phase 3 事件驅動引擎 | 1192-1614 | 修改 engine_event / account / events |
 | Phase 4 AI + Streamlit UI | 1616-2200 | 修改 ai/ / indicators/ / ui/ |
-| Phase 6 主題切換 | 2203-2321 | 修改 themes.py / settings.py |
-| **Phase 7-A 策略擴充** | **2325-2783** | **實作新策略時必讀** |
-| **Phase 7-B 策略研究工作台** | **2785-3165** | **實作批次比較/K 線圖/overlay 時必讀** |
-| **Phase 7-C 參數掃描** | **3167-3400** | **實作參數掃描時必讀** |
-| **Phase 7-D Walk-Forward Analysis** | **3561-3988** | **實作 WFA runner / UI tab 時必讀** |
+| Phase 6-A 主題切換 | 2207-2321 | 修改 themes.py / settings.py |
+| **Phase 6-B 設定頁與側邊欄 UI 小修** | **2323-2479** | **修改 app.py / themes.py / config.py / strategy_config.py / settings.py 時必讀** |
+| **Phase 7-A 策略擴充** | **2481-2943** | **實作新策略時必讀** |
+| **Phase 7-B 策略研究工作台** | **2945-3325** | **實作批次比較/K 線圖/overlay 時必讀** |
+| **Phase 7-C 參數掃描** | **3327-3717** | **實作參數掃描時必讀** |
+| **Phase 7-D Walk-Forward Analysis** | **3719-4144** | **實作 WFA runner / UI tab 時必讀** |
 
-### 測試指南.md（~1902 行）
+### 測試指南.md（~1944 行）
 
 | 區段 | 行範圍 | 何時讀 |
 |:---|:---|:---|
@@ -218,15 +221,15 @@ ui:
 | Phase 2 測試 | 400-660 | 修改 backtest 時 |
 | Phase 3 測試 | 663-966 | 修改 events/account/engine_event 時 |
 | Phase 4 測試 | 970-1217 | 修改 ai/indicators/UI 時 |
-| Phase 6 測試 | 1219-1252 | 修改主題切換時 |
-| **Phase 7-A 測試** | **1256-1454** | **新策略測試** |
-| **Phase 7-B 測試** | **1456-1543** | **批次比較測試** |
-| **Phase 7-C 測試** | **1545-1636** | **參數掃描測試** |
-| **Phase 7-D 測試** | **1657-1815** | **Walk-Forward 測試** |
-| Phase 7 全階段回歸 | 1817-1835 | Phase 7-D 完成後 |
-| 全專案回歸 + 測試統計 | 1837-1902 | Phase 完成後 |
+| Phase 6 測試 | 1219-1291 | 修改主題切換、設定頁與側邊欄時 |
+| **Phase 7-A 測試** | **1295-1495** | **新策略測試** |
+| **Phase 7-B 測試** | **1497-1584** | **批次比較測試** |
+| **Phase 7-C 測試** | **1586-1677** | **參數掃描測試** |
+| **Phase 7-D 測試** | **1698-1856** | **Walk-Forward 測試** |
+| Phase 7 全階段回歸 | 1858-1876 | Phase 7-D 完成後 |
+| 全專案回歸 + 測試統計 | 1878-1944 | Phase 完成後 |
 
-### 已知問題.md（~420 行）
+### 已知問題.md（~461 行）
 
 追蹤驗收中發現的問題。每筆含：位置、狀況、風險、處理階段。已處理的標記 `[✅ 已處理 @ commit]`。每次 session 開始時必讀。
 
