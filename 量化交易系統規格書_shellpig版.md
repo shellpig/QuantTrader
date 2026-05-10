@@ -2113,6 +2113,8 @@ UI 階段負責回測頁 Walk-Forward tab、中文說明、執行前檢查、進
 - 增量補抓邏輯正確（本地有 30 天，只補抓之後的）
 - ChipSummary 各欄位依規則填入
 
+**狀態（2026-05-10）：** ✅ 已驗收完成。`tests/test_chip_analysis.py` = 14 passed。
+
 ---
 
 #### 8-D　即時行情接入（1-2 天）
