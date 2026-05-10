@@ -9,7 +9,13 @@ import duckdb
 import pandas as pd
 
 from src.core.config import get_data_dir
-from src.core.constants import SPLITS_COLUMNS, STANDARD_COLUMNS, TAIPEI_TZ
+from src.core.constants import (
+    INSTITUTIONAL_COLUMNS,
+    MARGIN_COLUMNS,
+    SPLITS_COLUMNS,
+    STANDARD_COLUMNS,
+    TAIPEI_TZ,
+)
 from src.core.exceptions import StorageError
 
 
@@ -36,6 +42,39 @@ def _empty_splits_dataframe() -> pd.DataFrame:
             "symbol": pd.Series(dtype="object"),
         }
     )[SPLITS_COLUMNS]
+
+
+def _empty_institutional_dataframe() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "date": pd.Series(dtype=f"datetime64[ns, {TAIPEI_TZ}]"),
+            "foreign_buy": pd.Series(dtype="int64"),
+            "foreign_sell": pd.Series(dtype="int64"),
+            "foreign_net": pd.Series(dtype="int64"),
+            "trust_buy": pd.Series(dtype="int64"),
+            "trust_sell": pd.Series(dtype="int64"),
+            "trust_net": pd.Series(dtype="int64"),
+            "dealer_buy": pd.Series(dtype="int64"),
+            "dealer_sell": pd.Series(dtype="int64"),
+            "dealer_net": pd.Series(dtype="int64"),
+            "symbol": pd.Series(dtype="object"),
+        }
+    )[INSTITUTIONAL_COLUMNS]
+
+
+def _empty_margin_dataframe() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "date": pd.Series(dtype=f"datetime64[ns, {TAIPEI_TZ}]"),
+            "margin_buy": pd.Series(dtype="int64"),
+            "margin_sell": pd.Series(dtype="int64"),
+            "margin_balance": pd.Series(dtype="int64"),
+            "short_buy": pd.Series(dtype="int64"),
+            "short_sell": pd.Series(dtype="int64"),
+            "short_balance": pd.Series(dtype="int64"),
+            "symbol": pd.Series(dtype="object"),
+        }
+    )[MARGIN_COLUMNS]
 
 
 def _normalize_market_df(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
@@ -106,6 +145,66 @@ def _normalize_splits_df(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
     out["before_price"] = out["before_price"].astype("float64")
     out["after_price"] = out["after_price"].astype("float64")
     return out[SPLITS_COLUMNS].sort_values("date").reset_index(drop=True)
+
+
+def _normalize_institutional_df(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
+    if df.empty:
+        return _empty_institutional_dataframe()
+
+    out = df.copy()
+    for col in INSTITUTIONAL_COLUMNS:
+        if col not in out.columns:
+            out[col] = pd.NA
+
+    out["symbol"] = out["symbol"].fillna(symbol).astype(str)
+    out["date"] = pd.to_datetime(out["date"], errors="coerce")
+    out = out.dropna(subset=["date"]).copy()
+    if out.empty:
+        return _empty_institutional_dataframe()
+
+    series = out["date"]
+    if series.dt.tz is None:
+        out["date"] = series.dt.tz_localize(TAIPEI_TZ)
+    else:
+        out["date"] = series.dt.tz_convert(TAIPEI_TZ)
+    out["date"] = out["date"].astype(f"datetime64[ns, {TAIPEI_TZ}]")
+
+    for col in INSTITUTIONAL_COLUMNS:
+        if col in {"date", "symbol"}:
+            continue
+        out[col] = pd.to_numeric(out[col], errors="coerce").fillna(0).astype("int64")
+
+    return out[INSTITUTIONAL_COLUMNS].sort_values("date").reset_index(drop=True)
+
+
+def _normalize_margin_df(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
+    if df.empty:
+        return _empty_margin_dataframe()
+
+    out = df.copy()
+    for col in MARGIN_COLUMNS:
+        if col not in out.columns:
+            out[col] = pd.NA
+
+    out["symbol"] = out["symbol"].fillna(symbol).astype(str)
+    out["date"] = pd.to_datetime(out["date"], errors="coerce")
+    out = out.dropna(subset=["date"]).copy()
+    if out.empty:
+        return _empty_margin_dataframe()
+
+    series = out["date"]
+    if series.dt.tz is None:
+        out["date"] = series.dt.tz_localize(TAIPEI_TZ)
+    else:
+        out["date"] = series.dt.tz_convert(TAIPEI_TZ)
+    out["date"] = out["date"].astype(f"datetime64[ns, {TAIPEI_TZ}]")
+
+    for col in MARGIN_COLUMNS:
+        if col in {"date", "symbol"}:
+            continue
+        out[col] = pd.to_numeric(out[col], errors="coerce").fillna(0).astype("int64")
+
+    return out[MARGIN_COLUMNS].sort_values("date").reset_index(drop=True)
 
 
 class ParquetStorage:
@@ -185,6 +284,22 @@ class ParquetStorage:
             "splits.parquet",
         )
 
+    def _institutional_path(self, symbol: str, market: str = "tw") -> Path:
+        return self._build_market_path(
+            "raw",
+            self._validate_market(market),
+            self._validate_symbol(symbol),
+            "institutional.parquet",
+        )
+
+    def _margin_path(self, symbol: str, market: str = "tw") -> Path:
+        return self._build_market_path(
+            "raw",
+            self._validate_market(market),
+            self._validate_symbol(symbol),
+            "margin.parquet",
+        )
+
     def _save_with_upsert(self, path: Path, symbol: str, df: pd.DataFrame) -> Path:
         path.parent.mkdir(parents=True, exist_ok=True)
         incoming = _normalize_market_df(df, symbol)
@@ -241,6 +356,60 @@ class ParquetStorage:
             raise StorageError(f"Failed to read parquet: {path}") from exc
         return _normalize_splits_df(loaded, symbol=symbol)
 
+    def _save_institutional_with_upsert(self, path: Path, symbol: str, df: pd.DataFrame) -> Path:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        incoming = _normalize_institutional_df(df, symbol)
+
+        if path.exists():
+            existing = self._load_institutional_or_empty(path, symbol)
+            merged = pd.concat([existing, incoming], ignore_index=True)
+        else:
+            merged = incoming
+
+        merged = merged.drop_duplicates(subset=["date", "symbol"], keep="last")
+        merged = merged.sort_values("date").reset_index(drop=True)
+        try:
+            merged.to_parquet(path, index=False)
+        except Exception as exc:  # noqa: BLE001
+            raise StorageError(f"Failed to write parquet: {path}") from exc
+        return path
+
+    def _load_institutional_or_empty(self, path: Path, symbol: str) -> pd.DataFrame:
+        if not path.exists():
+            return _empty_institutional_dataframe()
+        try:
+            loaded = pd.read_parquet(path)
+        except Exception as exc:  # noqa: BLE001
+            raise StorageError(f"Failed to read parquet: {path}") from exc
+        return _normalize_institutional_df(loaded, symbol=symbol)
+
+    def _save_margin_with_upsert(self, path: Path, symbol: str, df: pd.DataFrame) -> Path:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        incoming = _normalize_margin_df(df, symbol)
+
+        if path.exists():
+            existing = self._load_margin_or_empty(path, symbol)
+            merged = pd.concat([existing, incoming], ignore_index=True)
+        else:
+            merged = incoming
+
+        merged = merged.drop_duplicates(subset=["date", "symbol"], keep="last")
+        merged = merged.sort_values("date").reset_index(drop=True)
+        try:
+            merged.to_parquet(path, index=False)
+        except Exception as exc:  # noqa: BLE001
+            raise StorageError(f"Failed to write parquet: {path}") from exc
+        return path
+
+    def _load_margin_or_empty(self, path: Path, symbol: str) -> pd.DataFrame:
+        if not path.exists():
+            return _empty_margin_dataframe()
+        try:
+            loaded = pd.read_parquet(path)
+        except Exception as exc:  # noqa: BLE001
+            raise StorageError(f"Failed to read parquet: {path}") from exc
+        return _normalize_margin_df(loaded, symbol=symbol)
+
     def save_daily(self, symbol: str, df: pd.DataFrame, market: str = "tw") -> Path:
         normalized_symbol = self._validate_symbol(symbol)
         return self._save_with_upsert(self._daily_path(normalized_symbol, market), normalized_symbol, df)
@@ -272,6 +441,30 @@ class ParquetStorage:
     def load_splits(self, symbol: str, market: str = "tw") -> pd.DataFrame:
         normalized_symbol = self._validate_symbol(symbol)
         return self._load_splits_or_empty(self._splits_path(normalized_symbol, market), normalized_symbol)
+
+    def save_institutional(self, symbol: str, df: pd.DataFrame, market: str = "tw") -> Path:
+        normalized_symbol = self._validate_symbol(symbol)
+        return self._save_institutional_with_upsert(
+            self._institutional_path(normalized_symbol, market),
+            normalized_symbol,
+            df,
+        )
+
+    def load_institutional(self, symbol: str, market: str = "tw") -> pd.DataFrame:
+        normalized_symbol = self._validate_symbol(symbol)
+        return self._load_institutional_or_empty(self._institutional_path(normalized_symbol, market), normalized_symbol)
+
+    def save_margin(self, symbol: str, df: pd.DataFrame, market: str = "tw") -> Path:
+        normalized_symbol = self._validate_symbol(symbol)
+        return self._save_margin_with_upsert(
+            self._margin_path(normalized_symbol, market),
+            normalized_symbol,
+            df,
+        )
+
+    def load_margin(self, symbol: str, market: str = "tw") -> pd.DataFrame:
+        normalized_symbol = self._validate_symbol(symbol)
+        return self._load_margin_or_empty(self._margin_path(normalized_symbol, market), normalized_symbol)
 
 
 class DuckDBMeta:

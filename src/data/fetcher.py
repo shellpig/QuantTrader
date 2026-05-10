@@ -12,7 +12,13 @@ import requests
 import yfinance as yf
 
 from src.core.config import get_config
-from src.core.constants import SPLITS_COLUMNS, STANDARD_COLUMNS, TAIPEI_TZ
+from src.core.constants import (
+    INSTITUTIONAL_COLUMNS,
+    MARGIN_COLUMNS,
+    SPLITS_COLUMNS,
+    STANDARD_COLUMNS,
+    TAIPEI_TZ,
+)
 from src.core.exceptions import FetcherError
 
 
@@ -62,6 +68,39 @@ def _empty_eps_dataframe() -> pd.DataFrame:
             "report_date": pd.Series(dtype=f"datetime64[ns, {TAIPEI_TZ}]"),
         }
     )[["year", "quarter", "eps", "symbol", "report_date"]]
+
+
+def _empty_institutional_dataframe() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "date": pd.Series(dtype=f"datetime64[ns, {TAIPEI_TZ}]"),
+            "foreign_buy": pd.Series(dtype="int64"),
+            "foreign_sell": pd.Series(dtype="int64"),
+            "foreign_net": pd.Series(dtype="int64"),
+            "trust_buy": pd.Series(dtype="int64"),
+            "trust_sell": pd.Series(dtype="int64"),
+            "trust_net": pd.Series(dtype="int64"),
+            "dealer_buy": pd.Series(dtype="int64"),
+            "dealer_sell": pd.Series(dtype="int64"),
+            "dealer_net": pd.Series(dtype="int64"),
+            "symbol": pd.Series(dtype="object"),
+        }
+    )[INSTITUTIONAL_COLUMNS]
+
+
+def _empty_margin_dataframe() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "date": pd.Series(dtype=f"datetime64[ns, {TAIPEI_TZ}]"),
+            "margin_buy": pd.Series(dtype="int64"),
+            "margin_sell": pd.Series(dtype="int64"),
+            "margin_balance": pd.Series(dtype="int64"),
+            "short_buy": pd.Series(dtype="int64"),
+            "short_sell": pd.Series(dtype="int64"),
+            "short_balance": pd.Series(dtype="int64"),
+            "symbol": pd.Series(dtype="object"),
+        }
+    )[MARGIN_COLUMNS]
 
 
 def localize_to_taipei(df: pd.DataFrame, col: str = "date") -> pd.DataFrame:
@@ -250,6 +289,86 @@ class FinMindFetcher(IDataFetcher):
             }
         )
         return self._normalize_splits(raw, symbol=symbol)
+
+    def fetch_institutional(self, symbol: str, start_date: str) -> pd.DataFrame:
+        """
+        Fetch institutional buy/sell data and normalize to wide format.
+
+        Returned unit is shares (股).
+        """
+        raw = self._request_data(
+            {
+                "dataset": "TaiwanStockInstitutionalInvestorsBuySell",
+                "data_id": symbol,
+                "start_date": start_date,
+            }
+        )
+        return self._normalize_institutional(raw, symbol=symbol)
+
+    def fetch_margin(self, symbol: str, start_date: str) -> pd.DataFrame:
+        """
+        Fetch margin/short data and normalize to canonical schema.
+
+        Returned unit is lots (張).
+        """
+        raw = self._request_data(
+            {
+                "dataset": "TaiwanStockMarginPurchaseShortSale",
+                "data_id": symbol,
+                "start_date": start_date,
+            }
+        )
+        return self._normalize_margin(raw, symbol=symbol)
+
+    def fetch_institutional_incremental(
+        self,
+        symbol: str,
+        storage: Any,
+        *,
+        default_start_date: str = "2000-01-01",
+    ) -> pd.DataFrame:
+        existing = storage.load_institutional(symbol)
+        if existing.empty:
+            start_date = default_start_date
+        else:
+            last_date = pd.to_datetime(existing["date"], errors="coerce").max()
+            if pd.isna(last_date):
+                start_date = default_start_date
+            else:
+                start_date = (last_date + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+
+        incoming = self.fetch_institutional(symbol, start_date)
+        merged = pd.concat([existing, incoming], ignore_index=True)
+        merged["date"] = pd.to_datetime(merged["date"], errors="coerce")
+        merged = merged.dropna(subset=["date"]).drop_duplicates(subset=["date", "symbol"], keep="last")
+        merged = merged.sort_values("date").reset_index(drop=True)
+        storage.save_institutional(symbol, merged)
+        return merged
+
+    def fetch_margin_incremental(
+        self,
+        symbol: str,
+        storage: Any,
+        *,
+        default_start_date: str = "2000-01-01",
+    ) -> pd.DataFrame:
+        existing = storage.load_margin(symbol)
+        if existing.empty:
+            start_date = default_start_date
+        else:
+            last_date = pd.to_datetime(existing["date"], errors="coerce").max()
+            if pd.isna(last_date):
+                start_date = default_start_date
+            else:
+                start_date = (last_date + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+
+        incoming = self.fetch_margin(symbol, start_date)
+        merged = pd.concat([existing, incoming], ignore_index=True)
+        merged["date"] = pd.to_datetime(merged["date"], errors="coerce")
+        merged = merged.dropna(subset=["date"]).drop_duplicates(subset=["date", "symbol"], keep="last")
+        merged = merged.sort_values("date").reset_index(drop=True)
+        storage.save_margin(symbol, merged)
+        return merged
 
     def _request_data(self, params: dict[str, Any]) -> pd.DataFrame:
         headers = {"Authorization": f"Bearer {self._token}"}
@@ -453,6 +572,104 @@ class FinMindFetcher(IDataFetcher):
         normalized = normalized.sort_values("date").drop_duplicates(subset=["date", "symbol"], keep="last").reset_index(drop=True)
         return normalized
 
+    def _normalize_institutional(self, raw: pd.DataFrame, symbol: str) -> pd.DataFrame:
+        if raw.empty:
+            return _empty_institutional_dataframe()
+
+        out = raw.copy()
+        for col in ("date", "name", "buy", "sell", "stock_id"):
+            if col not in out.columns:
+                out[col] = pd.NA
+
+        out["buy"] = pd.to_numeric(out["buy"], errors="coerce").fillna(0).astype("int64")
+        out["sell"] = pd.to_numeric(out["sell"], errors="coerce").fillna(0).astype("int64")
+        out["net"] = out["buy"] - out["sell"]
+        out["date"] = pd.to_datetime(out["date"], errors="coerce")
+        out = out.dropna(subset=["date"]).copy()
+        if out.empty:
+            return _empty_institutional_dataframe()
+
+        out["symbol"] = out["stock_id"].fillna(symbol).astype(str)
+        out["category"] = out["name"].map(_institutional_name_to_category)
+        out = out[out["category"].notna()].copy()
+        if out.empty:
+            return _empty_institutional_dataframe()
+
+        grouped = (
+            out.groupby(["date", "symbol", "category"], as_index=False)[["buy", "sell", "net"]]
+            .sum()
+            .reset_index(drop=True)
+        )
+
+        wide = grouped.pivot_table(
+            index=["date", "symbol"],
+            columns="category",
+            values=["buy", "sell", "net"],
+            aggfunc="sum",
+            fill_value=0,
+        )
+        wide.columns = [f"{cat}_{metric}" for metric, cat in wide.columns]
+        wide = wide.reset_index()
+
+        normalized = pd.DataFrame(
+            {
+                "date": wide["date"],
+                "foreign_buy": wide.get("foreign_buy", 0),
+                "foreign_sell": wide.get("foreign_sell", 0),
+                "foreign_net": wide.get("foreign_net", 0),
+                "trust_buy": wide.get("trust_buy", 0),
+                "trust_sell": wide.get("trust_sell", 0),
+                "trust_net": wide.get("trust_net", 0),
+                "dealer_buy": wide.get("dealer_buy", 0),
+                "dealer_sell": wide.get("dealer_sell", 0),
+                "dealer_net": wide.get("dealer_net", 0),
+                "symbol": wide["symbol"],
+            }
+        )
+        normalized = localize_to_taipei(normalized, col="date")
+        for col in INSTITUTIONAL_COLUMNS:
+            if col in {"date", "symbol"}:
+                continue
+            normalized[col] = pd.to_numeric(normalized[col], errors="coerce").fillna(0).astype("int64")
+        normalized = normalized[INSTITUTIONAL_COLUMNS]
+        normalized = normalized.sort_values("date").drop_duplicates(subset=["date", "symbol"], keep="last").reset_index(drop=True)
+        return normalized
+
+    def _normalize_margin(self, raw: pd.DataFrame, symbol: str) -> pd.DataFrame:
+        if raw.empty:
+            return _empty_margin_dataframe()
+
+        out = raw.copy()
+        field_map = {
+            "date": "date",
+            "stock_id": "symbol",
+            "MarginPurchaseBuy": "margin_buy",
+            "MarginPurchaseSell": "margin_sell",
+            "MarginPurchaseTodayBalance": "margin_balance",
+            "ShortSaleBuy": "short_buy",
+            "ShortSaleSell": "short_sell",
+            "ShortSaleTodayBalance": "short_balance",
+        }
+        out = out.rename(columns=field_map)
+        for col in MARGIN_COLUMNS:
+            if col not in out.columns:
+                out[col] = pd.NA
+
+        out["symbol"] = out["symbol"].fillna(symbol).astype(str)
+        out["date"] = pd.to_datetime(out["date"], errors="coerce")
+        out = out.dropna(subset=["date"]).copy()
+        if out.empty:
+            return _empty_margin_dataframe()
+
+        normalized = out[MARGIN_COLUMNS].copy()
+        normalized = localize_to_taipei(normalized, col="date")
+        for col in MARGIN_COLUMNS:
+            if col in {"date", "symbol"}:
+                continue
+            normalized[col] = pd.to_numeric(normalized[col], errors="coerce").fillna(0).astype("int64")
+        normalized = normalized.sort_values("date").drop_duplicates(subset=["date", "symbol"], keep="last").reset_index(drop=True)
+        return normalized
+
 
 def _parse_quarter_value(value: Any) -> float:
     if pd.isna(value):
@@ -485,6 +702,17 @@ def _eps_metric_priority(label: str) -> int:
     if "稀釋" in label_text or "DILUTED" in name:
         return 2
     return 1
+
+
+def _institutional_name_to_category(name: Any) -> str | None:
+    label = str(name or "").strip()
+    if label in {"Foreign_Investor", "Foreign_Dealer_Self"}:
+        return "foreign"
+    if label == "Investment_Trust":
+        return "trust"
+    if label in {"Dealer_self", "Dealer_Hedging"}:
+        return "dealer"
+    return None
 
 
 class YFinanceFetcher(IDataFetcher):
