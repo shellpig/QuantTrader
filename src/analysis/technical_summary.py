@@ -287,8 +287,12 @@ def _find_resistance_levels(high: pd.Series) -> list[PriceLevel]:
         return []
 
     levels: list[PriceLevel] = []
-    high_60 = _last_value(h.tail(60))
-    high_20 = _last_value(h.tail(20))
+    
+    h60 = h.tail(60).dropna()
+    high_60 = float(h60.max()) if not h60.empty else None
+    
+    h20 = h.tail(20).dropna()
+    high_20 = float(h20.max()) if not h20.empty else None
 
     if high_60 is not None:
         levels.append(PriceLevel(value=high_60, label="近60日高點", kind="resistance"))
@@ -309,7 +313,9 @@ def _find_support_levels(
     l = pd.to_numeric(low, errors="coerce")
     levels: list[PriceLevel] = []
 
-    low_20 = _last_value(l.tail(20))
+    l20 = l.tail(20).dropna()
+    low_20 = float(l20.min()) if not l20.empty else None
+
     if low_20 is not None:
         levels.append(PriceLevel(value=low_20, label="近期低點", kind="support"))
     if ma20 is not None:

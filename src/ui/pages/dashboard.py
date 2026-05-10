@@ -31,7 +31,7 @@ from src.data.realtime import BidAskStructure, RealtimeFetcher, RealtimeQuote
 from src.data.storage import ParquetStorage
 from src.ui.themes import get_theme
 
-_TW_SYMBOL_PATTERN = re.compile(r"^\d{4,6}$")
+_TW_SYMBOL_PATTERN = re.compile(r"^[0-9A-Z]{4,6}$")
 _STATE_KEY = "dashboard_payload"
 
 
@@ -44,14 +44,14 @@ def render_dashboard_page() -> None:
     st.title("個股分析")
     st.caption("整合技術面、籌碼、型態與 AI 劇本的個股儀表板。")
 
-    symbol = st.text_input("股票代碼", value="", key="dashboard_symbol").strip()
+    symbol = st.text_input("股票代碼", value="", key="dashboard_symbol").strip().upper()
     analyze_clicked = st.button("分析", type="primary", key="dashboard_analyze")
 
     if not symbol:
         st.info("請先輸入股票代碼。")
         return
     if not _TW_SYMBOL_PATTERN.fullmatch(symbol):
-        st.warning("股票代碼格式錯誤，請輸入 4~6 位數字台股代碼。")
+        st.warning("股票代碼格式錯誤，請輸入 4~6 位英數台股代碼。")
         return
 
     if analyze_clicked:
@@ -139,7 +139,7 @@ def _build_dashboard_payload(symbol: str) -> dict[str, Any]:
 
     candle_patterns = detect_candle_patterns(daily)
     chart_patterns = detect_chart_pattern(daily)
-    multi_timeframe = analyze_multi_timeframe(daily)
+    multi_timeframe = analyze_multi_timeframe(daily.set_index("date"))
 
     config = get_config()
     ai_section = config.get("ai", {}) if isinstance(config, dict) else {}
@@ -263,6 +263,11 @@ def _render_price_chart(df: pd.DataFrame, technical: TechnicalSummary) -> None:
     chart_df["ma5"] = chart_df["close"].rolling(5).mean()
     chart_df["ma20"] = chart_df["close"].rolling(20).mean()
     chart_df["ma60"] = chart_df["close"].rolling(60).mean()
+    chart_df = chart_df.tail(120).reset_index(drop=True)
+
+    price_min = float(chart_df["low"].min())
+    price_max = float(chart_df["high"].max())
+    y_padding = (price_max - price_min) * 0.05
 
     fig = go.Figure()
     fig.add_trace(
@@ -273,16 +278,30 @@ def _render_price_chart(df: pd.DataFrame, technical: TechnicalSummary) -> None:
             low=chart_df["low"],
             close=chart_df["close"],
             name="日K",
+            increasing_line_color="#ef4444",
+            increasing_fillcolor="#ef4444",
+            decreasing_line_color="#22c55e",
+            decreasing_fillcolor="#22c55e",
         )
     )
-    fig.add_trace(go.Scatter(x=chart_df["date"], y=chart_df["ma5"], mode="lines", name="MA5"))
-    fig.add_trace(go.Scatter(x=chart_df["date"], y=chart_df["ma20"], mode="lines", name="MA20"))
-    fig.add_trace(go.Scatter(x=chart_df["date"], y=chart_df["ma60"], mode="lines", name="MA60"))
+    fig.add_trace(go.Scatter(x=chart_df["date"], y=chart_df["ma5"], mode="lines", name="MA5", line={"width": 1}))
+    fig.add_trace(go.Scatter(x=chart_df["date"], y=chart_df["ma20"], mode="lines", name="MA20", line={"width": 1}))
+    fig.add_trace(go.Scatter(x=chart_df["date"], y=chart_df["ma60"], mode="lines", name="MA60", line={"width": 1}))
 
+    seg_x0 = chart_df["date"].iloc[max(0, len(chart_df) - 20)]
+    seg_x1 = chart_df["date"].iloc[-1]
     for level in technical.resistance_levels:
-        fig.add_hline(y=float(level.value), line_dash="dot", line_color="#ef4444")
+        y = float(level.value)
+        fig.add_shape(type="line", x0=seg_x0, x1=seg_x1, y0=y, y1=y, xref="x", yref="y",
+                      line={"dash": "dot", "color": "#ef4444", "width": 1})
+        fig.add_annotation(x=0.98, y=y, xref="paper", yref="y", text=f"壓 {y:.1f}",
+                           showarrow=False, font={"size": 10, "color": "#ef4444"}, xanchor="right")
     for level in technical.support_levels:
-        fig.add_hline(y=float(level.value), line_dash="dot", line_color="#22c55e")
+        y = float(level.value)
+        fig.add_shape(type="line", x0=seg_x0, x1=seg_x1, y0=y, y1=y, xref="x", yref="y",
+                      line={"dash": "dot", "color": "#22c55e", "width": 1})
+        fig.add_annotation(x=0.98, y=y, xref="paper", yref="y", text=f"撐 {y:.1f}",
+                           showarrow=False, font={"size": 10, "color": "#22c55e"}, xanchor="right")
 
     fig.update_layout(
         template=palette["plotly_template"],
@@ -290,7 +309,8 @@ def _render_price_chart(df: pd.DataFrame, technical: TechnicalSummary) -> None:
         xaxis_title="日期",
         yaxis_title="價格",
         font={"color": palette["text"]},
-        height=500,
+        height=650,
+        yaxis={"range": [price_min - y_padding, price_max + y_padding]},
     )
     st.plotly_chart(fig, width="stretch")
 
