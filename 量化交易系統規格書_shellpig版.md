@@ -2064,6 +2064,8 @@ UI 階段負責回測頁 Walk-Forward tab、中文說明、執行前檢查、進
 - 多週期 resample 正確，週/月趨勢判讀符合預期
 - 資料不足時不 crash
 
+**狀態（2026-05-10）：** ✅ 已驗收完成。`tests/test_pattern.py` = 15 passed。
+
 ---
 
 #### 8-C　籌碼分析管線（2-3 天）
