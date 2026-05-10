@@ -13,6 +13,7 @@ import pandas as pd
 import requests
 
 from src.core.config import get_config
+from src.core.exceptions import AICallError, AIDisabledError
 from src.data.storage import ParquetStorage
 
 SYSTEM_PROMPT = """你是一個台股技術分析助理。你的工作是：
@@ -29,6 +30,26 @@ SYSTEM_PROMPT = """你是一個台股技術分析助理。你的工作是：
 DISCLAIMER = """⚠️ 免責聲明：以上分析僅為技術指標數值的客觀陳述，不構成任何投資建議。
 技術分析基於歷史數據，不保證未來走勢。AI 無法預測市場，所有投資決策
 請自行判斷，並以券商官方行情為準。投資一定有風險，過去績效不代表未來報酬。"""
+
+DASHBOARD_SYSTEM_PROMPT = """你是台股個股儀表板的分析助理。
+請依使用者提供的結構化資料，輸出 JSON 物件（不要額外文字），欄位如下：
+{
+  "industry_overview": ["...", "...", "..."],
+  "company_overview": ["...", "...", "..."],
+  "volume_price_analysis": "...",
+  "scenarios": [
+    {"name": "...", "entry_range": "...", "stop_loss": 0.0, "target": "..."},
+    {"name": "...", "entry_range": "...", "stop_loss": 0.0, "target": "..."},
+    {"name": "...", "entry_range": "...", "stop_loss": 0.0, "target": "..."}
+  ],
+  "conclusion": "..."
+}
+
+規則：
+1) 不得編造未提供的數字。
+2) 劇本價位需基於提供的支撐/壓力區間。
+3) 語氣為研究情境推演，不得出現保證獲利、必買等語句。
+4) 使用繁體中文。"""
 
 TOOLS: list[dict[str, Any]] = [
     {
@@ -100,6 +121,27 @@ class NormalizedToolCall:
     id: str
     name: str
     arguments: dict[str, Any]
+
+
+@dataclass(slots=True)
+class TradingScenario:
+    """Trading scenario for dashboard analysis."""
+
+    name: str
+    entry_range: str
+    stop_loss: float
+    target: str
+
+
+@dataclass(slots=True)
+class DashboardAnalysis:
+    """Structured dashboard analysis output."""
+
+    industry_overview: list[str]
+    company_overview: list[str]
+    volume_price_analysis: str
+    scenarios: list[TradingScenario]
+    conclusion: str
 
 
 class BaseProviderAdapter(ABC):
@@ -587,6 +629,51 @@ class AIAdvisor:
 
         return self._append_disclaimer("工具呼叫輪數過多，已停止。")
 
+    def generate_stock_dashboard_analysis(
+        self,
+        symbol: str,
+        technical_summary: Any,
+        chip_summary: Any | None,
+        company_info: dict[str, Any] | None,
+        recent_prices: pd.DataFrame,
+    ) -> DashboardAnalysis:
+        """Generate dashboard analysis with structured JSON output."""
+        if not self.enabled:
+            raise AIDisabledError("AI 功能未啟用（ai.enabled=false）。")
+        if self._provider_error:
+            raise AICallError(self._provider_error)
+        if self.provider_adapter is None:
+            raise AICallError("AI provider adapter is not initialized.")
+
+        payload = self._build_dashboard_payload(
+            symbol=symbol,
+            technical_summary=technical_summary,
+            chip_summary=chip_summary,
+            company_info=company_info,
+            recent_prices=recent_prices,
+        )
+        user_prompt = (
+            "請依下列資料輸出 JSON。\n"
+            "注意 scenarios 必須恰好 3 個。\n"
+            f"DATA:\n{json.dumps(payload, ensure_ascii=False, default=str)}"
+        )
+
+        try:
+            response = self.provider_adapter.complete(
+                model=self.model,
+                system_prompt=DASHBOARD_SYSTEM_PROMPT,
+                messages=[{"role": "user", "content": user_prompt}],
+                tools=[],
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise AICallError(f"AI provider request failed: {exc}") from exc
+
+        text = str(response.get("text", "")).strip()
+        parsed = self._parse_dashboard_json(text)
+        if parsed is None:
+            raise AICallError("AI response is not valid dashboard JSON.")
+        return self._coerce_dashboard_analysis(parsed, technical_summary=technical_summary)
+
     def _execute_tool(self, tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
         """Dispatch tool calls and return a dict result."""
         handlers = {
@@ -605,6 +692,188 @@ class AIAdvisor:
             return {"error": f"Invalid arguments for {tool_name}: {exc}"}
         except Exception as exc:  # noqa: BLE001
             return {"error": str(exc)}
+
+    def _build_dashboard_payload(
+        self,
+        *,
+        symbol: str,
+        technical_summary: Any,
+        chip_summary: Any | None,
+        company_info: dict[str, Any] | None,
+        recent_prices: pd.DataFrame,
+    ) -> dict[str, Any]:
+        close_summary: dict[str, Any] = {}
+        if isinstance(recent_prices, pd.DataFrame) and not recent_prices.empty and "close" in recent_prices.columns:
+            close = pd.to_numeric(recent_prices["close"], errors="coerce").dropna()
+            if not close.empty:
+                close_summary = {
+                    "latest_close": float(close.iloc[-1]),
+                    "high_60d": float(close.tail(60).max()),
+                    "low_60d": float(close.tail(60).min()),
+                    "return_20d_pct": float(
+                        ((close.iloc[-1] - close.iloc[-min(20, len(close))]) / close.iloc[-min(20, len(close))] * 100.0)
+                        if len(close) >= 2 and close.iloc[-min(20, len(close))] != 0
+                        else 0.0
+                    ),
+                }
+
+        resistances = []
+        supports = []
+        for level in getattr(technical_summary, "resistance_levels", []) or []:
+            resistances.append(
+                {
+                    "value": float(getattr(level, "value", 0.0)),
+                    "label": str(getattr(level, "label", "")),
+                }
+            )
+        for level in getattr(technical_summary, "support_levels", []) or []:
+            supports.append(
+                {
+                    "value": float(getattr(level, "value", 0.0)),
+                    "label": str(getattr(level, "label", "")),
+                }
+            )
+
+        tech = {
+            "trend_direction": str(getattr(technical_summary, "trend_direction", "")),
+            "ma_status": str(getattr(technical_summary, "ma_status", "")),
+            "kd_status": str(getattr(technical_summary, "kd_status", "")),
+            "macd_status": str(getattr(technical_summary, "macd_status", "")),
+            "volume_status": str(getattr(technical_summary, "volume_status", "")),
+            "volume_price_relation": str(getattr(technical_summary, "volume_price_relation", "")),
+            "short_term_score": float(getattr(technical_summary, "short_term_score", 0.0)),
+            "short_term_label": str(getattr(technical_summary, "short_term_label", "")),
+            "resistance_levels": resistances,
+            "support_levels": supports,
+            "operation_observation": str(getattr(technical_summary, "operation_observation", "")),
+        }
+
+        chip: dict[str, Any] | None = None
+        if chip_summary is not None:
+            chip = {
+                "foreign_label": str(getattr(chip_summary, "foreign_label", "")),
+                "trust_label": str(getattr(chip_summary, "trust_label", "")),
+                "dealer_label": str(getattr(chip_summary, "dealer_label", "")),
+                "chip_concentration": str(getattr(chip_summary, "chip_concentration", "")),
+                "chip_trend": str(getattr(chip_summary, "chip_trend", "")),
+                "chip_description": str(getattr(chip_summary, "chip_description", "")),
+                "margin_balance_change": int(getattr(chip_summary, "margin_balance_change", 0)),
+                "short_balance_change": int(getattr(chip_summary, "short_balance_change", 0)),
+            }
+
+        return {
+            "symbol": str(symbol),
+            "technical_summary": tech,
+            "chip_summary": chip,
+            "company_info": company_info or {},
+            "recent_prices_summary": close_summary,
+        }
+
+    def _coerce_dashboard_analysis(self, payload: dict[str, Any], *, technical_summary: Any) -> DashboardAnalysis:
+        fallback = self._fallback_scenarios(technical_summary)
+
+        industry = payload.get("industry_overview", [])
+        if not isinstance(industry, list):
+            industry = []
+        industry_out = [str(item).strip() for item in industry if str(item).strip()][:5]
+
+        company = payload.get("company_overview", [])
+        if not isinstance(company, list):
+            company = []
+        company_out = [str(item).strip() for item in company if str(item).strip()][:5]
+
+        vpa = str(payload.get("volume_price_analysis", "")).strip()
+        conclusion = str(payload.get("conclusion", "")).strip()
+
+        raw_scenarios = payload.get("scenarios", [])
+        scenarios_out: list[TradingScenario] = []
+        if isinstance(raw_scenarios, list):
+            for item in raw_scenarios:
+                if not isinstance(item, dict):
+                    continue
+                scenarios_out.append(
+                    TradingScenario(
+                        name=str(item.get("name", "")).strip() or "情境",
+                        entry_range=str(item.get("entry_range", "")).strip() or "依支撐壓力區間",
+                        stop_loss=float(item.get("stop_loss", 0.0) or 0.0),
+                        target=str(item.get("target", "")).strip() or "依壓力區分段",
+                    )
+                )
+        scenarios_out = scenarios_out[:3]
+        if len(scenarios_out) < 3:
+            scenarios_out.extend(fallback[len(scenarios_out) : 3])
+
+        if not industry_out:
+            industry_out = ["產業資料不足，請搭配公開資訊觀察景氣循環。"]
+        if not company_out:
+            company_out = ["公司資料不足，請補充基本面與公告資訊。"]
+        if not vpa:
+            vpa = str(getattr(technical_summary, "operation_observation", "")).strip() or "量價資料不足。"
+        if not conclusion:
+            conclusion = "以上為研究情境推演，請依風險承受能力審慎評估。"
+
+        return DashboardAnalysis(
+            industry_overview=industry_out,
+            company_overview=company_out,
+            volume_price_analysis=vpa,
+            scenarios=scenarios_out,
+            conclusion=conclusion,
+        )
+
+    def _fallback_scenarios(self, technical_summary: Any) -> list[TradingScenario]:
+        supports = [float(getattr(x, "value", 0.0)) for x in getattr(technical_summary, "support_levels", []) or []]
+        resistances = [float(getattr(x, "value", 0.0)) for x in getattr(technical_summary, "resistance_levels", []) or []]
+        support = min(supports) if supports else 0.0
+        resistance = max(resistances) if resistances else support
+        middle = (support + resistance) / 2.0 if resistance or support else 0.0
+
+        def _fmt(v: float) -> str:
+            return f"{v:.2f}"
+
+        return [
+            TradingScenario(
+                name="開高走高",
+                entry_range=f"{_fmt(middle)} ~ {_fmt(resistance)}",
+                stop_loss=float(support),
+                target=f"{_fmt(resistance)} / {_fmt(resistance * 1.03 if resistance else 0.0)}",
+            ),
+            TradingScenario(
+                name="震盪整理",
+                entry_range=f"{_fmt(support)} ~ {_fmt(middle)}",
+                stop_loss=float(support * 0.98 if support else 0.0),
+                target=f"{_fmt(middle)} / {_fmt(resistance)}",
+            ),
+            TradingScenario(
+                name="開低回測",
+                entry_range=f"{_fmt(support)} 附近",
+                stop_loss=float(support * 0.97 if support else 0.0),
+                target=f"{_fmt(middle)} / {_fmt(resistance)}",
+            ),
+        ]
+
+    @staticmethod
+    def _parse_dashboard_json(text: str) -> dict[str, Any] | None:
+        body = str(text or "").strip()
+        if not body:
+            return None
+        try:
+            parsed = json.loads(body)
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            pass
+
+        start = body.find("{")
+        end = body.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            return None
+        try:
+            parsed = json.loads(body[start : end + 1])
+        except json.JSONDecodeError:
+            return None
+        if isinstance(parsed, dict):
+            return parsed
+        return None
 
     def _handle_get_price_data(self, symbol: str, period: str, freq: str = "daily") -> dict[str, Any]:
         """Return capped OHLCV snapshots for AI tool usage."""

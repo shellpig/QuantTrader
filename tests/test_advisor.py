@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -10,12 +11,16 @@ import src.ai.advisor as advisor_module
 from src.ai.advisor import (
     AIAdvisor,
     AnthropicAdapter,
+    DashboardAnalysis,
     DISCLAIMER,
     GeminiAdapter,
     OpenAIAdapter,
 )
+from src.analysis.chip_analysis import ChipSummary
+from src.analysis.technical_summary import PriceLevel, TechnicalSummary
 from src.core.constants import STANDARD_COLUMNS, TAIPEI_TZ
 from src.core.config import clear_config_cache, get_config
+from src.core.exceptions import AIDisabledError
 
 
 def _make_daily_df(symbol: str = "2330", periods: int = 120) -> pd.DataFrame:
@@ -31,6 +36,42 @@ def _make_daily_df(symbol: str = "2330", periods: int = 120) -> pd.DataFrame:
             "symbol": [symbol] * periods,
         }
     )[STANDARD_COLUMNS]
+
+
+def _make_technical_summary() -> TechnicalSummary:
+    return TechnicalSummary(
+        trend_direction="多頭趨勢",
+        ma_status="多頭排列 (5>20>60)",
+        kd_status="KD 多方",
+        macd_status="正值擴張",
+        volume_status="量能放大",
+        volume_price_relation="價漲量增",
+        short_term_score=0.78,
+        short_term_label="強勢偏多",
+        short_term_components={"ma": 0.9, "kd": 0.7, "volume_price": 0.8, "breakout": 0.7},
+        resistance_levels=[PriceLevel(value=860.0, label="近20日高點", kind="resistance")],
+        support_levels=[PriceLevel(value=810.0, label="MA20", kind="support")],
+        volume_price_divergence="量價同步",
+        ma_bias="與 MA20 乖離約 +2.11%，中性",
+        chip_behavior="法人偏多",
+        operation_observation="偏多但需留意追價風險",
+    )
+
+
+def _make_chip_summary() -> ChipSummary:
+    return ChipSummary(
+        foreign_net_n_days=36,
+        trust_net_n_days=10,
+        dealer_net_n_days=5,
+        foreign_label="買超 36 張",
+        trust_label="買超 10 張",
+        dealer_label="買超 5 張",
+        chip_concentration="集中",
+        chip_trend="中性偏多",
+        chip_description="主力進場延續",
+        margin_balance_change=120,
+        short_balance_change=-30,
+    )
 
 
 @dataclass
@@ -225,6 +266,115 @@ def test_ai_tool_call_normalized_across_providers(monkeypatch) -> None:
 
     assert anthropic_calls[0].name == openai_calls[0].name == gemini_calls[0].name == "get_price_data"
     assert anthropic_calls[0].arguments == openai_calls[0].arguments == gemini_calls[0].arguments == {"symbol": "2330"}
+
+
+def test_dashboard_analysis_returns_correct_structure() -> None:
+    payload = {
+        "industry_overview": ["半導體景氣回升", "AI 需求延續", "供應鏈庫存改善"],
+        "company_overview": ["先進製程市占領先", "資本支出維持高檔", "毛利率維持穩健"],
+        "volume_price_analysis": "量價同步偏多，短線波動仍存在。",
+        "scenarios": [
+            {"name": "開高走高", "entry_range": "850 ~ 855", "stop_loss": 838.0, "target": "868 / 880"},
+            {"name": "震盪整理", "entry_range": "840 ~ 848", "stop_loss": 832.0, "target": "858 / 868"},
+            {"name": "開低回測", "entry_range": "832 ~ 838", "stop_loss": 825.0, "target": "848 / 858"},
+        ],
+        "conclusion": "整體偏多但需控管回檔風險。",
+    }
+    advisor = AIAdvisor(
+        enabled=True,
+        provider="anthropic",
+        model="stub",
+        storage=StubStorage(_make_daily_df()),
+        adapter=StubAdapter([{"text": json.dumps(payload, ensure_ascii=False), "tool_calls": []}]),
+    )
+    result = advisor.generate_stock_dashboard_analysis(
+        symbol="2330",
+        technical_summary=_make_technical_summary(),
+        chip_summary=_make_chip_summary(),
+        company_info={"industry_category": "半導體"},
+        recent_prices=_make_daily_df(),
+    )
+    assert isinstance(result, DashboardAnalysis)
+    assert len(result.industry_overview) >= 3
+    assert len(result.company_overview) >= 3
+    assert isinstance(result.volume_price_analysis, str) and result.volume_price_analysis
+    assert isinstance(result.conclusion, str) and result.conclusion
+
+
+def test_dashboard_analysis_scenarios_count() -> None:
+    payload = {
+        "industry_overview": ["A", "B", "C"],
+        "company_overview": ["D", "E", "F"],
+        "volume_price_analysis": "X",
+        "scenarios": [
+            {"name": "情境1", "entry_range": "1", "stop_loss": 1.0, "target": "2"},
+            {"name": "情境2", "entry_range": "2", "stop_loss": 2.0, "target": "3"},
+            {"name": "情境3", "entry_range": "3", "stop_loss": 3.0, "target": "4"},
+        ],
+        "conclusion": "Y",
+    }
+    advisor = AIAdvisor(
+        enabled=True,
+        provider="anthropic",
+        model="stub",
+        storage=StubStorage(_make_daily_df()),
+        adapter=StubAdapter([{"text": json.dumps(payload, ensure_ascii=False), "tool_calls": []}]),
+    )
+    result = advisor.generate_stock_dashboard_analysis(
+        symbol="2330",
+        technical_summary=_make_technical_summary(),
+        chip_summary=_make_chip_summary(),
+        company_info=None,
+        recent_prices=_make_daily_df(),
+    )
+    assert len(result.scenarios) == 3
+
+
+def test_dashboard_analysis_without_chip() -> None:
+    payload = {
+        "industry_overview": ["A", "B", "C"],
+        "company_overview": ["D", "E", "F"],
+        "volume_price_analysis": "X",
+        "scenarios": [
+            {"name": "情境1", "entry_range": "1", "stop_loss": 1.0, "target": "2"},
+            {"name": "情境2", "entry_range": "2", "stop_loss": 2.0, "target": "3"},
+            {"name": "情境3", "entry_range": "3", "stop_loss": 3.0, "target": "4"},
+        ],
+        "conclusion": "Y",
+    }
+    advisor = AIAdvisor(
+        enabled=True,
+        provider="anthropic",
+        model="stub",
+        storage=StubStorage(_make_daily_df()),
+        adapter=StubAdapter([{"text": json.dumps(payload, ensure_ascii=False), "tool_calls": []}]),
+    )
+    result = advisor.generate_stock_dashboard_analysis(
+        symbol="2330",
+        technical_summary=_make_technical_summary(),
+        chip_summary=None,
+        company_info=None,
+        recent_prices=_make_daily_df(),
+    )
+    assert isinstance(result, DashboardAnalysis)
+
+
+def test_dashboard_analysis_ai_disabled() -> None:
+    advisor = AIAdvisor(
+        enabled=False,
+        provider="anthropic",
+        model="stub",
+        storage=StubStorage(_make_daily_df()),
+        adapter=StubAdapter([]),
+    )
+    with pytest.raises(AIDisabledError):
+        advisor.generate_stock_dashboard_analysis(
+            symbol="2330",
+            technical_summary=_make_technical_summary(),
+            chip_summary=_make_chip_summary(),
+            company_info=None,
+            recent_prices=_make_daily_df(),
+        )
 
 
 @pytest.mark.integration
