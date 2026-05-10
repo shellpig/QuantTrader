@@ -144,7 +144,8 @@ ui:
 | 4 | ✅ 完成 | AI 問答 + Streamlit UI（AIAdvisor、IndicatorEngine、4 頁 UI、E2E） |
 | 5 | ✅ 完成 | 回測體驗補充（5-A 股價走勢+EPS、5-B DCA+多策略 preset） |
 | 6-A | ✅ 完成 | UI/UX 強化：6 套主題切換、metric card、option_menu 側邊欄 |
-| 6-B | ⏳ 待實作 | 設定頁與側邊欄 UI 小修：隱藏 Streamlit 自動頁面入口、預設 `midnight_blue`、設定/策略儲存分離、8 種策略 preset 與單筆清除 |
+| 6-B | ✅ 完成 | 設定頁與側邊欄 UI 小修：隱藏 Streamlit 自動頁面入口、預設 `midnight_blue`、設定/策略儲存分離、8 種策略 preset 與單筆清除 |
+| 6-C | ✅ 完成 | 回測頁 UI 細節整理：日期欄位排列、策略比較備註欄、WFA session state hotfix、主題對比與 Plotly 文字可讀性 |
 | 7-A | ✅ 完成 | 策略擴充：RSI、KD 交叉、MACD 交叉、布林通道、乖離率、Donchian 突破 + 中文 metadata |
 | 7-B | ✅ 完成 | 策略研究工作台：批次比較、結果保存、UI tab 重構、K 線圖、Signal/Trade overlay、指標副圖 |
 | 7-C | ✅ 完成 | 參數掃描與防過度最佳化：Grid Search、參數過濾、組合上限、樣本不足警告 |
@@ -154,21 +155,23 @@ ui:
 
 見 `驗證後已知問題.md`（每次必讀）。
 
-主線：Phase 1-7-D 已完成。2026-05-10 新增 Phase 6-B 文件規格，作為下一個 UI 小修任務；完成後再進入 Phase 8 規劃或 7-D 後續增強。
+主線：Phase 1-7-D 已完成；Phase 6-B / 6-C UI 驗證與收尾修正已完成。下一步可進入 Phase 8 規劃或 7-D 後續增強。
 
 2026-05-10 狀態：
-- 最新 commit：`3947a3a Complete Phase 7-D walk-forward UI`
+- 最新 commit：`70c3db4 Resolve UI contrast and event frequency issues`
 - 已完成實作測試統計：191 個單元測試、7 個 integration 測試、65 項手動驗收項目（Phase 1-7-D）
 - 7-D-1 驗證結果：`tests/test_walk_forward.py tests/test_sweep.py` 為 62 passed, 1 warning（第一次因 Windows temp 權限失敗，elevated 重跑通過）
 - 7-D-1 已補 `warning_count` regression test：`test_warning_count_includes_per_window_and_unstable_param`
 - 7-D-2 驗收結果：Walk-Forward tab、英文術語中文說明、實際 window 回測次數預估、summary/window/stability table、CSV 匯出入口已驗收
 - Phase 7-D 完成回歸：`tests/test_strategies.py tests/test_strategy_config.py tests/test_batch.py tests/test_sweep.py tests/test_walk_forward.py` 為 116 passed, 1 warning（elevated 重跑通過）
-- Phase 6-B 已寫入文件，尚未實作與驗收；測試指南列出 10 項手動驗收與預計新增/調整的單元測試。
+- Phase 6-B 已完成設定頁與側邊欄 UI 驗證；`use_container_width` deprecation warning 已處理。`pandas-ta` 對 pandas 4.0 的相容 warning 屬第三方套件根因，仍保留為追蹤限制。
+- Phase 6-C 已完成回測頁 UI 驗證與收尾：日期欄位排列、策略比較備註欄、WFA `wfa_symbol` session state hotfix、`midnight_blue` metric card、`warm_sepia` / `arctic_light` Plotly 文字、`arctic_light` 清除按鈕對比皆已更新至 `驗證後已知問題.md`。
+- Phase 6-C 相關驗證：`py_compile src\ui\themes.py src\ui\pages\backtest.py src\ui\pages\settings.py src\backtest\report.py` 通過；`tests/test_themes.py tests/test_config_ui_section.py tests/test_settings_page.py tests/test_backtest_page.py tests/test_report.py -v` 為 22 passed（elevated 重跑通過）。
 
 已知設計限制：
 - 兩引擎是不同典範（signal-based vs order-based），跨引擎只能比 per-share PnL
 - 引擎不支援加倉/分批進出，維持「全進全出」
-- 事件引擎的 1min / 5min 資料支援仍列在 `驗證後已知問題.md`，分鐘 K 事件驅動回測前需處理
+- 事件引擎已支援 pandas 新舊分鐘頻率 alias（`T` / `min` / `5min` / `H` / `h`）；短資料或無法推斷頻率時 fallback 到 `1day`
 
 ## 規格文件索引
 
@@ -229,7 +232,7 @@ ui:
 | Phase 7 全階段回歸 | 1858-1876 | Phase 7-D 完成後 |
 | 全專案回歸 + 測試統計 | 1878-1944 | Phase 完成後 |
 
-### 驗證後已知問題.md（~526 行）
+### 驗證後已知問題.md（~737 行）
 
 追蹤驗收中發現的問題。每筆含：位置、狀況、風險、處理階段。已處理的標記 `[✅ 已處理 @ commit]`。每次 session 開始時必讀。
 
