@@ -147,20 +147,21 @@ ui:
 | 7-A | ✅ 完成 | 策略擴充：RSI、KD 交叉、MACD 交叉、布林通道、乖離率、Donchian 突破 + 中文 metadata |
 | 7-B | ✅ 完成 | 策略研究工作台：批次比較、結果保存、UI tab 重構、K 線圖、Signal/Trade overlay、指標副圖 |
 | 7-C | ✅ 完成 | 參數掃描與防過度最佳化：Grid Search、參數過濾、組合上限、樣本不足警告 |
-| 7-D | 🚧 7-D-1 已驗證 | Walk-Forward Analysis：7-D-1 核心引擎已通過測試；7-D-2 UI tab + 文件 + 回歸待實作 |
+| 7-D | ✅ 完成 | Walk-Forward Analysis：核心引擎、Walk-Forward tab、中文說明、回測次數預估、進度條、summary/window/stability table、CSV 匯出已驗收 |
 
 ## 當前待辦
 
 見 `已知問題.md`（每次必讀）。
 
-主線：Phase 1-7-C 已完成。Phase 7-D Walk-Forward Analysis 已完成 7-D-1 核心引擎驗證；下一步是 7-D-2 UI tab + 文件 + 回歸。
+主線：Phase 1-7-D 已完成。Phase 7-D Walk-Forward Analysis 已完成核心引擎與 UI tab 驗收；下一步可進入 Phase 8 規劃或 7-D 後續增強。
 
-2026-05-09 狀態：
-- 最新 commit：`1013a4f docs: add Phase 7-D walk-forward spec`
-- 已完成實作測試統計：158 個單元測試、7 個 integration 測試、53 項手動驗收項目（Phase 1-7-C）
+2026-05-10 狀態：
+- 最新 commit：`f712c4e Implement Phase 7-D-1 walk-forward core`
+- 已完成實作測試統計：191 個單元測試、7 個 integration 測試、65 項手動驗收項目（Phase 1-7-D）
 - 7-D-1 驗證結果：`tests/test_walk_forward.py tests/test_sweep.py` 為 62 passed, 1 warning（第一次因 Windows temp 權限失敗，elevated 重跑通過）
 - 7-D-1 已補 `warning_count` regression test：`test_warning_count_includes_per_window_and_unstable_param`
-- Phase 7-D 完成後目標回歸：`tests/test_strategies.py tests/test_strategy_config.py tests/test_batch.py tests/test_sweep.py tests/test_walk_forward.py` 至少 106 個測試全通過
+- 7-D-2 驗收結果：Walk-Forward tab、英文術語中文說明、實際 window 回測次數預估、summary/window/stability table、CSV 匯出入口已驗收
+- Phase 7-D 完成回歸：`tests/test_strategies.py tests/test_strategy_config.py tests/test_batch.py tests/test_sweep.py tests/test_walk_forward.py` 為 116 passed, 1 warning（elevated 重跑通過）
 
 已知設計限制：
 - 兩引擎是不同典範（signal-based vs order-based），跨引擎只能比 per-share PnL
@@ -169,7 +170,7 @@ ui:
 
 ## 規格文件索引
 
-### 量化交易系統規格書_shellpig版.md（~1935 行）
+### 量化交易系統規格書_shellpig版.md（~1942 行）
 
 | 區段 | 行範圍 | 何時讀 |
 |:---|:---|:---|
@@ -190,10 +191,10 @@ ui:
 | **Phase 7-A 策略擴充** | **1130-1318** | **實作新策略時必讀** |
 | **Phase 7-B 策略研究工作台** | **1320-1444** | **實作批次比較/K 線圖/overlay 時必讀** |
 | **Phase 7-C 參數掃描** | **1446-1569** | **實作參數掃描時必讀** |
-| **Phase 7-D Walk-Forward Analysis** | **1572-1835** | **實作 WFA / OOS 驗證時必讀** |
-| 子階段總覽 + 費用估算 | 1836-1874 | 總覽 |
+| **Phase 7-D Walk-Forward Analysis** | **1573-1841** | **實作 WFA / OOS 驗證時必讀** |
+| 子階段總覽 + 費用估算 | 1843-1886 | 總覽 |
 
-### 開發設計方針.md（~3970 行）
+### 開發設計方針.md（~3988 行）
 
 | 區段 | 行範圍 | 何時讀 |
 |:---|:---|:---|
@@ -206,9 +207,9 @@ ui:
 | **Phase 7-A 策略擴充** | **2325-2783** | **實作新策略時必讀** |
 | **Phase 7-B 策略研究工作台** | **2785-3165** | **實作批次比較/K 線圖/overlay 時必讀** |
 | **Phase 7-C 參數掃描** | **3167-3400** | **實作參數掃描時必讀** |
-| **Phase 7-D Walk-Forward Analysis** | **3561-3970** | **實作 WFA runner / UI tab 時必讀** |
+| **Phase 7-D Walk-Forward Analysis** | **3561-3988** | **實作 WFA runner / UI tab 時必讀** |
 
-### 測試指南.md（~1870 行）
+### 測試指南.md（~1902 行）
 
 | 區段 | 行範圍 | 何時讀 |
 |:---|:---|:---|
@@ -221,9 +222,9 @@ ui:
 | **Phase 7-A 測試** | **1256-1454** | **新策略測試** |
 | **Phase 7-B 測試** | **1456-1543** | **批次比較測試** |
 | **Phase 7-C 測試** | **1545-1636** | **參數掃描測試** |
-| **Phase 7-D 測試** | **1657-1781** | **Walk-Forward 測試** |
-| Phase 7 全階段回歸 | 1783-1800 | Phase 7-D 完成後 |
-| 全專案回歸 + 測試統計 | 1802-1868 | Phase 完成後 |
+| **Phase 7-D 測試** | **1657-1815** | **Walk-Forward 測試** |
+| Phase 7 全階段回歸 | 1817-1835 | Phase 7-D 完成後 |
+| 全專案回歸 + 測試統計 | 1837-1902 | Phase 完成後 |
 
 ### 已知問題.md（~420 行）
 

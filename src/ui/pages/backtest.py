@@ -40,6 +40,18 @@ from src.backtest.sweep import (
     run_parameter_sweep,
     save_sweep_result_csv,
 )
+from src.backtest.walk_forward import (
+    DEFAULT_IS_MONTHS,
+    DEFAULT_OOS_MONTHS,
+    DEFAULT_STEP_MONTHS,
+    MAX_WFA_WINDOWS,
+    MIN_WFA_WINDOWS,
+    SUPPORTED_OPTIMIZE_METRICS,
+    WalkForwardSummary,
+    required_months_for_wfa,
+    run_walk_forward_analysis,
+    save_walk_forward_summary_csv,
+)
 from src.backtest.engine_event import EventDrivenBacktester
 from src.backtest.engine_vec import VectorizedBacktester
 from src.backtest.metrics import BacktestResult
@@ -73,6 +85,13 @@ _TRADE_MARKER_HEIGHT_MULTIPLIER = 2.5
 _TRADE_MARKER_STEM_SIZE = int(round(_TRADE_MARKER_BASE_SIZE * _TRADE_MARKER_HEIGHT_MULTIPLIER))
 _COMPARISONS_DIR = Path("data/backtest/strategy_comparisons")
 _SWEEPS_DIR = Path("data/backtest/parameter_sweeps")
+_WFA_DIR = Path("data/backtest/walk_forward")
+
+_OPTIMIZE_METRIC_LABELS: dict[str, str] = {
+    "sharpe_ratio": "Sharpe Ratio（夏普比率）",
+    "total_return": "總報酬",
+    "annual_return": "年化報酬",
+}
 
 _SUPPORTED_TYPES = {
     "moving_average_cross", "dollar_cost_averaging",
@@ -88,7 +107,9 @@ def render() -> None:
     st.title("回測")
     st.caption("執行策略回測、查看 Tearsheet，並補充股價均線與 EPS 資訊。")
 
-    tab1, tab2, tab3, tab4 = st.tabs(["單次回測", "策略比較", "參數掃描", "歷史結果"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(
+        ["單次回測", "策略比較", "參數掃描", "Walk-Forward（滾動樣本外驗證）", "歷史結果"]
+    )
 
     with tab1:
         _render_single_backtest_tab()
@@ -100,6 +121,9 @@ def render() -> None:
         _render_sweep_tab()
 
     with tab4:
+        _render_walk_forward_tab()
+
+    with tab5:
         _render_history_tab()
 
 
@@ -205,7 +229,7 @@ def _render_batch_comparison_tab() -> None:
             "總報酬": f"{s.total_return * 100:.2f}%" if not s.error else "—",
             "年化報酬": f"{s.annual_return * 100:.2f}%" if not s.error else "—",
             "最大回撤": f"{s.max_drawdown * 100:.2f}%" if not s.error else "—",
-            "Sharpe": f"{s.sharpe_ratio:.2f}" if not s.error else "—",
+            "Sharpe（夏普比率）": f"{s.sharpe_ratio:.2f}" if not s.error else "—",
             "勝率": f"{s.win_rate * 100:.2f}%" if not s.error else "—",
             "Profit Factor": ("N/A" if pf >= 999.0 else f"{pf:.2f}") if not s.error else "—",
             "交易次數": s.total_trades if not s.error else "—",
@@ -263,19 +287,21 @@ def _render_history_tab() -> None:
     st.subheader("歷史比較結果")
     _COMPARISONS_DIR.mkdir(parents=True, exist_ok=True)
     _SWEEPS_DIR.mkdir(parents=True, exist_ok=True)
+    _WFA_DIR.mkdir(parents=True, exist_ok=True)
 
     comparison_files = sorted(_COMPARISONS_DIR.glob("*.csv"), reverse=True)
     sweep_files = sorted(_SWEEPS_DIR.glob("*.csv"), reverse=True)
+    wfa_files = sorted(_WFA_DIR.glob("*.csv"), reverse=True)
 
-    # Build labelled list: show source directory prefix for disambiguation
     file_entries: list[tuple[str, Path]] = (
         [(f"[策略比較] {f.name}", f) for f in comparison_files]
         + [(f"[參數掃描] {f.name}", f) for f in sweep_files]
+        + [(f"[Walk-Forward] {f.name}", f) for f in wfa_files]
     )
 
     if not file_entries:
         st.info(
-            f"尚無歷史結果。執行批次回測並匯出後，檔案會出現在 {_COMPARISONS_DIR} 或 {_SWEEPS_DIR}。"
+            f"尚無歷史結果。執行回測並匯出後，檔案會出現在 {_COMPARISONS_DIR}、{_SWEEPS_DIR} 或 {_WFA_DIR}。"
         )
         return
 
@@ -420,7 +446,7 @@ def _render_sweep_results(
     )
 
     _SORT_OPTIONS: dict[str, tuple[str, bool]] = {
-        "Sharpe Ratio": ("sharpe_ratio", False),
+        "Sharpe Ratio（夏普比率）": ("sharpe_ratio", False),
         "總報酬": ("total_return", False),
         "年化報酬": ("annual_return", False),
         "最大回撤（升序）": ("max_drawdown", True),
@@ -450,7 +476,7 @@ def _render_sweep_results(
             "總報酬": f"{s.total_return * 100:.2f}%",
             "年化報酬": f"{s.annual_return * 100:.2f}%",
             "最大回撤": dd_display,
-            "Sharpe": f"{s.sharpe_ratio:.2f}",
+            "Sharpe（夏普比率）": f"{s.sharpe_ratio:.2f}",
             "勝率": f"{s.win_rate * 100:.2f}%",
             "Profit Factor": pf_display,
             "交易次數": trades_display,
@@ -471,7 +497,7 @@ def _render_sweep_results(
     df_all = pd.DataFrame(rows)
     df_sorted = df_all.sort_values(f"_{sort_col}", ascending=sort_asc).head(top_n).reset_index(drop=True)
 
-    display_cols = param_keys + ["總報酬", "年化報酬", "最大回撤", "Sharpe", "勝率", "Profit Factor", "交易次數"]
+    display_cols = param_keys + ["總報酬", "年化報酬", "最大回撤", "Sharpe（夏普比率）", "勝率", "Profit Factor", "交易次數"]
     display_df = df_sorted[[c for c in display_cols if c in df_sorted.columns]]
 
     st.subheader(f"Top {min(top_n, len(df_sorted))} 結果（依 {sort_label}）")
@@ -514,6 +540,326 @@ def _render_sweep_results(
             strategy_type=sweep.strategy_type,
             strategy_params=s.params,
         )
+
+
+# ---------------------------------------------------------------------------
+# Tab 4: Walk-Forward Analysis
+# ---------------------------------------------------------------------------
+
+def _render_walk_forward_tab() -> None:
+    st.info(
+        "**Walk-Forward 分析（WFA）** 將歷史資料切為多段滾動視窗，逐段執行：\n\n"
+        "1. **IS（樣本內／訓練期）**：在此期間網格搜尋找出最佳參數\n"
+        "2. **OOS（樣本外／驗證期）**：以最佳參數在未見資料上回測，評估策略泛化能力\n\n"
+        f"最多 **{MAX_WFA_WINDOWS}** 段視窗；每段組合數不可超過 **{MAX_COMBOS}**。"
+    )
+
+    symbol, start_date, end_date = _input_symbol_and_dates("wfa")
+
+    sweep_types = list(SWEEP_PARAM_SPECS.keys())
+    type_labels = [STRATEGY_META[t]["label"] for t in sweep_types]
+    type_label = st.selectbox("策略類型", options=type_labels, key="wfa_strategy_type")
+    strategy_type = sweep_types[type_labels.index(type_label)]
+
+    meta = STRATEGY_META[strategy_type]
+    param_specs = SWEEP_PARAM_SPECS[strategy_type]
+    param_label_map = meta["param_labels"]
+    defaults = _SWEEP_DEFAULTS.get(strategy_type, {})
+
+    st.markdown("**參數掃描範圍**（每個參數輸入逗號分隔的候選值，如 `5,10,20`）")
+    param_inputs: dict[str, str] = {}
+    for param_key in param_specs:
+        label = param_label_map.get(param_key, param_key)
+        param_inputs[param_key] = st.text_input(
+            label,
+            value=defaults.get(param_key, ""),
+            key=f"wfa_{strategy_type}_{param_key}",
+        )
+
+    param_candidates: dict[str, list[Any]] = {}
+    parse_error = False
+    for k, raw in param_inputs.items():
+        vals = parse_param_values(raw)
+        if not vals:
+            st.warning(f"參數「{param_label_map.get(k, k)}」格式無效，請輸入逗號分隔的數字。")
+            parse_error = True
+        else:
+            param_candidates[k] = vals
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        is_months = st.number_input(
+            "IS 訓練期（月）", value=DEFAULT_IS_MONTHS, min_value=3, max_value=36, step=1, key="wfa_is_months"
+        )
+    with c2:
+        oos_months = st.number_input(
+            "OOS 驗證期（月）", value=DEFAULT_OOS_MONTHS, min_value=1, max_value=24, step=1, key="wfa_oos_months"
+        )
+    with c3:
+        step_months = st.number_input(
+            "步進（月）", value=DEFAULT_STEP_MONTHS, min_value=1, max_value=24, step=1, key="wfa_step_months"
+        )
+
+    is_m, oos_m, step_m = int(is_months), int(oos_months), int(step_months)
+    req_months = required_months_for_wfa(is_months=is_m, oos_months=oos_m, step_months=step_m)
+
+    # Estimate window count from user-selected date range (approximation; actual depends on trading days)
+    _start_est = pd.Timestamp(start_date)
+    _end_est = pd.Timestamp(end_date)
+    _total_months = (_end_est.year - _start_est.year) * 12 + (_end_est.month - _start_est.month)
+    _span = _total_months - is_m - oos_m
+    est_windows = min(MAX_WFA_WINDOWS, max(0, _span // step_m + 1)) if _span >= 0 else 0
+
+    st.caption(
+        f"最少需要 **{req_months}** 個月資料（{MIN_WFA_WINDOWS} 段視窗）；"
+        f"最多執行 **{MAX_WFA_WINDOWS}** 段；依目前日期區間預估 **{est_windows}** 段。"
+    )
+
+    over_limit = False
+    if not parse_error:
+        total_count, valid_list = generate_param_grid(strategy_type, param_candidates)
+        n_valid = len(valid_list)
+        over_limit = n_valid > MAX_COMBOS
+        if over_limit:
+            st.warning(
+                f"合法組合數 {n_valid} 超過每段上限 {MAX_COMBOS}，請縮小參數範圍。"
+            )
+        else:
+            st.info(
+                f"預估 **{est_windows}** 段 × **{n_valid}** 組合 = 最多 **{est_windows * n_valid}** 次回測"
+                f"（{total_count} 組合中 {n_valid} 個合法；實際視窗數以載入資料後為準）"
+            )
+
+    sorted_metrics = sorted(SUPPORTED_OPTIMIZE_METRICS)
+    metric_label_options = [_OPTIMIZE_METRIC_LABELS.get(m, m) for m in sorted_metrics]
+    default_metric_idx = sorted_metrics.index("sharpe_ratio") if "sharpe_ratio" in sorted_metrics else 0
+    metric_label = st.selectbox(
+        "最佳化指標（IS 期用來挑選最佳參數的指標）",
+        options=metric_label_options,
+        index=default_metric_idx,
+        key="wfa_optimize_metric",
+    )
+    label_to_key = {v: k for k, v in _OPTIMIZE_METRIC_LABELS.items()}
+    optimize_metric = label_to_key.get(metric_label, "sharpe_ratio")
+
+    initial_capital = st.number_input(
+        "初始資金", value=1_000_000, min_value=1, step=100_000, key="wfa_capital"
+    )
+
+    if st.button(
+        "開始 Walk-Forward 分析", type="primary", key="wfa_run",
+        disabled=(parse_error or over_limit),
+    ):
+        if not _TW_SYMBOL_PATTERN.fullmatch(symbol):
+            st.error("股票代碼格式錯誤，請輸入 4 到 6 碼台股代碼。")
+            return
+        start_ts = _as_taipei_start(pd.Timestamp(start_date))
+        end_exclusive = _as_taipei_start(pd.Timestamp(end_date)) + pd.Timedelta(days=1)
+        if end_exclusive <= start_ts:
+            st.error("結束日期必須晚於開始日期。")
+            return
+
+        with st.spinner("載入資料中…"):
+            try:
+                data = _load_backtest_data(
+                    symbol=symbol,
+                    start_ts=start_ts,
+                    end_exclusive=end_exclusive,
+                    require_adjusted=True,
+                )
+            except Exception as exc:  # noqa: BLE001
+                st.error(f"讀取資料失敗：{exc}")
+                return
+
+            if data.empty:
+                st.warning("資料區間內沒有可用日線資料。")
+                return
+
+        progress_bar = st.progress(0.0)
+        status_text = st.empty()
+
+        def on_progress(done: int, total: int) -> None:
+            progress_bar.progress(done / total if total > 0 else 1.0)
+            status_text.text(f"正在執行第 {done} / {total} 段 WFA...")
+
+        try:
+            wfa_data = data.set_index("date")
+            summary = run_walk_forward_analysis(
+                symbol=symbol,
+                data=wfa_data,
+                strategy_type=strategy_type,
+                param_ranges=param_candidates,
+                optimize_metric=optimize_metric,
+                initial_capital=float(initial_capital),
+                is_months=int(is_months),
+                oos_months=int(oos_months),
+                step_months=int(step_months),
+                progress_fn=on_progress,
+            )
+        except ValueError as exc:
+            progress_bar.empty()
+            status_text.empty()
+            st.error(str(exc))
+            return
+
+        progress_bar.progress(1.0)
+        status_text.text("WFA 完成！")
+
+        st.session_state["wfa_result"] = summary
+        st.session_state["wfa_symbol"] = symbol
+
+    wfa_summary: WalkForwardSummary | None = st.session_state.get("wfa_result")
+    if wfa_summary is None:
+        st.info("設定股票代碼、日期與參數範圍後，點選「開始 Walk-Forward 分析」。")
+        return
+
+    _render_wfa_results(wfa_summary, symbol=st.session_state.get("wfa_symbol", ""))
+
+
+def _fmt_wfa_metric(value: float, metric: str) -> str:
+    if metric == "sharpe_ratio":
+        return f"{value:.2f}"
+    return f"{value * 100:.2f}%"
+
+
+def _render_wfa_results(summary: WalkForwardSummary, *, symbol: str) -> None:
+    meta = STRATEGY_META.get(summary.strategy_type)
+    type_label = meta["label"] if meta else summary.strategy_type
+    metric_label = _OPTIMIZE_METRIC_LABELS.get(summary.optimize_metric, summary.optimize_metric)
+
+    st.subheader(f"{symbol} Walk-Forward 分析結果")
+    st.caption(f"策略：{type_label}　IS 最佳化指標：{metric_label}")
+
+    agg = summary.aggregate
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("有效視窗數", f"{summary.valid_window_count} / {summary.total_window_count}")
+    c2.metric("OOS 獲利視窗率", f"{agg.get('oos_win_window_rate', 0.0) * 100:.1f}%")
+    c3.metric("平均 OOS 報酬", f"{agg.get('avg_oos_return', 0.0) * 100:.2f}%")
+
+    c4, c5, c6 = st.columns(3)
+    c4.metric("平均 OOS Sharpe（夏普比率）", f"{agg.get('avg_oos_sharpe', 0.0):.2f}")
+    worst_dd = agg.get("worst_oos_drawdown", 0.0)
+    c5.metric("最差 OOS 回撤", f"{worst_dd * 100:.2f}%")
+    avg_deg = agg.get("avg_degradation")
+    c6.metric(
+        "平均退化（OOS−IS）",
+        _fmt_wfa_metric(avg_deg, summary.optimize_metric) if avg_deg is not None else "N/A",
+    )
+
+    st.subheader("各視窗結果（IS=樣本內訓練期，OOS=樣本外驗證期）")
+    win_rows = []
+    all_window_warnings: list[tuple[int, str]] = []
+
+    for wr in summary.windows:
+        w = wr.window
+        all_window_warnings.extend((w.window_id, msg) for msg in wr.warnings)
+
+        if wr.skipped:
+            first_warn = wr.warnings[0] if wr.warnings else "略過"
+            if "IS 掃描" in first_warn:
+                status_str = "掃描失敗，跳過"
+            elif "OOS" in first_warn:
+                status_str = "OOS 失敗，跳過"
+            else:
+                status_str = "略過"
+        elif wr.warnings:
+            status_str = f"完成（⚠ {len(wr.warnings)}）"
+        else:
+            status_str = "完成"
+
+        row: dict[str, Any] = {
+            "視窗": w.window_id,
+            "IS 期間": f"{w.is_start.strftime('%Y-%m-%d')} ~ {w.is_end.strftime('%Y-%m-%d')}",
+            "OOS 期間": f"{w.oos_start.strftime('%Y-%m-%d')} ~ {w.oos_end.strftime('%Y-%m-%d')}",
+            "狀態": status_str,
+            "最佳參數": (
+                ", ".join(f"{k}={v}" for k, v in wr.best_params.items())
+                if wr.best_params else "—"
+            ),
+        }
+
+        if wr.is_best and not wr.skipped:
+            row[f"IS {metric_label}"] = _fmt_wfa_metric(
+                getattr(wr.is_best, summary.optimize_metric, 0.0), summary.optimize_metric
+            )
+        else:
+            row[f"IS {metric_label}"] = "—"
+
+        if wr.oos_result and not wr.skipped:
+            row[f"OOS {metric_label}"] = _fmt_wfa_metric(
+                getattr(wr.oos_result, summary.optimize_metric, 0.0), summary.optimize_metric
+            )
+            row["OOS 報酬"] = f"{wr.oos_result.total_return * 100:.2f}%"
+            row["OOS Sharpe（夏普比率）"] = f"{wr.oos_result.sharpe_ratio:.2f}"
+            row["OOS 交易次數"] = wr.oos_result.total_trades
+        else:
+            row[f"OOS {metric_label}"] = "—"
+            row["OOS 報酬"] = "—"
+            row["OOS Sharpe（夏普比率）"] = "—"
+            row["OOS 交易次數"] = "—"
+
+        row["退化"] = (
+            _fmt_wfa_metric(wr.degradation, summary.optimize_metric)
+            if wr.degradation is not None else "—"
+        )
+
+        if wr.warnings:
+            first = wr.warnings[0]
+            row["警告"] = first[:45] + ("…" if len(first) > 45 else "")
+        else:
+            row["警告"] = "—"
+
+        win_rows.append(row)
+
+    st.dataframe(pd.DataFrame(win_rows), use_container_width=True, hide_index=True)
+
+    if all_window_warnings:
+        with st.expander(f"視窗警告詳情（共 {len(all_window_warnings)} 則）"):
+            for wid, msg in all_window_warnings:
+                st.warning(f"視窗 {wid}：{msg}")
+
+    stab = summary.parameter_stability
+    overall_status = stab.get("overall_status", "")
+    status_display = {"stable": "穩定 ✓", "moderate": "中等 ⚠", "unstable": "不穩定 ✗"}.get(
+        overall_status, overall_status
+    )
+    st.subheader(f"參數穩定性：{status_display}")
+    st.caption(
+        "CV（變異係數）= 標準差 ÷ |均值|；衡量最佳參數跨視窗的一致程度。"
+        "CV < 0.15 穩定，0.15–0.40 中等，≥ 0.40 不穩定（過度配適風險高）。"
+    )
+
+    stab_params = stab.get("params", {})
+    if stab_params:
+        status_map = {"stable": "穩定", "moderate": "中等", "unstable": "不穩定"}
+        stab_rows = [
+            {
+                "參數": param,
+                "最小值": f"{stat.get('min', 0):.4g}",
+                "最大值": f"{stat.get('max', 0):.4g}",
+                "平均": f"{stat.get('mean', 0):.4g}",
+                "中位數": f"{stat.get('median', 0):.4g}",
+                "標準差": f"{stat.get('std', 0):.4g}",
+                "CV（變異係數）": f"{stat.get('cv', 0):.2f}",
+                "狀態": status_map.get(stat.get("status", ""), stat.get("status", "")),
+            }
+            for param, stat in stab_params.items()
+        ]
+        st.dataframe(pd.DataFrame(stab_rows), use_container_width=True, hide_index=True)
+
+    warnings_list = agg.get("warnings", [])
+    if warnings_list:
+        st.subheader("綜合警告")
+        for msg in warnings_list:
+            st.warning(msg)
+
+    if st.button("匯出 WFA 結果 CSV", key="wfa_export"):
+        try:
+            win_path, stab_path = save_walk_forward_summary_csv(summary)
+            st.success(f"已儲存：{win_path}，{stab_path}")
+        except Exception as exc:  # noqa: BLE001
+            st.error(f"儲存失敗：{exc}")
 
 
 # ---------------------------------------------------------------------------
@@ -690,7 +1036,7 @@ def _render_tearsheet_metrics(result: BacktestResult) -> None:
     m1.metric("總報酬率", f"{result.total_return * 100:.2f}%")
     m2.metric("年化報酬率", f"{result.annual_return * 100:.2f}%")
     m3.metric("最大回撤", f"{result.max_drawdown * 100:.2f}%")
-    m4.metric("Sharpe", f"{result.sharpe_ratio:.2f}")
+    m4.metric("Sharpe（夏普比率）", f"{result.sharpe_ratio:.2f}")
 
     config = get_config()
     ui_section = config.get("ui", {}) if isinstance(config, dict) else {}

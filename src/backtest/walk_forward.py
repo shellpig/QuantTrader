@@ -6,6 +6,7 @@ import statistics
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 
 import pandas as pd
@@ -293,6 +294,7 @@ def run_walk_forward_analysis(
     oos_months: int = DEFAULT_OOS_MONTHS,
     step_months: int = DEFAULT_STEP_MONTHS,
     max_combinations: int = MAX_COMBOS,
+    progress_fn: Callable[[int, int], None] | None = None,
 ) -> WalkForwardSummary:
     """Run rolling WFA: IS sweep → select best params → OOS validation."""
     if optimize_metric not in SUPPORTED_OPTIMIZE_METRICS:
@@ -320,7 +322,7 @@ def run_walk_forward_analysis(
 
     window_results: list[WalkForwardWindowResult] = []
 
-    for win in windows:
+    for i, win in enumerate(windows):
         is_data = data[(data.index >= win.is_start) & (data.index <= win.is_end)]
         oos_data = data[(data.index >= win.oos_start) & (data.index <= win.oos_end)]
 
@@ -347,6 +349,8 @@ def run_walk_forward_analysis(
                     warnings=["IS 掃描全部失敗，跳過此視窗"],
                 )
             )
+            if progress_fn is not None:
+                progress_fn(i + 1, len(windows))
             continue
 
         oos_warnings: list[str] = []
@@ -366,6 +370,8 @@ def run_walk_forward_analysis(
                     warnings=[f"OOS 回測失敗：{exc}"],
                 )
             )
+            if progress_fn is not None:
+                progress_fn(i + 1, len(windows))
             continue
 
         if oos_result.total_trades < MIN_OOS_TRADES_WARNING:
@@ -387,6 +393,8 @@ def run_walk_forward_analysis(
                 warnings=oos_warnings,
             )
         )
+        if progress_fn is not None:
+            progress_fn(i + 1, len(windows))
 
     valid_count = sum(1 for wr in window_results if not wr.skipped)
     skipped_count = sum(1 for wr in window_results if wr.skipped)

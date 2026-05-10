@@ -14,6 +14,7 @@
 | **V1.7** | 2026/05/07 | 新增 Phase 7（策略擴充）章節與 Phase 7-A：6 種技術分析策略（RSI 超買超賣、KD 交叉、MACD 交叉、布林通道、乖離率、突破策略），含向量化 + 事件驅動雙介面、`strategy_config.py` preset 正規化、UI 回測頁分派。 |
 | **V1.8** | 2026/05/08 | 新增 Phase 7-B（策略研究工作台）：批次策略比較、結果保存、UI tab 重構、K 線圖升級、Signal/Trade 雙層標記、策略指標副圖。新增 Phase 7-C（參數掃描與防過度最佳化）：Grid Search、參數驗證過濾、組合數限制、樣本不足警告、排序與 Top N。 |
 | **V1.9** | 2026/05/09 | 新增 Phase 7-D（Walk-Forward Analysis）：單標的向量化 WFA、rolling IS/OOS 視窗、IS 參數掃描 + OOS 驗證、OOS 彙總績效、IS/OOS degradation、參數穩定性 CV、執行量上限、UI 中文說明規則與 CSV 匯出。 |
+| **V1.10** | 2026/05/10 | Phase 7-D 驗收完成：7-D-1 核心引擎與 7-D-2 Walk-Forward tab、中文說明、回測次數預估、summary/window/stability table、CSV 匯出、Phase 7 回歸皆通過。 |
 
 ---
 
@@ -1573,6 +1574,8 @@ class SweepRunSummary:
 
 **建置內容：** 在 7-C 參數掃描基礎上，新增 Walk-Forward Analysis（WFA，滾動樣本外驗證）。系統將歷史資料切成多段 in-sample（IS，樣本內最佳化區間）與 out-of-sample（OOS，樣本外驗證區間），每段 IS 先執行參數掃描選出最佳參數，再將該參數套用到下一段 OOS 回測，用於檢查參數是否過度擬合單一歷史區間。
 
+**狀態（2026-05-10）：** ✅ Phase 7-D 已驗收完成。7-D-1 核心引擎通過 `tests/test_walk_forward.py tests/test_sweep.py` = 62 passed, 1 warning；7-D-2 UI tab + 文件 + 回歸通過 py_compile、UI 規格補點驗收與 Phase 7 回歸 `tests/test_strategies.py tests/test_strategy_config.py tests/test_batch.py tests/test_sweep.py tests/test_walk_forward.py` = 116 passed, 1 warning。
+
 **MVP 範圍：**
 
 - 只支援單一 symbol，不做多標的 WFA。
@@ -1776,6 +1779,8 @@ else:
 **7-D-2　UI tab + 文件 + 回歸**
 
 UI 階段負責回測頁 Walk-Forward tab、中文說明、執行前檢查、進度條、結果呈現、CSV 下載、文件更新與回歸驗收。
+
+**狀態（2026-05-10）：** ✅ 已驗收完成。Walk-Forward tab 已新增；英文研究術語已補中文說明；回測次數預估已依日期區間、IS/OOS/Step 與合法參數組合數顯示；summary metrics、window table、parameter stability table、視窗警告詳情與 CSV 匯出入口已具備。Phase 7 回歸為 116 passed, 1 warning。
 
 **UI 整合**
 
