@@ -2173,6 +2173,8 @@ realtime:
 - 快取在 TTL 內命中
 - 盤後不 crash，正確標示
 
+**狀態（2026-05-10）：** ✅ 已驗收完成。`tests/test_realtime.py` = 13 passed。
+
 ---
 
 #### 8-E　AI 綜合分析與操作劇本（2-3 天）

@@ -174,20 +174,22 @@ risk:
 | 8-A | ✅ 完成 | 技術面自動判讀引擎：TechnicalSummary dataclass、趨勢/MA/KD/MACD/量能判讀、短線綜合分數、關鍵價位、量價結構分析 |
 | 8-B | ✅ 完成 | K線型態辨識：CandlePattern/ChartPatternResult/TimeframeTrend dataclass、10種K線型態、W底M頭偵測、多週期趨勢分析 |
 | 8-C | ✅ 完成 | 籌碼分析管線：ChipSummary dataclass、三大法人pivot+加總、融資融券、增量補抓、籌碼集中度判讀 |
-| 8-D~F | 📋 規格完成 | 即時行情(8-D)、AI劇本(8-E)、儀表板UI(8-F) |
+| 8-D | ✅ 完成 | 即時行情接入：RealtimeQuote/BidAskStructure dataclass、TWSE MIS API 解析、tse/otc 路由、快取、買賣力道估算 |
+| 8-E~F | 📋 規格完成 | AI劇本(8-E)、儀表板UI(8-F) |
 
 ## 當前待辦
 
 見 `驗證後已知問題.md`（每次必讀）。
 
-主線：Phase 8-A/B/C 已完成驗收；下一步進入 8-D 實作。
+主線：Phase 8-A/B/C/D 已完成驗收；下一步進入 8-E 實作。
 
 2026-05-10 狀態：
 - 8-A 驗證結果：`tests/test_technical_summary.py` 13 passed, 0.72s
 - 8-B 驗證結果：`tests/test_pattern.py` 15 passed, 0.69s
 - 8-C 驗證結果：`tests/test_chip_analysis.py` 14 passed, 0.66s
-- 新增模組：`src/analysis/technical_summary.py`、`src/analysis/pattern.py`、`src/analysis/chip_analysis.py`
-- 修改模組：`src/data/fetcher.py`（+fetch_institutional/margin/incremental）、`src/data/storage.py`（+save/load institutional/margin）、`src/core/constants.py`（+INSTITUTIONAL_COLUMNS/MARGIN_COLUMNS）
+- 8-D 驗證結果：`tests/test_realtime.py` 13 passed, 0.20s
+- 新增模組：`src/analysis/technical_summary.py`、`src/analysis/pattern.py`、`src/analysis/chip_analysis.py`、`src/data/realtime.py`
+- 修改模組：`src/data/fetcher.py`、`src/data/storage.py`、`src/core/constants.py`、`config.yaml`（+realtime section）
 
 2026-05-10 狀態：
 - 最新 commit：`70c3db4 Resolve UI contrast and event frequency issues`

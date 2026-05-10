@@ -68,6 +68,9 @@ ui:
   theme: warm_sepia
   use_extras: true
   use_option_menu: true
+realtime:
+  cache_ttl: 10
+  request_timeout: 5
 risk:
   max_daily_loss_pct: 0.03
   max_position_pct: 0.2
