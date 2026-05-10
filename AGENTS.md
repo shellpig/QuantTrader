@@ -11,7 +11,7 @@ At conversation start, read in this layered order. Ignore `舊文件/`.
 **Layer 1 — Always read (build full picture fast):**
 1. `AGENTS.md` (this file)
 2. `PROJECT_BRIEF.md` (architecture, progress, spec index)
-3. `已知問題.md` (current todos and known gaps)
+3. `驗證後已知問題.md` (current todos and known gaps)
 4. `git log --oneline -15` (recent commits)
 
 **Layer 2 — Expand per current task (targeted sections only):**
