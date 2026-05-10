@@ -171,13 +171,19 @@ risk:
 | 7-B | ✅ 完成 | 策略研究工作台：批次比較、結果保存、UI tab 重構、K 線圖、Signal/Trade overlay、指標副圖 |
 | 7-C | ✅ 完成 | 參數掃描與防過度最佳化：Grid Search、參數過濾、組合上限、樣本不足警告 |
 | 7-D | ✅ 完成 | Walk-Forward Analysis：核心引擎、Walk-Forward tab、中文說明、回測次數預估、進度條、summary/window/stability table、CSV 匯出已驗收 |
-| 8 | 📋 規格完成 | 個股綜合分析儀表板：技術面判讀(8-A)、K線型態(8-B)、籌碼管線(8-C)、即時行情(8-D)、AI劇本(8-E)、儀表板UI(8-F) |
+| 8-A | ✅ 完成 | 技術面自動判讀引擎：TechnicalSummary dataclass、趨勢/MA/KD/MACD/量能判讀、短線綜合分數、關鍵價位、量價結構分析 |
+| 8-B~F | 📋 規格完成 | K線型態(8-B)、籌碼管線(8-C)、即時行情(8-D)、AI劇本(8-E)、儀表板UI(8-F) |
 
 ## 當前待辦
 
 見 `驗證後已知問題.md`（每次必讀）。
 
-主線：Phase 1-7-D 已完成；Phase 8 規格已併入正式文件，下一步進入 Phase 8 實作（8-A/B/C/D 四條線可平行開發）。
+主線：Phase 8-A 已完成驗收；下一步進入 8-B/C/D 實作（三條線可平行開發）。
+
+2026-05-10 狀態：
+- 8-A 驗證結果：`tests/test_technical_summary.py` 13 passed, 0.72s
+- 新增模組：`src/analysis/technical_summary.py`（453 行）、`src/analysis/__init__.py`
+- 規格符合度：dataclass 欄位、判讀邏輯、權重（30/25/25/20）、邊界處理皆對齊設計方針
 
 2026-05-10 狀態：
 - 最新 commit：`70c3db4 Resolve UI contrast and event frequency issues`
