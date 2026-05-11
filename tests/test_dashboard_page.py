@@ -4,17 +4,22 @@ from pathlib import Path
 
 import pandas as pd
 
+from src.analysis.chip_analysis import ChipSummary
+from src.analysis.pattern import CandlePattern, ChartPatternResult
 from src.analysis.technical_summary import PriceLevel, TechnicalSummary
 from src.analysis.pattern import MultiTimeframeAnalysis, TimeframeTrend
 from src.data.storage import ParquetStorage
 from src.data.realtime import BidAskStructure, RealtimeQuote
 from src.ui.pages.dashboard import (
+    _HELP_TEXTS,
+    _PATTERN_DETAILS,
     _build_recent_institutional_table,
     _build_dashboard_payload,
     _prepare_chip_data_for_dashboard,
     _render_tab_ai,
     _render_tab_chip,
     _render_tab_overview,
+    _render_tab_pattern,
     _style_recent_institutional_table,
     render_dashboard_page,
 )
@@ -102,6 +107,9 @@ class _DummySt:
 
     def markdown(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
         return None
+
+    def expander(self, *args, **kwargs):  # noqa: ANN002, ANN003
+        return _DummyCtx()
 
     def write(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
         return None
@@ -225,6 +233,64 @@ def test_dashboard_tab_overview_renders(monkeypatch) -> None:
         technical=_make_technical_summary(),
         df=pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume", "symbol"]),
     )
+
+
+def test_help_texts_has_all_required_keys() -> None:
+    required_keys = {
+        "trend_direction",
+        "ma_status",
+        "kd_status",
+        "macd_status",
+        "volume_status",
+        "volume_price_relation",
+        "resistance",
+        "support",
+        "short_term_score",
+        "foreign",
+        "trust",
+        "dealer",
+        "chip_concentration",
+        "margin_balance",
+        "short_balance",
+        "bid_ask",
+        "volume_price_divergence",
+        "ma_bias",
+        "operation_observation",
+        "timeframe_daily",
+        "timeframe_weekly",
+        "timeframe_monthly",
+        "timeframe_strength",
+    }
+    assert required_keys.issubset(_HELP_TEXTS.keys())
+
+
+def test_pattern_details_has_all_10_candle_patterns() -> None:
+    expected = {
+        "長紅 K",
+        "長黑 K",
+        "十字線",
+        "錘子",
+        "吊人",
+        "吞噬",
+        "晨星",
+        "夜星",
+        "帶上影線",
+        "帶下影線",
+    }
+    assert expected.issubset(_PATTERN_DETAILS.keys())
+
+
+def test_pattern_details_has_chart_patterns() -> None:
+    assert "W底（雙底）" in _PATTERN_DETAILS
+    assert "M頭（雙頂）" in _PATTERN_DETAILS
+
+
+def test_help_texts_values_are_nonempty_strings() -> None:
+    assert all(isinstance(value, str) and len(value) > 0 for value in _HELP_TEXTS.values())
+
+
+def test_pattern_details_values_are_nonempty_strings() -> None:
+    assert all(isinstance(value, str) and len(value) > 0 for value in _PATTERN_DETAILS.values())
 
 
 def test_dashboard_tab_overview_intraday_uses_bid_ask_not_mid_estimate(monkeypatch) -> None:
@@ -390,6 +456,82 @@ def test_dashboard_tab_chip_no_data(monkeypatch) -> None:
     monkeypatch.setattr(dashboard_module, "st", dummy)
     _render_tab_chip(chip=None, bid_ask=None, technical=_make_technical_summary())
     assert any("尚未載入籌碼資料" in msg for msg in dummy.info_messages)
+
+
+def test_tab_overview_renders_with_help_texts(monkeypatch) -> None:
+    import src.ui.pages.dashboard as dashboard_module
+
+    monkeypatch.setattr(dashboard_module, "st", _DummySt())
+    _render_tab_overview(
+        quote=None,
+        technical=_make_technical_summary(),
+        df=pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume", "symbol"]),
+    )
+
+
+def test_tab_chip_renders_with_help_texts(monkeypatch) -> None:
+    import src.ui.pages.dashboard as dashboard_module
+
+    monkeypatch.setattr(dashboard_module, "st", _DummySt())
+    chip = ChipSummary(
+        foreign_net_n_days=10,
+        trust_net_n_days=-2,
+        dealer_net_n_days=1,
+        foreign_label="買超 10 張",
+        trust_label="賣超 2 張",
+        dealer_label="買超 1 張",
+        chip_concentration="穩定",
+        chip_trend="中性",
+        chip_description="法人進出互見，籌碼趨於穩定。",
+        margin_balance_change=100,
+        short_balance_change=-50,
+    )
+    bid_ask = BidAskStructure(
+        total_bid_vol=1000,
+        total_ask_vol=800,
+        bid_ratio=0.55,
+        ask_ratio=0.45,
+        label="買盤較積極",
+    )
+    _render_tab_chip(
+        chip=chip,
+        bid_ask=bid_ask,
+        technical=_make_technical_summary(),
+        chip_recent_df=pd.DataFrame({"日期": ["2026-01-01"], "外資": [1], "投信": [0], "自營商": [-1]}),
+    )
+
+
+def test_tab_pattern_renders_with_details(monkeypatch) -> None:
+    import src.ui.pages.dashboard as dashboard_module
+
+    monkeypatch.setattr(dashboard_module, "st", _DummySt())
+    candle_patterns = [
+        CandlePattern(name="長紅 K", detected=True, description="多方力道"),
+        CandlePattern(name="十字線", detected=False, description="多空拉鋸"),
+    ]
+    chart_patterns = [
+        ChartPatternResult(
+            pattern_type="W底（雙底）",
+            formed=True,
+            description="突破頸線",
+            key_points=[("頸線", 100.0), ("右底", 95.0)],
+        ),
+        ChartPatternResult(
+            pattern_type="M頭（雙頂）",
+            formed=False,
+            description="未形成標準M頭型態",
+            key_points=[],
+        ),
+    ]
+    _render_tab_pattern(
+        candle_patterns=candle_patterns,
+        chart_patterns=chart_patterns,
+        mtf=MultiTimeframeAnalysis(
+            daily=TimeframeTrend(timeframe="daily", trend_direction="多頭", strength="中強"),
+            weekly=TimeframeTrend(timeframe="weekly", trend_direction="多頭", strength="中"),
+            monthly=TimeframeTrend(timeframe="monthly", trend_direction="盤整", strength="中"),
+        ),
+    )
 
 
 def test_dashboard_tab_ai_disabled(monkeypatch) -> None:

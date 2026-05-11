@@ -38,6 +38,117 @@ _TW_SYMBOL_PATTERN = re.compile(r"^[0-9A-Z]{4,6}$")
 _STATE_KEY = "dashboard_payload"
 _KLINE_COUNT_OPTIONS = (30, 60, 90, 120, 180, 240, 360)
 
+_HELP_TEXTS: dict[str, str] = {
+    "trend_direction": (
+        "根據 5 日、20 日、60 日移動平均線（MA）的排列判定。"
+        "MA5 > MA20 > MA60 為多頭趨勢；反之為空頭趨勢；交錯排列為盤整。"
+        "移動平均線是過去 N 日收盤價平均，用來平滑短期波動並觀察趨勢。"
+    ),
+    "ma_status": (
+        "觀察 MA5、MA20、MA60 的相對位置。"
+        "多頭排列代表短中長期均價依序墊高；空頭排列相反；"
+        "均線糾結表示方向不明，常見於盤整或轉折期。"
+    ),
+    "kd_status": (
+        "KD 指標衡量收盤價在近期高低區間中的位置，由 K 與 D 組成（0~100）。"
+        "K 上穿 D 為黃金交叉（偏多），K 下穿 D 為死亡交叉（偏空）。"
+        "K、D 皆 > 80 常視為高檔鈍化，皆 < 20 常視為低檔鈍化。"
+    ),
+    "macd_status": (
+        "MACD 由 DIF（12EMA-26EMA）與 DEA（DIF 的 9EMA）構成。"
+        "DIF > 0 且 DIF > DEA 為正值擴張（多方增強）；"
+        "DIF > 0 且 DIF <= DEA 為正值收斂（多方轉弱）；空方區同理。"
+    ),
+    "volume_status": (
+        "比較今日量與近 5 日均量倍數。"
+        "> 1.5 倍為量能放大，> 3 倍為爆量；0.7~1.5 倍為正常；< 0.7 倍為量縮。"
+        "量能常用來判斷價格趨勢是否有足夠參與度支持。"
+    ),
+    "volume_price_relation": (
+        "結合漲跌與量能的判讀。"
+        "價漲量增通常較健康；價漲量縮表示追價力道偏弱；"
+        "價跌量增代表賣壓較重；價跌量縮可能是賣壓趨緩。"
+    ),
+    "resistance": (
+        "壓力區是股價上行時可能遇到賣壓的價位。"
+        "本系統使用近 60 日高點與近 20 日高點作為壓力參考。"
+    ),
+    "support": (
+        "支撐區是股價下行時可能出現承接買盤的價位。"
+        "本系統使用近期低點、MA20、MA60 作為支撐參考。"
+    ),
+    "short_term_score": (
+        "短線綜合分數由四面向加權：均線結構 30%、KD 25%、量價關係 25%、突破狀態 20%。"
+        "分級：70% 以上強勢偏多；50% 以上且未滿 70% 中等偏多；"
+        "30% 以上且未滿 50% 中性；未滿 30% 偏空。"
+    ),
+    "foreign": (
+        "外資是外國機構投資人，通常是台股最大法人資金來源。"
+        "買超常被視為偏多，但可能包含避險或 ETF 調倉等非方向性交易。"
+    ),
+    "trust": (
+        "投信是共同基金管理機構。"
+        "投信買超常代表基金經理人中期看法偏多，操作多偏波段。"
+    ),
+    "dealer": (
+        "自營商是券商自有資金部位。"
+        "交易節奏通常較短，部分部位可能屬避險用途。"
+    ),
+    "chip_concentration": (
+        "觀察近 N 日法人淨買賣方向一致性。"
+        "連續同向買入偏向籌碼集中（偏多），連續同向賣出偏分散（偏空），交錯則偏中性。"
+    ),
+    "margin_balance": (
+        "融資是借錢買股。"
+        "融資餘額增加常代表散戶風險偏好上升；快速增加且股價不漲時需提高警覺。"
+    ),
+    "short_balance": (
+        "融券是借券賣出（放空）。"
+        "融券餘額增加常代表看空力道增強；大量回補可能形成軋空。"
+    ),
+    "bid_ask": (
+        "以五檔掛單量估算買賣力道。"
+        "買方掛量佔比高表示買盤積極，但掛單可能撤單，僅供即時參考。"
+    ),
+    "volume_price_divergence": (
+        "量價背離（如價漲量縮）表示方向缺乏成交量配合；"
+        "量價同步（如價漲量增）通常代表趨勢可信度較高。"
+    ),
+    "ma_bias": (
+        "乖離率 = (收盤 - MA20) / MA20 x 100%。"
+        "常用來觀察短線偏離程度；乖離過大後，價格可能向均線回歸。"
+    ),
+    "operation_observation": (
+        "此欄為系統規則判讀結論，整合趨勢、量價、乖離與籌碼。"
+        "不是 AI 生成，也不構成投資建議。"
+    ),
+    "timeframe_daily": "日線反映短期（數日至數週）趨勢方向與強度。",
+    "timeframe_weekly": (
+        "週線由日線彙總：開盤取該週第一個有效交易日、收盤取該週最後一個有效交易日，"
+        "高低點取週內極值、成交量取週總量，反映中期（數週至數月）趨勢。"
+    ),
+    "timeframe_monthly": "月線由日線彙總而成，反映長期（數月至數年）趨勢。",
+    "timeframe_strength": (
+        "趨勢強度依均線排列與 RSI 綜合判定。"
+        "日、週、月線方向一致時，通常代表趨勢一致性較高。"
+    ),
+}
+
+_PATTERN_DETAILS: dict[str, str] = {
+    "長紅 K": "當日陽線實體明顯放大，代表買盤主導；低檔出現時常被視為轉強訊號。",
+    "長黑 K": "當日陰線實體明顯放大，代表賣壓主導；高檔出現時常被視為轉弱訊號。",
+    "十字線": "開收接近、實體很小，表示多空拉鋸；趨勢末端出現時需留意反轉風險。",
+    "錘子": "長下影短上影，常見於跌勢末端，代表低檔有承接，可能止跌反彈。",
+    "吊人": "形態近似錘子但出現在漲勢中，代表上方追價動能可能轉弱。",
+    "吞噬": "今日實體完全包覆前日實體，多空力道轉換明顯，屬較強反轉訊號。",
+    "晨星": "三根 K 的底部反轉型態，常解讀為空方衰竭後多方接手。",
+    "夜星": "晨星反向型態，常解讀為多方衰竭後空方轉強。",
+    "帶上影線": "上影明顯偏長，表示盤中上攻遇壓，短線上檔賣壓較重。",
+    "帶下影線": "下影明顯偏長，表示盤中下殺有撐，短線下檔承接較強。",
+    "W底（雙底）": "兩低點接近且突破頸線後成立，常作為中短期轉強訊號。",
+    "M頭（雙頂）": "兩高點接近且跌破頸線後成立，常作為中短期轉弱訊號。",
+}
+
 
 def render() -> None:
     render_dashboard_page()
@@ -393,17 +504,18 @@ def _render_tab_overview(
 
     st.markdown("**技術分析總覽**")
     row1 = st.columns(3)
-    row1[0].metric("趨勢方向", technical.trend_direction)
-    row1[1].metric("均線狀態", technical.ma_status)
-    row1[2].metric("KD 狀態", technical.kd_status)
+    row1[0].metric("趨勢方向", technical.trend_direction, help=_HELP_TEXTS["trend_direction"])
+    row1[1].metric("均線狀態", technical.ma_status, help=_HELP_TEXTS["ma_status"])
+    row1[2].metric("KD 狀態", technical.kd_status, help=_HELP_TEXTS["kd_status"])
     row2 = st.columns(3)
-    row2[0].metric("MACD 狀態", technical.macd_status)
-    row2[1].metric("量能狀態", technical.volume_status)
-    row2[2].metric("量價關係", technical.volume_price_relation)
+    row2[0].metric("MACD 狀態", technical.macd_status, help=_HELP_TEXTS["macd_status"])
+    row2[1].metric("量能狀態", technical.volume_status, help=_HELP_TEXTS["volume_status"])
+    row2[2].metric("量價關係", technical.volume_price_relation, help=_HELP_TEXTS["volume_price_relation"])
 
     c1, c2 = st.columns(2)
     with c1:
         st.markdown("**壓力區**")
+        st.caption(_HELP_TEXTS["resistance"])
         if technical.resistance_levels:
             for lvl in technical.resistance_levels:
                 st.write(f"- {lvl.label}: {lvl.value:.2f}")
@@ -411,6 +523,7 @@ def _render_tab_overview(
             st.write("- 尚無資料")
     with c2:
         st.markdown("**支撐區**")
+        st.caption(_HELP_TEXTS["support"])
         if technical.support_levels:
             for lvl in technical.support_levels:
                 st.write(f"- {lvl.label}: {lvl.value:.2f}")
@@ -420,6 +533,7 @@ def _render_tab_overview(
     st.markdown("**短線綜合分數**")
     score_pct = max(0.0, min(1.0, float(technical.short_term_score)))
     st.progress(score_pct, text=f"{technical.short_term_label}（{score_pct * 100:.1f}%）")
+    st.caption(_HELP_TEXTS["short_term_score"])
     refresh_clicked = st.button("重新整理報價", key="dashboard_refresh_quote", help="重新查詢即時報價")
     return bool(refresh_clicked)
 
@@ -563,14 +677,15 @@ def _render_tab_chip(
             st.info("尚未載入籌碼資料")
     else:
         c1, c2, c3 = st.columns(3)
-        c1.metric("外資近N日", chip.foreign_label)
-        c2.metric("投信近N日", chip.trust_label)
-        c3.metric("自營商近N日", chip.dealer_label)
+        c1.metric("外資近N日", chip.foreign_label, help=_HELP_TEXTS["foreign"])
+        c2.metric("投信近N日", chip.trust_label, help=_HELP_TEXTS["trust"])
+        c3.metric("自營商近N日", chip.dealer_label, help=_HELP_TEXTS["dealer"])
         st.write(f"籌碼集中度：{chip.chip_concentration} / 趨勢：{chip.chip_trend}")
+        st.caption(_HELP_TEXTS["chip_concentration"])
         st.caption(chip.chip_description)
         c4, c5 = st.columns(2)
-        c4.metric("融資餘額變化(張)", f"{chip.margin_balance_change:+d}")
-        c5.metric("融券餘額變化(張)", f"{chip.short_balance_change:+d}")
+        c4.metric("融資餘額變化(張)", f"{chip.margin_balance_change:+d}", help=_HELP_TEXTS["margin_balance"])
+        c5.metric("融券餘額變化(張)", f"{chip.short_balance_change:+d}", help=_HELP_TEXTS["short_balance"])
         st.markdown("**近 5 交易日三大法人（張）**")
         if chip_recent_df is not None and not chip_recent_df.empty:
             st.dataframe(_style_recent_institutional_table(chip_recent_df), width="stretch", hide_index=True)
@@ -578,15 +693,18 @@ def _render_tab_chip(
             st.info("目前無可顯示的近 5 交易日三大法人資料。")
 
     if bid_ask is not None:
-        st.metric("買賣力道估算", bid_ask.label)
+        st.metric("買賣力道估算", bid_ask.label, help=_HELP_TEXTS["bid_ask"])
         st.caption(f"買方佔比 {bid_ask.bid_ratio:.2%} / 賣方佔比 {bid_ask.ask_ratio:.2%}")
     else:
         st.info("尚未取得五檔買賣量，買賣力道暫不可用。")
 
     st.markdown("**量價結構分析**")
     st.write(technical.volume_price_divergence or "資料不足")
+    st.caption(_HELP_TEXTS["volume_price_divergence"])
     st.write(technical.ma_bias or "資料不足")
+    st.caption(_HELP_TEXTS["ma_bias"])
     st.write(technical.operation_observation or "資料不足")
+    st.caption(_HELP_TEXTS["operation_observation"])
 
 
 def _render_tab_pattern(
@@ -601,9 +719,19 @@ def _render_tab_pattern(
         st.markdown("**偵測到的型態：**")
         for p in detected:
             st.success(f"**{p.name}** — {p.description}")
+            detail = _PATTERN_DETAILS.get(p.name)
+            if detail:
+                st.caption(detail)
     if not_detected:
         with st.expander("未偵測到的型態", expanded=False):
-            rows = [{"型態": p.name, "說明": p.description} for p in not_detected]
+            rows = [
+                {
+                    "型態": p.name,
+                    "說明": p.description,
+                    "詳細": _PATTERN_DETAILS.get(p.name, ""),
+                }
+                for p in not_detected
+            ]
             st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
     for pattern in chart_patterns:
@@ -613,11 +741,15 @@ def _render_tab_pattern(
                 st.caption(", ".join(f"{name}={value:.2f}" for name, value in pattern.key_points if name != "索引區間"))
         else:
             st.info(f"{pattern.pattern_type}：{pattern.description}")
+        detail = _PATTERN_DETAILS.get(pattern.pattern_type)
+        if detail:
+            st.caption(detail)
 
+    st.caption(_HELP_TEXTS["timeframe_strength"])
     c1, c2, c3 = st.columns(3)
-    c1.metric("日線", f"{mtf.daily.trend_direction} / {mtf.daily.strength}")
-    c2.metric("週線", f"{mtf.weekly.trend_direction} / {mtf.weekly.strength}")
-    c3.metric("月線", f"{mtf.monthly.trend_direction} / {mtf.monthly.strength}")
+    c1.metric("日線", f"{mtf.daily.trend_direction} / {mtf.daily.strength}", help=_HELP_TEXTS["timeframe_daily"])
+    c2.metric("週線", f"{mtf.weekly.trend_direction} / {mtf.weekly.strength}", help=_HELP_TEXTS["timeframe_weekly"])
+    c3.metric("月線", f"{mtf.monthly.trend_direction} / {mtf.monthly.strength}", help=_HELP_TEXTS["timeframe_monthly"])
 
 
 def _render_tab_ai(
