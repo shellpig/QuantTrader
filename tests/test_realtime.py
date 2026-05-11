@@ -80,9 +80,61 @@ def test_parse_twse_response_normal() -> None:
 
 
 def test_parse_twse_response_no_trade() -> None:
-    fetcher = RealtimeFetcher()
-    quote = fetcher._parse_twse_response(_twse_payload(z="-", y="88.5"))
+    fetcher = RealtimeFetcher(clock=lambda: datetime(2026, 5, 11, 9, 13, 30, tzinfo=ZoneInfo("Asia/Taipei")).timestamp())
+    quote = fetcher._parse_twse_response(
+        _twse_payload(
+            z="-",
+            y="88.5",
+            b="101.0_100.5",
+            a="102.0_102.5",
+            t="09:13:22",
+        )
+    )
     assert quote.price == 88.5
+    assert quote.is_estimated_price is True
+    assert quote.price_label == "昨收價(無成交)"
+    assert quote.estimated_price == 101.5
+
+
+def test_parse_twse_response_no_trade_uses_bid1_or_ask1() -> None:
+    fetcher = RealtimeFetcher(clock=lambda: datetime(2026, 5, 11, 9, 13, 30, tzinfo=ZoneInfo("Asia/Taipei")).timestamp())
+    bid_only = fetcher._parse_twse_response(
+        _twse_payload(
+            z="-",
+            y="88.5",
+            b="101.0",
+            a="-",
+            t="09:13:22",
+        )
+    )
+    ask_only = fetcher._parse_twse_response(
+        _twse_payload(
+            z="-",
+            y="88.5",
+            b="-",
+            a="102.0",
+            t="09:13:22",
+        )
+    )
+    assert bid_only.price == 88.5
+    assert ask_only.price == 88.5
+    assert bid_only.estimated_price == 101.0
+    assert ask_only.estimated_price == 102.0
+
+
+def test_parse_twse_response_no_trade_does_not_set_midpoint_as_price() -> None:
+    fetcher = RealtimeFetcher(clock=lambda: datetime(2026, 5, 11, 9, 13, 30, tzinfo=ZoneInfo("Asia/Taipei")).timestamp())
+    quote = fetcher._parse_twse_response(
+        _twse_payload(
+            z="-",
+            y="726.5",
+            b="731.0_730.5",
+            a="732.0_732.5",
+            t="09:13:22",
+        )
+    )
+    assert quote.price == 726.5
+    assert quote.estimated_price == 731.5
 
 
 def test_parse_five_levels() -> None:

@@ -67,8 +67,10 @@ from src.core.strategy_config import (
     get_strategy_presets,
     make_strategy_label,
 )
-from src.data.fetcher import FinMindFetcher
-from src.data.storage import ParquetStorage
+from src.data.cleaner import DataCleaner
+from src.data.fetcher import FinMindFetcher, IDataFetcher, YFinanceFetcher
+from src.data.maintenance import DataMaintenance
+from src.data.storage import DuckDBMeta, ParquetStorage
 from src.strategy.examples.bias import BiasStrategy
 from src.strategy.examples.bollinger_band import BollingerBandStrategy
 from src.strategy.examples.donchian_breakout import DonchianBreakoutStrategy
@@ -1499,6 +1501,7 @@ def _load_backtest_data(
     require_adjusted: bool = True,
 ) -> pd.DataFrame:
     storage = ParquetStorage()
+    _sync_symbol_daily_data(symbol, storage)
     df = storage.load_adjusted(symbol)
     if df.empty and require_adjusted:
         raise FetcherError(
@@ -1522,6 +1525,59 @@ def _load_backtest_data(
     data = data.dropna(subset=["open", "high", "low", "close"])
     data = data[(data["date"] >= start_ts) & (data["date"] < end_exclusive)].copy()
     return data.sort_values("date").reset_index(drop=True)
+
+
+def _sync_symbol_daily_data(symbol: str, storage: ParquetStorage) -> None:
+    fetchers = _build_fetchers_from_config()
+    if not fetchers:
+        raise FetcherError(f"{symbol} 自動更新日線資料失敗：No available data source. Details: n/a")
+
+    errors: list[str] = []
+    for source, fetcher in fetchers:
+        meta = DuckDBMeta()
+        try:
+            maintenance = DataMaintenance(
+                fetcher=fetcher,
+                storage=storage,
+                meta=meta,
+                cleaner=DataCleaner(),
+            )
+            maintenance.update_daily(symbol)
+            return
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"{source}: {exc}")
+        finally:
+            meta.close()
+
+    raise FetcherError(f"{symbol} 自動更新日線資料失敗：{' | '.join(errors)}")
+
+
+def _build_fetcher_from_config() -> IDataFetcher:
+    fetchers = _build_fetchers_from_config()
+    if fetchers:
+        return fetchers[0][1]
+    raise RuntimeError("No available data source. Details: n/a")
+
+
+def _build_fetchers_from_config() -> list[tuple[str, IDataFetcher]]:
+    cfg = get_config()
+    data_section = cfg.get("data", {}) if isinstance(cfg, dict) else {}
+    primary = str(data_section.get("primary_source", "finmind")).strip().lower()
+    fallback = str(data_section.get("fallback_source", "yfinance")).strip().lower()
+    order = [primary, fallback]
+
+    fetchers: list[tuple[str, IDataFetcher]] = []
+    for source in order:
+        if source in {name for name, _ in fetchers}:
+            continue
+        try:
+            if source == "finmind":
+                fetchers.append((source, FinMindFetcher()))
+            elif source == "yfinance":
+                fetchers.append((source, YFinanceFetcher()))
+        except Exception:  # noqa: BLE001
+            continue
+    return fetchers
 
 
 # ---------------------------------------------------------------------------

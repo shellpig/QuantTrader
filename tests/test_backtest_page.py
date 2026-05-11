@@ -112,6 +112,7 @@ def test_load_backtest_data_raises_when_adjusted_missing(monkeypatch) -> None:
             return pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume", "symbol"])
 
     monkeypatch.setattr("src.ui.pages.backtest.ParquetStorage", lambda: StubStorage())
+    monkeypatch.setattr("src.ui.pages.backtest._sync_symbol_daily_data", lambda symbol, storage: None)
 
     with pytest.raises(FetcherError, match="adjusted data is missing"):
         _load_backtest_data(
@@ -143,6 +144,7 @@ def test_load_backtest_data_allows_daily_fallback_when_disabled(monkeypatch) -> 
             return daily.copy(deep=True)
 
     monkeypatch.setattr("src.ui.pages.backtest.ParquetStorage", lambda: StubStorage())
+    monkeypatch.setattr("src.ui.pages.backtest._sync_symbol_daily_data", lambda symbol, storage: None)
 
     out = _load_backtest_data(
         symbol="0050",
@@ -152,3 +154,76 @@ def test_load_backtest_data_allows_daily_fallback_when_disabled(monkeypatch) -> 
     )
 
     assert len(out) == 2
+
+
+def test_load_backtest_data_runs_auto_sync_before_loading(monkeypatch) -> None:
+    called: dict[str, str] = {}
+    daily = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2025-01-02"]).tz_localize(TAIPEI_TZ),
+            "open": [100.0],
+            "high": [101.0],
+            "low": [99.0],
+            "close": [100.5],
+            "volume": [1000],
+            "symbol": ["0050"],
+        }
+    )
+
+    class StubStorage:
+        def load_adjusted(self, symbol: str) -> pd.DataFrame:  # noqa: ARG002
+            return daily.copy(deep=True)
+
+        def load_daily(self, symbol: str) -> pd.DataFrame:  # noqa: ARG002
+            return daily.copy(deep=True)
+
+    monkeypatch.setattr("src.ui.pages.backtest.ParquetStorage", lambda: StubStorage())
+
+    def _mark_sync(symbol: str, storage) -> None:  # noqa: ANN001
+        called["symbol"] = symbol
+
+    monkeypatch.setattr("src.ui.pages.backtest._sync_symbol_daily_data", _mark_sync)
+
+    _load_backtest_data(
+        symbol="0050",
+        start_ts=pd.Timestamp("2025-01-01", tz=TAIPEI_TZ),
+        end_exclusive=pd.Timestamp("2025-01-10", tz=TAIPEI_TZ),
+        require_adjusted=True,
+    )
+
+    assert called["symbol"] == "0050"
+
+
+def test_sync_symbol_daily_data_fallback_when_primary_update_fails(monkeypatch) -> None:
+    import src.ui.pages.backtest as backtest_module
+
+    calls: list[str] = []
+
+    class _Fetcher:
+        def __init__(self, source: str):
+            self.source = source
+
+    class _Maintenance:
+        def __init__(self, *, fetcher, **kwargs):  # noqa: ANN003
+            self.fetcher = fetcher
+
+        def update_daily(self, symbol: str) -> None:
+            calls.append(f"{self.fetcher.source}:{symbol}")
+            if self.fetcher.source == "finmind":
+                raise RuntimeError("primary update failed")
+
+    class _Meta:
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(backtest_module, "DuckDBMeta", _Meta)
+    monkeypatch.setattr(backtest_module, "DataMaintenance", _Maintenance)
+    monkeypatch.setattr(
+        backtest_module,
+        "_build_fetchers_from_config",
+        lambda: [("finmind", _Fetcher("finmind")), ("yfinance", _Fetcher("yfinance"))],
+    )
+
+    backtest_module._sync_symbol_daily_data("2330", storage=object())  # type: ignore[arg-type]
+
+    assert calls == ["finmind:2330", "yfinance:2330"]

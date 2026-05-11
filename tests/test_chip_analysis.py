@@ -259,6 +259,7 @@ def test_chip_summary_stable() -> None:
     inst = _make_institutional_df_with_signs([1, -1, 1, -1, 1])
     summary = generate_chip_summary(inst, _make_margin_df(), n_days=5)
     assert summary.chip_concentration == "穩定"
+    assert summary.chip_description == "法人進出互見，籌碼趨於穩定。"
 
 
 def test_chip_summary_label_format() -> None:

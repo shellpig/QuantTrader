@@ -27,12 +27,16 @@ from src.analysis.pattern import (
 from src.analysis.technical_summary import TechnicalSummary, generate_technical_summary
 from src.core.config import get_config
 from src.core.exceptions import AICallError, AIDisabledError
+from src.data.cleaner import DataCleaner
+from src.data.fetcher import FinMindFetcher, IDataFetcher, YFinanceFetcher
+from src.data.maintenance import DataMaintenance
 from src.data.realtime import BidAskStructure, RealtimeFetcher, RealtimeQuote
-from src.data.storage import ParquetStorage
+from src.data.storage import DuckDBMeta, ParquetStorage
 from src.ui.themes import get_theme
 
 _TW_SYMBOL_PATTERN = re.compile(r"^[0-9A-Z]{4,6}$")
 _STATE_KEY = "dashboard_payload"
+_KLINE_COUNT_OPTIONS = (30, 60, 90, 120, 180, 240, 360)
 
 
 def render() -> None:
@@ -80,6 +84,8 @@ def render_dashboard_page() -> None:
             chip=payload.get("chip"),
             bid_ask=payload.get("bid_ask"),
             technical=payload["technical"],
+            chip_recent_df=payload.get("chip_recent_df"),
+            chip_error=payload.get("chip_error"),
         )
     with tabs[2]:
         _render_tab_pattern(
@@ -108,12 +114,19 @@ def render_dashboard_page() -> None:
 
 def _build_dashboard_payload(symbol: str) -> dict[str, Any]:
     storage = ParquetStorage()
-    daily = storage.load_daily(symbol)
+    daily, daily_error = _prepare_daily_data_for_dashboard(symbol, storage)
+    if daily_error:
+        return {
+            "symbol": symbol,
+            "ready": False,
+            "error": daily_error,
+        }
+
     if daily.empty:
         return {
             "symbol": symbol,
             "ready": False,
-            "error": f"{symbol} 尚無本機日線資料，請先到「資料管理」更新。",
+            "error": f"{symbol} 尚無可用日線資料。",
         }
 
     daily = _normalize_daily_df(daily)
@@ -128,14 +141,7 @@ def _build_dashboard_payload(symbol: str) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001
         st.warning(f"即時行情暫時不可用，已改用日線資料顯示：{exc}")
 
-    chip: ChipSummary | None = None
-    try:
-        institutional_df = storage.load_institutional(symbol)
-        margin_df = storage.load_margin(symbol)
-        if not institutional_df.empty or not margin_df.empty:
-            chip = generate_chip_summary(institutional_df, margin_df, n_days=5)
-    except Exception as exc:  # noqa: BLE001
-        st.info(f"籌碼資料尚未載入：{exc}")
+    chip, chip_recent_df, chip_error = _prepare_chip_data_for_dashboard(symbol, storage)
 
     candle_patterns = detect_candle_patterns(daily)
     chart_patterns = detect_chart_pattern(daily)
@@ -171,12 +177,156 @@ def _build_dashboard_payload(symbol: str) -> dict[str, Any]:
         "quote": quote,
         "bid_ask": bid_ask,
         "chip": chip,
+        "chip_recent_df": chip_recent_df,
+        "chip_error": chip_error,
         "candle_patterns": candle_patterns,
         "chart_patterns": chart_patterns,
         "multi_timeframe": multi_timeframe,
         "analysis": analysis,
         "ai_enabled": ai_enabled,
     }
+
+
+def _prepare_daily_data_for_dashboard(symbol: str, storage: ParquetStorage) -> tuple[pd.DataFrame, str | None]:
+    try:
+        _sync_symbol_daily_data(symbol, storage)
+    except Exception as exc:  # noqa: BLE001
+        return pd.DataFrame(), f"{symbol} 日線資料更新失敗：{exc}"
+    return storage.load_daily(symbol), None
+
+
+def _prepare_chip_data_for_dashboard(
+    symbol: str,
+    storage: ParquetStorage,
+) -> tuple[ChipSummary | None, pd.DataFrame, str | None]:
+    try:
+        fetcher = _build_chip_fetcher()
+        institutional_df = fetcher.fetch_institutional_incremental(symbol, storage)
+        margin_df = fetcher.fetch_margin_incremental(symbol, storage)
+    except Exception as exc:  # noqa: BLE001
+        return None, pd.DataFrame(), f"籌碼資料僅支援 FinMind，抓取失敗：{exc}"
+
+    if institutional_df.empty and margin_df.empty:
+        return None, pd.DataFrame(), "目前無可用籌碼資料。"
+
+    chip = generate_chip_summary(institutional_df, margin_df, n_days=5)
+    recent_df = _build_recent_institutional_table(institutional_df, n_days=5)
+    return chip, recent_df, None
+
+
+def _build_recent_institutional_table(institutional_df: pd.DataFrame, *, n_days: int = 5) -> pd.DataFrame:
+    required = {"date", "foreign_net", "trust_net", "dealer_net"}
+    if institutional_df.empty or not required.issubset(institutional_df.columns):
+        return pd.DataFrame(columns=["日期", "外資", "投信", "自營商"])
+
+    out = institutional_df.copy()
+    out["date"] = pd.to_datetime(out["date"], errors="coerce")
+    out = out.dropna(subset=["date"]).sort_values("date").tail(max(1, int(n_days))).copy()
+    if out.empty:
+        return pd.DataFrame(columns=["日期", "外資", "投信", "自營商"])
+
+    for col in ("foreign_net", "trust_net", "dealer_net"):
+        out[col] = pd.to_numeric(out[col], errors="coerce").fillna(0)
+
+    return pd.DataFrame(
+        {
+            "日期": out["date"].dt.strftime("%Y-%m-%d"),
+            "外資": (out["foreign_net"] / 1000.0).astype(int),
+            "投信": (out["trust_net"] / 1000.0).astype(int),
+            "自營商": (out["dealer_net"] / 1000.0).astype(int),
+        }
+    ).reset_index(drop=True)
+
+
+def _style_recent_institutional_table(table: pd.DataFrame) -> pd.io.formats.style.Styler:
+    value_cols = [col for col in table.columns if col != "日期"]
+
+    def _color_for_net_value(value: object) -> str:
+        number = pd.to_numeric(value, errors="coerce")
+        if pd.isna(number):
+            return ""
+        if number > 0:
+            return "color: #dc2626"
+        if number < 0:
+            return "color: #16a34a"
+        return ""
+
+    format_map = {col: "{:d}" for col in value_cols}
+    return table.style.format(format_map).map(_color_for_net_value, subset=value_cols)
+
+
+def _sync_symbol_daily_data(symbol: str, storage: ParquetStorage) -> None:
+    fetchers = _build_fetchers_from_config()
+    if not fetchers:
+        raise RuntimeError("No available data source. Details: n/a")
+
+    errors: list[str] = []
+    for source, fetcher in fetchers:
+        meta = DuckDBMeta()
+        try:
+            maintenance = DataMaintenance(
+                fetcher=fetcher,
+                storage=storage,
+                meta=meta,
+                cleaner=DataCleaner(),
+            )
+            maintenance.update_daily(symbol)
+            return
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"{source}: {exc}")
+        finally:
+            meta.close()
+
+    raise RuntimeError(f"Daily data update failed for all sources. Details: {' | '.join(errors)}")
+
+
+def _build_chip_fetcher() -> FinMindFetcher:
+    config = get_config()
+    data_section = config.get("data", {}) if isinstance(config, dict) else {}
+    primary = str(data_section.get("primary_source", "finmind")).strip().lower()
+    fallback = str(data_section.get("fallback_source", "yfinance")).strip().lower()
+    order = [primary, fallback]
+
+    errors: list[str] = []
+    for source in order:
+        if source != "finmind":
+            continue
+        try:
+            return FinMindFetcher()
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"{source}: {exc}")
+
+    raise RuntimeError(
+        f"No available chip fetcher. Details: {' | '.join(errors) if errors else 'finmind not configured'}"
+    )
+
+
+def _build_fetcher_from_config() -> IDataFetcher:
+    fetchers = _build_fetchers_from_config()
+    if fetchers:
+        return fetchers[0][1]
+    raise RuntimeError("No available data source. Details: n/a")
+
+
+def _build_fetchers_from_config() -> list[tuple[str, IDataFetcher]]:
+    config = get_config()
+    data_section = config.get("data", {}) if isinstance(config, dict) else {}
+    primary = str(data_section.get("primary_source", "finmind")).strip().lower()
+    fallback = str(data_section.get("fallback_source", "yfinance")).strip().lower()
+    order = [primary, fallback]
+
+    fetchers: list[tuple[str, IDataFetcher]] = []
+    for source in order:
+        if source in {name for name, _ in fetchers}:
+            continue
+        try:
+            if source == "finmind":
+                fetchers.append((source, FinMindFetcher()))
+            elif source == "yfinance":
+                fetchers.append((source, YFinanceFetcher()))
+        except Exception:  # noqa: BLE001
+            continue
+    return fetchers
 
 
 def _normalize_daily_df(df: pd.DataFrame) -> pd.DataFrame:
@@ -195,18 +345,44 @@ def _render_tab_overview(
     df: pd.DataFrame,
 ) -> bool:
     st.subheader("行情總覽")
-    if quote is not None:
-        bid_ask_text = "盤中資料" if quote.is_market_open else "盤後資料"
+    latest_close = _safe_latest_daily_value(df, "close")
+    latest_volume = _safe_latest_daily_int(df, "volume")
+    if quote is not None and quote.is_market_open:
+        bid1 = quote.best_bid[0] if quote.best_bid else None
+        ask1 = quote.best_ask[0] if quote.best_ask else None
+        price_for_change = float(bid1) if bid1 is not None else float(quote.price)
+        change = float(price_for_change - quote.yesterday_close)
+        change_pct = float((change / quote.yesterday_close * 100.0) if quote.yesterday_close else 0.0)
+        cols = st.columns(6)
+        cols[0].metric("買一", _format_price_or_na(bid1))
+        cols[1].metric("賣一", _format_price_or_na(ask1))
+        cols[2].metric("漲跌", f"{change:+.2f}")
+        cols[3].metric("漲跌幅", f"{change_pct:+.2f}%")
+        cols[4].metric("盤中量(張)", f"{max(0, int(quote.volume)):,}")
+        cols[5].metric("狀態", "盤中資料")
+    elif quote is not None:
+        close_for_display = latest_close if latest_close is not None else quote.price
+        daily_volume_for_display = latest_volume if latest_volume is not None else int(quote.volume)
+        change = float(close_for_display - quote.yesterday_close)
+        change_pct = float((change / quote.yesterday_close * 100.0) if quote.yesterday_close else 0.0)
         cols = st.columns(5)
-        cols[0].metric("即時價", f"{quote.price:.2f}")
-        cols[1].metric("漲跌", f"{quote.change:+.2f}")
-        cols[2].metric("漲跌幅", f"{quote.change_pct:+.2f}%")
-        cols[3].metric("成交量(張)", f"{quote.volume:,}")
-        cols[4].metric("狀態", bid_ask_text)
+        cols[0].metric("收盤價", f"{close_for_display:.2f}")
+        cols[1].metric("漲跌", f"{change:+.2f}")
+        cols[2].metric("漲跌幅", f"{change_pct:+.2f}%")
+        cols[3].metric("日成交量(張)", f"{max(0, int(daily_volume_for_display)):,}")
+        cols[4].metric("狀態", "盤後資料")
     else:
         st.info("目前未取得即時報價，以下以日線資料顯示。")
 
-    _render_price_chart(df, technical)
+    _, op_col = st.columns([4, 1])
+    with op_col:
+        k_count = st.selectbox(
+            "K棒數量",
+            options=_KLINE_COUNT_OPTIONS,
+            index=_KLINE_COUNT_OPTIONS.index(120),
+            key="dashboard_kline_count",
+        )
+    _render_price_chart(df, technical, int(k_count))
 
     st.markdown("**技術分析總覽**")
     row1 = st.columns(3)
@@ -241,6 +417,28 @@ def _render_tab_overview(
     return bool(refresh_clicked)
 
 
+def _format_price_or_na(value: float | None) -> str:
+    if value is None:
+        return "—"
+    return f"{float(value):.2f}"
+
+
+def _safe_latest_daily_value(df: pd.DataFrame, column: str) -> float | None:
+    if df.empty or column not in df.columns:
+        return None
+    series = pd.to_numeric(df[column], errors="coerce").dropna()
+    if series.empty:
+        return None
+    return float(series.iloc[-1])
+
+
+def _safe_latest_daily_int(df: pd.DataFrame, column: str) -> int | None:
+    value = _safe_latest_daily_value(df, column)
+    if value is None:
+        return None
+    return int(value)
+
+
 def _refresh_realtime_snapshot(symbol: str) -> tuple[RealtimeQuote | None, BidAskStructure | None, str | None]:
     try:
         realtime = RealtimeFetcher.from_config()
@@ -251,7 +449,7 @@ def _refresh_realtime_snapshot(symbol: str) -> tuple[RealtimeQuote | None, BidAs
         return None, None, f"即時報價更新失敗：{exc}"
 
 
-def _render_price_chart(df: pd.DataFrame, technical: TechnicalSummary) -> None:
+def _render_price_chart(df: pd.DataFrame, technical: TechnicalSummary, kline_count: int) -> None:
     if go is None or df.empty:
         return
     config = get_config()
@@ -263,7 +461,7 @@ def _render_price_chart(df: pd.DataFrame, technical: TechnicalSummary) -> None:
     chart_df["ma5"] = chart_df["close"].rolling(5).mean()
     chart_df["ma20"] = chart_df["close"].rolling(20).mean()
     chart_df["ma60"] = chart_df["close"].rolling(60).mean()
-    chart_df = chart_df.tail(120).reset_index(drop=True)
+    chart_df = chart_df.tail(max(1, int(kline_count))).reset_index(drop=True)
 
     price_min = float(chart_df["low"].min())
     price_max = float(chart_df["high"].max())
@@ -325,10 +523,16 @@ def _render_tab_chip(
     chip: ChipSummary | None,
     bid_ask: BidAskStructure | None,
     technical: TechnicalSummary,
+    chip_recent_df: pd.DataFrame | None = None,
+    chip_error: str | None = None,
 ) -> None:
     st.subheader("籌碼與量價")
+    if chip_error:
+        st.info(chip_error)
+
     if chip is None:
-        st.info("尚未載入籌碼資料")
+        if not chip_error:
+            st.info("尚未載入籌碼資料")
     else:
         c1, c2, c3 = st.columns(3)
         c1.metric("外資近N日", chip.foreign_label)
@@ -339,6 +543,11 @@ def _render_tab_chip(
         c4, c5 = st.columns(2)
         c4.metric("融資餘額變化(張)", f"{chip.margin_balance_change:+d}")
         c5.metric("融券餘額變化(張)", f"{chip.short_balance_change:+d}")
+        st.markdown("**近 5 交易日三大法人（張）**")
+        if chip_recent_df is not None and not chip_recent_df.empty:
+            st.dataframe(_style_recent_institutional_table(chip_recent_df), width="stretch", hide_index=True)
+        else:
+            st.info("目前無可顯示的近 5 交易日三大法人資料。")
 
     if bid_ask is not None:
         st.metric("買賣力道估算", bid_ask.label)

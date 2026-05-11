@@ -68,7 +68,7 @@ def _make_chip_summary() -> ChipSummary:
         dealer_label="買超 5 張",
         chip_concentration="集中",
         chip_trend="中性偏多",
-        chip_description="主力進場延續",
+        chip_description="法人進場延續",
         margin_balance_change=120,
         short_balance_change=-30,
     )

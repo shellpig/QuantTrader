@@ -57,7 +57,7 @@ def generate_chip_summary(
     elif concentration == "分散":
         description = "法人同向偏賣，籌碼呈分散或轉弱。"
     else:
-        description = "主力進出互見，籌碼趨於穩定。"
+        description = "法人進出互見，籌碼趨於穩定。"
 
     margin_balance_change = 0
     short_balance_change = 0

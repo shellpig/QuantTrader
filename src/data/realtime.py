@@ -34,6 +34,9 @@ class RealtimeQuote:
     best_bid_vol: list[int] = field(default_factory=list)
     best_ask_vol: list[int] = field(default_factory=list)
     is_market_open: bool = True
+    is_estimated_price: bool = False
+    price_label: str = "成交價"
+    estimated_price: float | None = None
 
 
 @dataclass
@@ -215,24 +218,37 @@ class RealtimeFetcher:
 
         symbol = str(row.get("c", "")).strip()
         name = str(row.get("n", "")).strip()
-        yesterday_close = self._safe_float(row.get("y"), default=0.0)
-        raw_price = self._safe_float(row.get("z"), default=None)
-        price = yesterday_close if raw_price is None else raw_price
-        open_price = self._safe_float(row.get("o"), default=price)
-        high = self._safe_float(row.get("h"), default=price)
-        low = self._safe_float(row.get("l"), default=price)
-        volume = self._safe_int(row.get("v"), default=0)
         timestamp = str(row.get("t", "")).strip()
+        now = datetime.fromtimestamp(float(self._clock()), ZoneInfo(TAIPEI_TZ))
+        is_market_open = self._is_market_open(timestamp, now=now)
 
         best_bid = self._parse_float_levels(row.get("b", ""))
         best_ask = self._parse_float_levels(row.get("a", ""))
         best_bid_vol = self._parse_int_levels(row.get("g", ""))
         best_ask_vol = self._parse_int_levels(row.get("f", ""))
 
+        yesterday_close = self._safe_float(row.get("y"), default=0.0)
+        raw_price = self._safe_float(row.get("z"), default=None)
+        is_estimated_price = False
+        price_label = "成交價"
+        estimated_price: float | None = None
+        if raw_price is not None:
+            price = raw_price
+        elif is_market_open:
+            estimated_price = self._estimate_quote_price(best_bid, best_ask)
+            # Keep `price` as a confirmed value only; midpoint estimate is stored separately.
+            price = yesterday_close
+            is_estimated_price = estimated_price is not None
+            price_label = "昨收價(無成交)"
+        else:
+            price = yesterday_close
+        open_price = self._safe_float(row.get("o"), default=price)
+        high = self._safe_float(row.get("h"), default=price)
+        low = self._safe_float(row.get("l"), default=price)
+        volume = self._safe_int(row.get("v"), default=0)
+
         change = float(price - yesterday_close)
         change_pct = float((change / yesterday_close * 100.0) if yesterday_close else 0.0)
-        now = datetime.fromtimestamp(float(self._clock()), ZoneInfo(TAIPEI_TZ))
-        is_market_open = self._is_market_open(timestamp, now=now)
 
         return RealtimeQuote(
             symbol=symbol,
@@ -251,7 +267,22 @@ class RealtimeFetcher:
             best_bid_vol=best_bid_vol,
             best_ask_vol=best_ask_vol,
             is_market_open=is_market_open,
+            is_estimated_price=is_estimated_price,
+            price_label=price_label,
+            estimated_price=estimated_price,
         )
+
+    @staticmethod
+    def _estimate_quote_price(best_bid: list[float], best_ask: list[float]) -> float | None:
+        bid1 = best_bid[0] if best_bid else None
+        ask1 = best_ask[0] if best_ask else None
+        if bid1 is not None and ask1 is not None:
+            return float((bid1 + ask1) / 2.0)
+        if bid1 is not None:
+            return float(bid1)
+        if ask1 is not None:
+            return float(ask1)
+        return None
 
     @staticmethod
     def _safe_float(value: Any, *, default: float | None) -> float | None:
