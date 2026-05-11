@@ -2,7 +2,7 @@
 
 本文件供新 session 快速了解專案全貌，取代逐份閱讀全部規格文件。需要深入某區段時，按行號索引讀取對應文件。
 
-最後更新：2026-05-10
+最後更新：2026-05-11
 
 ---
 
@@ -176,23 +176,27 @@ risk:
 | 8-C | ✅ 完成 | 籌碼分析管線：ChipSummary dataclass、三大法人pivot+加總、融資融券、增量補抓、籌碼集中度判讀 |
 | 8-D | ✅ 完成 | 即時行情接入：RealtimeQuote/BidAskStructure dataclass、TWSE MIS API 解析、tse/otc 路由、快取、買賣力道估算 |
 | 8-E | ✅ 完成 | AI 綜合分析與操作劇本：DashboardAnalysis/TradingScenario dataclass、structured JSON 輸出、三情境劇本、AI disabled/error 降級例外 |
-| 8-F | ✅ 單元驗證完成 | 個股分析儀表板 UI：4 tab 總覽、籌碼與量價、型態與週期、AI 劇本；缺資料與重新整理報價 regression 已補 |
+| 8-F | ✅ 完成 | 個股分析儀表板 UI：4 tab 總覽、籌碼與量價、型態與週期、AI 劇本；缺資料、重新整理報價、英文字母股票代碼、多週期資料欄位 regression 已補 |
 
 ## 當前待辦
 
 見 `驗證後已知問題.md`（每次必讀）。
 
-主線：Phase 8-A/B/C/D/E 已完成驗收；Phase 8-F 單元驗證完成，下一步補 8-F 手動驗收與 Phase 8 回歸。
+主線：Phase 8-A/B/C/D/E/F 已完成；8-F 手動驗收回報問題已修正並收進 `驗證後已知問題.md`。下一步建議跑 Phase 8 全階段回歸與必要 UI smoke test。
 
-2026-05-10 狀態：
-- 8-A 驗證結果：`tests/test_technical_summary.py` 13 passed, 0.72s
-- 8-B 驗證結果：`tests/test_pattern.py` 15 passed, 0.69s
-- 8-C 驗證結果：`tests/test_chip_analysis.py` 14 passed, 0.66s
-- 8-D 驗證結果：`tests/test_realtime.py` 13 passed, 0.20s
-- 8-E 驗證結果：`tests/test_advisor.py` 15 passed, 1 skipped（缺 anthropic API key 的 integration test）
-- 8-F 驗證結果：`tests/test_dashboard_page.py` 8 passed, 0.94s；已覆蓋缺日線資料不 crash、重新整理報價更新 session payload 並 rerun
+2026-05-11 狀態：
+- 最新基準 commit：`ecbd2d9 Fix dashboard chart UX and pattern detection issues`
+- Phase 8 目標單元回歸：`tests/test_technical_summary.py tests/test_pattern.py tests/test_chip_analysis.py tests/test_realtime.py tests/test_advisor.py tests/test_dashboard_page.py -m "not integration"` 為 82 passed, 1 deselected（第一次因 Windows/OneDrive `.pytest_tmp` 權限失敗，elevated 重跑通過）
+- 8-A 驗證結果：`tests/test_technical_summary.py` 13 passed
+- 8-B 驗證結果：`tests/test_pattern.py` 15 passed
+- 8-C 驗證結果：`tests/test_chip_analysis.py` 14 passed
+- 8-D 驗證結果：`tests/test_realtime.py` 15 passed；新增非交易日 / 盤後即時報價時間判斷 regression
+- 8-E 驗證結果：`tests/test_advisor.py` 15 passed, 1 deselected（integration test 未跑）
+- 8-F 驗證結果：`tests/test_dashboard_page.py` 10 passed；已覆蓋缺日線資料不 crash、重新整理報價更新 session payload 並 rerun、英文字母股票代碼、多週期 date 欄位 payload
+- 8-F 手動驗收修正：日 K 線圖高度、支撐/壓力標註、拖曳平移、range slider、型態顯示、K 線 X 軸改 categorical 消除週末空隙
+- Phase 8 後續修正：W 底 / M 頭同時偵測時改判為區間震盪；支撐/壓力改取近 20 日低點 / 近 60 日高點極值；資料管理頁支援 `00981A` 這類英文字母股票代碼
 - 新增模組：`src/analysis/technical_summary.py`、`src/analysis/pattern.py`、`src/analysis/chip_analysis.py`、`src/data/realtime.py`、`src/ui/pages/dashboard.py`
-- 修改模組：`src/data/fetcher.py`、`src/data/storage.py`、`src/core/constants.py`、`config.yaml`（+realtime section）、`src/ui/app.py`
+- 修改模組：`src/data/fetcher.py`、`src/data/storage.py`、`src/data/realtime.py`、`src/core/constants.py`、`config.yaml`（+realtime section）、`src/ui/app.py`、`src/ui/pages/dashboard.py`、`src/ui/pages/data_management.py`、`src/analysis/technical_summary.py`、`src/analysis/pattern.py`
 - 8-E 修改模組：`src/ai/advisor.py`、`src/core/exceptions.py`、`tests/test_advisor.py`
 - 8-F 測試模組：`tests/test_dashboard_page.py`
 
@@ -214,49 +218,51 @@ risk:
 
 ## 規格文件索引
 
-### 量化交易系統規格書_shellpig版.md（~2366 行）
+### 量化交易系統規格書_shellpig版.md（~2374 行）
 
 | 區段 | 行範圍 | 何時讀 |
 |:---|:---|:---|
-| 修訂歷史 | 1-19 | 查版本變更 |
-| 專案願景與目標 | 41-56 | 理解定位 |
-| 技術語言與套件選型 | 58-84 | 技術決策參考 |
-| 系統架構（四層架構圖） | 87-169 | 理解整體結構 |
-| 資料來源規劃 | 173-217 | 修改 fetcher 時 |
-| 資料品質與清洗（L1/L2/L3、時區） | 219-289 | 修改 cleaner 時 |
-| 回測引擎規格 | 291-480 | 修改 backtest 時 |
-| AI 技術分析模組 | 482-629 | 修改 ai/advisor 時 |
-| 風控規格 | 631-644 | 風控相關 |
-| 本機部署規格 | 646-742 | 環境設定 |
-| 測試策略 | 744-765 | 測試方針 |
-| Phase 1-4 開發計畫 | 776-945 | 查歷史 phase 規格 |
-| Phase 5 回測體驗 | 948-1064 | 修改 DCA / 股價走勢 |
-| Phase 6 UI/UX | 1070-1219 | 修改主題切換、設定頁與側邊欄 UI 小修 |
-| Phase 7-A 策略擴充 | 1221-1410 | 實作新策略時必讀 |
-| Phase 7-B 策略研究工作台 | 1411-1536 | 實作批次比較/K 線圖/overlay 時必讀 |
-| Phase 7-C 參數掃描 | 1537-1661 | 實作參數掃描時必讀 |
-| Phase 7-D Walk-Forward Analysis | 1662-1930 | 實作 WFA / OOS 驗證時必讀 |
-| **Phase 8 個股綜合分析儀表板** | **1933-2264** | **實作個股分析儀表板時必讀** |
-| 子階段總覽 + 費用估算 | 2266-2320 | 總覽 |
+| 修訂歷史 | 3-19 | 查版本變更 |
+| 專案願景與目標 | 45-60 | 理解定位 |
+| 技術語言與套件選型 | 62-89 | 技術決策參考 |
+| 系統架構（四層架構圖） | 91-175 | 理解整體結構 |
+| 資料來源規劃 | 177-221 | 修改 fetcher 時 |
+| 資料品質與清洗（L1/L2/L3、時區） | 223-293 | 修改 cleaner 時 |
+| 回測引擎規格 | 295-484 | 修改 backtest 時 |
+| AI 技術分析模組 | 486-633 | 修改 ai/advisor 時 |
+| 風控規格 | 635-648 | 風控相關 |
+| 本機部署規格 | 650-746 | 環境設定 |
+| 測試策略 | 748-769 | 測試方針 |
+| Phase 1-4 開發計畫 | 771-950 | 查歷史 phase 規格 |
+| Phase 5 回測體驗 | 952-1069 | 修改 DCA / 股價走勢 |
+| Phase 6 UI/UX | 1071-1220 | 修改主題切換、設定頁與側邊欄 UI 小修 |
+| Phase 7-A 策略擴充 | 1222-1410 | 實作新策略時必讀 |
+| Phase 7-B 策略研究工作台 | 1412-1536 | 實作批次比較/K 線圖/overlay 時必讀 |
+| Phase 7-C 參數掃描 | 1538-1661 | 實作參數掃描時必讀 |
+| Phase 7-D Walk-Forward Analysis | 1663-1931 | 實作 WFA / OOS 驗證時必讀 |
+| **Phase 8 個股綜合分析儀表板** | **1933-2272** | **實作個股分析儀表板時必讀** |
+| 子階段總覽 + 費用估算 | 2274-2304 | 總覽 |
+| 附錄 A：免責聲明全文 | 2306-2325 | 免責聲明文案 |
+| 附錄 B：架構決策補充 | 2327-2374 | 市場抽象與 AI provider 抽象 |
 
-### 開發設計方針.md（~5231 行）
+### 開發設計方針.md（~5232 行）
 
 | 區段 | 行範圍 | 何時讀 |
 |:---|:---|:---|
-| 全域規範（型別、時區、測試、目錄） | 9-162 | 新 session 第一次實作前 |
-| Phase 1 資料基礎建設 | 164-716 | 修改 data/ 時 |
-| Phase 2 向量化回測 | 718-1190 | 修改 engine_vec / cost / metrics |
-| Phase 3 事件驅動引擎 | 1192-1614 | 修改 engine_event / account / events |
-| Phase 4 AI + Streamlit UI | 1616-2200 | 修改 ai/ / indicators/ / ui/ |
+| 全域規範（型別、時區、測試、目錄） | 9-166 | 新 session 第一次實作前 |
+| Phase 1 資料基礎建設 | 168-720 | 修改 data/ 時 |
+| Phase 2 向量化回測 | 722-1194 | 修改 engine_vec / cost / metrics |
+| Phase 3 事件驅動引擎 | 1196-1618 | 修改 engine_event / account / events |
+| Phase 4 AI + Streamlit UI | 1620-2205 | 修改 ai/ / indicators/ / ui/ |
 | Phase 6-A 主題切換 | 2207-2321 | 修改 themes.py / settings.py |
 | Phase 6-B 設定頁與側邊欄 UI 小修 | 2323-2479 | 修改 app.py / themes.py / config.py / strategy_config.py / settings.py 時必讀 |
-| Phase 7-A 策略擴充 | 2481-2943 | 實作新策略時必讀 |
-| Phase 7-B 策略研究工作台 | 2945-3325 | 實作批次比較/K 線圖/overlay 時必讀 |
-| Phase 7-C 參數掃描 | 3327-3717 | 實作參數掃描時必讀 |
-| Phase 7-D Walk-Forward Analysis | 3719-4145 | 實作 WFA runner / UI tab 時必讀 |
-| **Phase 8 個股綜合分析儀表板** | **4148-5231** | **實作 analysis/ / realtime / dashboard 時必讀** |
+| Phase 7-A 策略擴充 | 2481-2941 | 實作新策略時必讀 |
+| Phase 7-B 策略研究工作台 | 2943-3323 | 實作批次比較/K 線圖/overlay 時必讀 |
+| Phase 7-C 參數掃描 | 3325-3715 | 實作參數掃描時必讀 |
+| Phase 7-D Walk-Forward Analysis | 3717-4146 | 實作 WFA runner / UI tab 時必讀 |
+| **Phase 8 個股綜合分析儀表板** | **4148-5232** | **實作 analysis/ / realtime / dashboard 時必讀** |
 
-### 測試指南.md（~2219 行）
+### 測試指南.md（~2221 行）
 
 | 區段 | 行範圍 | 何時讀 |
 |:---|:---|:---|
@@ -265,17 +271,17 @@ risk:
 | Phase 2 測試 | 400-660 | 修改 backtest 時 |
 | Phase 3 測試 | 663-966 | 修改 events/account/engine_event 時 |
 | Phase 4 測試 | 970-1217 | 修改 ai/indicators/UI 時 |
-| Phase 6 測試 | 1219-1291 | 修改主題切換、設定頁與側邊欄時 |
+| Phase 6 測試 | 1219-1293 | 修改主題切換、設定頁與側邊欄時 |
 | Phase 7-A 測試 | 1295-1495 | 新策略測試 |
 | Phase 7-B 測試 | 1497-1584 | 批次比較測試 |
-| Phase 7-C 測試 | 1586-1677 | 參數掃描測試 |
+| Phase 7-C 測試 | 1586-1696 | 參數掃描測試 |
 | Phase 7-D 測試 | 1698-1856 | Walk-Forward 測試 |
 | Phase 7 全階段回歸 | 1858-1876 | Phase 7-D 完成後 |
-| **Phase 8 測試** | **1878-2143** | **個股分析儀表板測試** |
-| Phase 8 全階段回歸 | 2126-2143 | Phase 8 完成後 |
-| 全專案回歸 + 測試統計 | 2146-2219 | Phase 完成後 |
+| **Phase 8 測試** | **1878-2126** | **個股分析儀表板測試** |
+| Phase 8 全階段回歸 | 2128-2146 | Phase 8 完成後 |
+| 全專案回歸 + 測試統計 | 2148-2221 | Phase 完成後 |
 
-### 驗證後已知問題.md（~737 行）
+### 驗證後已知問題.md（~785 行）
 
 追蹤驗收中發現的問題。每筆含：位置、狀況、風險、處理階段。已處理的標記 `[✅ 已處理 @ commit]`。每次 session 開始時必讀。
 
