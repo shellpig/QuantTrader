@@ -13,6 +13,7 @@ from src.data.realtime import BidAskStructure, RealtimeQuote
 from src.ui.pages.dashboard import (
     _HELP_TEXTS,
     _PATTERN_DETAILS,
+    _build_technical_metric_details,
     _build_recent_institutional_table,
     _build_dashboard_payload,
     _prepare_chip_data_for_dashboard,
@@ -203,6 +204,7 @@ def test_dashboard_page_render_no_symbol(monkeypatch) -> None:
 
     dummy = _DummySt(symbol="", analyze_clicked=False)
     monkeypatch.setattr(dashboard_module, "st", dummy)
+    monkeypatch.setattr(dashboard_module, "render_stock_selector", lambda *args, **kwargs: dummy._symbol.strip().upper())
     render_dashboard_page()
     assert any("請先輸入股票代碼" in msg for msg in dummy.info_messages)
 
@@ -212,6 +214,7 @@ def test_dashboard_page_accepts_alphanumeric_symbol(monkeypatch) -> None:
 
     dummy = _DummySt(symbol="00981a", analyze_clicked=True)
     monkeypatch.setattr(dashboard_module, "st", dummy)
+    monkeypatch.setattr(dashboard_module, "render_stock_selector", lambda *args, **kwargs: dummy._symbol.strip().upper())
     monkeypatch.setattr(
         dashboard_module,
         "_build_dashboard_payload",
@@ -227,6 +230,7 @@ def test_dashboard_page_accepts_alphanumeric_symbol(monkeypatch) -> None:
 def test_dashboard_tab_overview_renders(monkeypatch) -> None:
     import src.ui.pages.dashboard as dashboard_module
 
+    monkeypatch.setattr(dashboard_module, "get_config", lambda: {"ui": {"theme": "midnight_blue"}})
     monkeypatch.setattr(dashboard_module, "st", _DummySt())
     _render_tab_overview(
         quote=None,
@@ -291,6 +295,19 @@ def test_help_texts_values_are_nonempty_strings() -> None:
 
 def test_pattern_details_values_are_nonempty_strings() -> None:
     assert all(isinstance(value, str) and len(value) > 0 for value in _PATTERN_DETAILS.values())
+
+
+def test_technical_metric_details_include_actual_indicator_values() -> None:
+    details = _build_technical_metric_details(_make_daily_df(periods=90))
+
+    assert "MA5" in details["trend_direction"]
+    assert "MA20" in details["ma_status"]
+    assert "K " in details["kd_status"]
+    assert "D " in details["kd_status"]
+    assert "DIF" in details["macd_status"]
+    assert "DEA" in details["macd_status"]
+    assert "倍數" in details["volume_status"]
+    assert "收盤變化" in details["volume_price_relation"]
 
 
 def test_dashboard_tab_overview_intraday_uses_bid_ask_not_mid_estimate(monkeypatch) -> None:
@@ -461,6 +478,7 @@ def test_dashboard_tab_chip_no_data(monkeypatch) -> None:
 def test_tab_overview_renders_with_help_texts(monkeypatch) -> None:
     import src.ui.pages.dashboard as dashboard_module
 
+    monkeypatch.setattr(dashboard_module, "get_config", lambda: {"ui": {"theme": "midnight_blue"}})
     monkeypatch.setattr(dashboard_module, "st", _DummySt())
     _render_tab_overview(
         quote=None,
@@ -549,10 +567,10 @@ def test_dashboard_option_menu_entry() -> None:
     assert "個股分析" in source
 
 
-def test_dashboard_page_uses_form_submit_for_enter() -> None:
+def test_dashboard_page_uses_text_input_on_change_for_enter() -> None:
     source = Path("src/ui/pages/dashboard.py").read_text(encoding="utf-8")
-    assert "st.form(" in source
-    assert "st.form_submit_button(" in source
+    assert "on_change" in source
+    assert "_request_dashboard_analysis" in source
 
 
 def test_dashboard_page_not_ready_payload_does_not_render_tabs(monkeypatch) -> None:
@@ -560,6 +578,7 @@ def test_dashboard_page_not_ready_payload_does_not_render_tabs(monkeypatch) -> N
 
     dummy = _DummySt(symbol="2330", analyze_clicked=True)
     monkeypatch.setattr(dashboard_module, "st", dummy)
+    monkeypatch.setattr(dashboard_module, "render_stock_selector", lambda *args, **kwargs: dummy._symbol.strip().upper())
     monkeypatch.setattr(
         dashboard_module,
         "_build_dashboard_payload",
@@ -618,6 +637,7 @@ def test_dashboard_page_refresh_quote_updates_session_payload(monkeypatch) -> No
     )
     dummy.session_state["dashboard_payload"] = payload
     monkeypatch.setattr(dashboard_module, "st", dummy)
+    monkeypatch.setattr(dashboard_module, "render_stock_selector", lambda *args, **kwargs: dummy._symbol.strip().upper())
 
     new_quote = RealtimeQuote(
         symbol="2330",
@@ -682,6 +702,7 @@ def test_dashboard_page_renders_analysis_subject_and_time(monkeypatch) -> None:
     dummy = _DummySt(symbol="2330", analyze_clicked=False)
     dummy.session_state["dashboard_payload"] = payload
     monkeypatch.setattr(dashboard_module, "st", dummy)
+    monkeypatch.setattr(dashboard_module, "render_stock_selector", lambda *args, **kwargs: dummy._symbol.strip().upper())
 
     render_dashboard_page()
 

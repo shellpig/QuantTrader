@@ -6,6 +6,7 @@ import pytest
 from src.core.constants import TAIPEI_TZ
 from src.core.exceptions import FetcherError
 from src.ui.pages.backtest import (
+    _TW_SYMBOL_PATTERN,
     _build_eps_display_table,
     _build_price_features,
     _dca_transactions_to_trade_markers,
@@ -44,6 +45,10 @@ def test_build_price_features_rolling_mean_matches_expected() -> None:
     assert out.loc[5, "ma5"] == 4.0
     assert out["ma20"].isna().all()
     assert out["ma60"].isna().all()
+
+
+def test_backtest_symbol_pattern_accepts_alphanumeric_etf_code() -> None:
+    assert _TW_SYMBOL_PATTERN.fullmatch("00981A")
 
 
 def test_build_eps_display_table_partial_latest_year_no_estimation() -> None:

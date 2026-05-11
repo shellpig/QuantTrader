@@ -232,6 +232,26 @@ class FinMindFetcher(IDataFetcher):
         )
         return self._normalize_finmind(raw, symbol=symbol)
 
+    def fetch_stock_info(self) -> pd.DataFrame:
+        """Fetch Taiwan stock metadata for UI symbol lookup."""
+        raw = self._request_data({"dataset": "TaiwanStockInfo"})
+        if raw.empty:
+            return pd.DataFrame(columns=["symbol", "name", "type", "industry"])
+
+        out = raw.rename(
+            columns={
+                "stock_id": "symbol",
+                "stock_name": "name",
+                "industry_category": "industry",
+            }
+        ).copy()
+        for col in ("symbol", "name", "type", "industry"):
+            if col not in out.columns:
+                out[col] = ""
+            out[col] = out[col].fillna("").astype(str).str.strip()
+        out = out[out["symbol"] != ""].drop_duplicates(subset=["symbol"], keep="first")
+        return out[["symbol", "name", "type", "industry"]].sort_values("symbol").reset_index(drop=True)
+
     def fetch_dividends(self, symbol: str, start_date: str = "2000-01-01") -> pd.DataFrame:
         """
         Fetch Taiwan stock dividend events from FinMind.

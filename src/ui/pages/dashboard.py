@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 import streamlit as st
+import pandas_ta as ta
 
 try:
     import plotly.graph_objects as go
@@ -34,10 +35,12 @@ from src.data.fetcher import FinMindFetcher, IDataFetcher, YFinanceFetcher
 from src.data.maintenance import DataMaintenance
 from src.data.realtime import BidAskStructure, RealtimeFetcher, RealtimeQuote
 from src.data.storage import DuckDBMeta, ParquetStorage
+from src.ui.stock_selector import render_stock_selector
 from src.ui.themes import get_theme
 
 _TW_SYMBOL_PATTERN = re.compile(r"^[0-9A-Z]{4,6}$")
 _STATE_KEY = "dashboard_payload"
+_ANALYZE_REQUESTED_KEY = "dashboard_analyze_requested"
 _KLINE_COUNT_OPTIONS = (30, 60, 90, 120, 180, 240, 360)
 _TAIPEI_TZ = ZoneInfo("Asia/Taipei")
 
@@ -162,24 +165,29 @@ def render_dashboard_page() -> None:
     st.title("個股分析")
     st.caption("整合技術面、籌碼、型態與 AI 劇本的個股儀表板。")
 
-    with st.form(key="dashboard_form", clear_on_submit=False):
-        symbol = st.text_input("股票代碼", value="", key="dashboard_symbol").strip().upper()
-        analyze_clicked = st.form_submit_button("分析", type="primary", key="dashboard_analyze")
+    symbol = render_stock_selector(
+        "股票代碼或名稱",
+        key_prefix="dashboard",
+        default="",
+        text_input_kwargs={"on_change": _request_dashboard_analysis},
+    )
+    analyze_clicked = st.button("分析", type="primary", key="dashboard_analyze")
+    analyze_requested = bool(st.session_state.pop(_ANALYZE_REQUESTED_KEY, False))
 
     if not symbol:
-        st.info("請先輸入股票代碼。")
+        st.info("請先輸入股票代碼或名稱。")
         return
     if not _TW_SYMBOL_PATTERN.fullmatch(symbol):
-        st.warning("股票代碼格式錯誤，請輸入 4~6 位英數台股代碼。")
+        st.warning("股票代碼格式錯誤，請輸入 4~6 位英數台股代碼，或從名稱搜尋結果選擇股票。")
         return
 
-    if analyze_clicked:
+    if analyze_clicked or analyze_requested:
         payload = _build_dashboard_payload(symbol)
         st.session_state[_STATE_KEY] = payload
 
     payload = st.session_state.get(_STATE_KEY)
     if not payload or payload.get("symbol") != symbol:
-        st.info("輸入股票代碼後，點選「分析」。")
+        st.info("輸入股票代碼或名稱後，點選「分析」。")
         return
 
     is_ready = bool(payload.get("ready", "technical" in payload))
@@ -324,6 +332,10 @@ def _resolve_subject_name(symbol: str, quote: RealtimeQuote | None) -> str:
 
 def _format_analysis_time() -> str:
     return datetime.now(_TAIPEI_TZ).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _request_dashboard_analysis() -> None:
+    st.session_state[_ANALYZE_REQUESTED_KEY] = True
 
 
 def _prepare_daily_data_for_dashboard(symbol: str, storage: ParquetStorage) -> tuple[pd.DataFrame, str | None]:
@@ -529,15 +541,22 @@ def _render_tab_overview(
         )
     _render_price_chart(df, technical, int(k_count))
 
+    metric_details = _build_technical_metric_details(df)
     st.markdown("**技術分析總覽**")
     row1 = st.columns(3)
     row1[0].metric("趨勢方向", technical.trend_direction, help=_HELP_TEXTS["trend_direction"])
+    row1[0].caption(metric_details["trend_direction"])
     row1[1].metric("均線狀態", technical.ma_status, help=_HELP_TEXTS["ma_status"])
+    row1[1].caption(metric_details["ma_status"])
     row1[2].metric("KD 狀態", technical.kd_status, help=_HELP_TEXTS["kd_status"])
+    row1[2].caption(metric_details["kd_status"])
     row2 = st.columns(3)
     row2[0].metric("MACD 狀態", technical.macd_status, help=_HELP_TEXTS["macd_status"])
+    row2[0].caption(metric_details["macd_status"])
     row2[1].metric("量能狀態", technical.volume_status, help=_HELP_TEXTS["volume_status"])
+    row2[1].caption(metric_details["volume_status"])
     row2[2].metric("量價關係", technical.volume_price_relation, help=_HELP_TEXTS["volume_price_relation"])
+    row2[2].caption(metric_details["volume_price_relation"])
 
     c1, c2 = st.columns(2)
     with c1:
@@ -569,6 +588,123 @@ def _format_price_or_na(value: float | None) -> str:
     if value is None:
         return "—"
     return f"{float(value):.2f}"
+
+
+def _build_technical_metric_details(df: pd.DataFrame) -> dict[str, str]:
+    close = _numeric_series(df, "close")
+    high = _numeric_series(df, "high")
+    low = _numeric_series(df, "low")
+    volume = _numeric_series(df, "volume")
+
+    latest_close = _last_numeric(close)
+    ma5 = _last_numeric(close.rolling(5, min_periods=5).mean())
+    ma20 = _last_numeric(close.rolling(20, min_periods=20).mean())
+    ma60 = _last_numeric(close.rolling(60, min_periods=60).mean())
+    ma_text = f"收盤 {_fmt_num(latest_close)} / MA5 {_fmt_num(ma5)} / MA20 {_fmt_num(ma20)} / MA60 {_fmt_num(ma60)}"
+
+    k_value, d_value = _latest_kd_values(high=high, low=low, close=close)
+    dif, dea = _latest_macd_values(close)
+    today_volume = _last_numeric(volume)
+    avg_5d_volume = _last_numeric(volume.rolling(5, min_periods=5).mean())
+    volume_ratio = _safe_ratio(today_volume, avg_5d_volume)
+    prev_close, curr_close = _last_two_numeric(close)
+    close_change = None if prev_close is None or curr_close is None else curr_close - prev_close
+    close_change_pct = _safe_ratio(close_change, prev_close)
+
+    return {
+        "trend_direction": ma_text,
+        "ma_status": ma_text,
+        "kd_status": f"K {_fmt_num(k_value)} / D {_fmt_num(d_value)}",
+        "macd_status": f"DIF {_fmt_num(dif)} / DEA {_fmt_num(dea)}",
+        "volume_status": (
+            f"今日量 {_fmt_int(today_volume)} / 5日均量 {_fmt_int(avg_5d_volume)} / "
+            f"倍數 {_fmt_ratio(volume_ratio)}"
+        ),
+        "volume_price_relation": (
+            f"收盤變化 {_fmt_signed(close_change)}（{_fmt_pct(close_change_pct)}）/ "
+            f"量能倍數 {_fmt_ratio(volume_ratio)}"
+        ),
+    }
+
+
+def _numeric_series(df: pd.DataFrame, column: str) -> pd.Series:
+    if df.empty or column not in df.columns:
+        return pd.Series(dtype="float64")
+    return pd.to_numeric(df[column], errors="coerce")
+
+
+def _last_numeric(series: pd.Series) -> float | None:
+    cleaned = pd.to_numeric(series, errors="coerce").dropna()
+    if cleaned.empty:
+        return None
+    return float(cleaned.iloc[-1])
+
+
+def _last_two_numeric(series: pd.Series) -> tuple[float | None, float | None]:
+    cleaned = pd.to_numeric(series, errors="coerce").dropna()
+    if len(cleaned) < 2:
+        return None, None
+    return float(cleaned.iloc[-2]), float(cleaned.iloc[-1])
+
+
+def _latest_kd_values(*, high: pd.Series, low: pd.Series, close: pd.Series) -> tuple[float | None, float | None]:
+    if high.empty or low.empty or close.empty:
+        return None, None
+    stoch = ta.stoch(high=high, low=low, close=close, k=9, d=3, smooth_k=3)
+    if stoch is None or stoch.empty:
+        return None, None
+    k_col = _find_prefixed_col(stoch.columns, "STOCHK_")
+    d_col = _find_prefixed_col(stoch.columns, "STOCHD_")
+    if k_col is None or d_col is None:
+        return None, None
+    return _last_numeric(stoch[k_col]), _last_numeric(stoch[d_col])
+
+
+def _latest_macd_values(close: pd.Series) -> tuple[float | None, float | None]:
+    if close.empty:
+        return None, None
+    macd_df = ta.macd(close, fast=12, slow=26, signal=9)
+    if macd_df is None or macd_df.empty:
+        return None, None
+    dif_col = _find_prefixed_col(macd_df.columns, "MACD_")
+    dea_col = _find_prefixed_col(macd_df.columns, "MACDS_")
+    if dif_col is None or dea_col is None:
+        return None, None
+    return _last_numeric(macd_df[dif_col]), _last_numeric(macd_df[dea_col])
+
+
+def _find_prefixed_col(columns: pd.Index, prefix: str) -> str | None:
+    prefix_upper = prefix.upper()
+    for col in columns:
+        if str(col).upper().startswith(prefix_upper):
+            return str(col)
+    return None
+
+
+def _safe_ratio(numerator: float | None, denominator: float | None) -> float | None:
+    if numerator is None or denominator is None or pd.isna(denominator) or denominator == 0:
+        return None
+    return numerator / denominator
+
+
+def _fmt_num(value: float | None) -> str:
+    return "—" if value is None else f"{value:.2f}"
+
+
+def _fmt_int(value: float | None) -> str:
+    return "—" if value is None else f"{int(value):,}"
+
+
+def _fmt_signed(value: float | None) -> str:
+    return "—" if value is None else f"{value:+.2f}"
+
+
+def _fmt_ratio(value: float | None) -> str:
+    return "—" if value is None else f"{value:.2f}x"
+
+
+def _fmt_pct(value: float | None) -> str:
+    return "—" if value is None else f"{value * 100:+.2f}%"
 
 
 def _safe_latest_daily_value(df: pd.DataFrame, column: str) -> float | None:

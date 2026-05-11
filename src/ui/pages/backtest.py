@@ -71,6 +71,7 @@ from src.data.cleaner import DataCleaner
 from src.data.fetcher import FinMindFetcher, IDataFetcher, YFinanceFetcher
 from src.data.maintenance import DataMaintenance
 from src.data.storage import DuckDBMeta, ParquetStorage
+from src.ui.stock_selector import render_stock_selector
 from src.strategy.examples.bias import BiasStrategy
 from src.strategy.examples.bollinger_band import BollingerBandStrategy
 from src.strategy.examples.donchian_breakout import DonchianBreakoutStrategy
@@ -79,7 +80,7 @@ from src.strategy.examples.ma_cross import MACrossStrategy
 from src.strategy.examples.macd_cross import MACDCrossStrategy
 from src.strategy.examples.rsi import RSIStrategy
 
-_TW_SYMBOL_PATTERN = re.compile(r"^\d{4,6}$")
+_TW_SYMBOL_PATTERN = re.compile(r"^[0-9A-Z]{4,6}$")
 _VECTOR_ENGINE_LABEL = "向量化引擎"
 _EVENT_ENGINE_LABEL = "事件驅動引擎"
 _TRADE_MARKER_BASE_SIZE = 10
@@ -177,7 +178,7 @@ def _render_batch_comparison_tab() -> None:
 
     if st.button("批次回測全部策略", type="primary", key="batch_run"):
         if not _TW_SYMBOL_PATTERN.fullmatch(symbol):
-            st.error("股票代碼格式錯誤，請輸入 4 到 6 碼台股代碼。")
+            st.error("股票代碼格式錯誤，請輸入 4 到 6 碼英數台股代碼，或從名稱搜尋結果選擇股票。")
             return
         start_ts = _as_taipei_start(pd.Timestamp(start_date))
         end_exclusive = _as_taipei_start(pd.Timestamp(end_date)) + pd.Timedelta(days=1)
@@ -386,7 +387,7 @@ def _render_sweep_tab() -> None:
 
     if st.button("開始掃描", type="primary", key="sweep_run", disabled=(parse_error or over_limit)):
         if not _TW_SYMBOL_PATTERN.fullmatch(symbol):
-            st.error("股票代碼格式錯誤，請輸入 4 到 6 碼台股代碼。")
+            st.error("股票代碼格式錯誤，請輸入 4 到 6 碼英數台股代碼，或從名稱搜尋結果選擇股票。")
             return
         start_ts = _as_taipei_start(pd.Timestamp(start_date))
         end_exclusive = _as_taipei_start(pd.Timestamp(end_date)) + pd.Timedelta(days=1)
@@ -656,7 +657,7 @@ def _render_walk_forward_tab() -> None:
         disabled=(parse_error or over_limit),
     ):
         if not _TW_SYMBOL_PATTERN.fullmatch(symbol):
-            st.error("股票代碼格式錯誤，請輸入 4 到 6 碼台股代碼。")
+            st.error("股票代碼格式錯誤，請輸入 4 到 6 碼英數台股代碼，或從名稱搜尋結果選擇股票。")
             return
         start_ts = _as_taipei_start(pd.Timestamp(start_date))
         end_exclusive = _as_taipei_start(pd.Timestamp(end_date)) + pd.Timedelta(days=1)
@@ -874,7 +875,7 @@ def _render_wfa_results(summary: WalkForwardSummary, *, symbol: str) -> None:
 def _input_symbol_and_dates(key_prefix: str) -> tuple[str, Any, Any]:
     today = pd.Timestamp.today().date()
     default_start = (pd.Timestamp.today() - pd.Timedelta(days=365 * 3)).date()
-    symbol = st.text_input("股票代碼", value="2330", key=f"{key_prefix}_symbol").strip()
+    symbol = render_stock_selector("股票代碼或名稱", key_prefix=key_prefix, default="2330")
     d1, d2 = st.columns(2)
     with d1:
         start_date = st.date_input("開始日期", value=default_start, key=f"{key_prefix}_start")
@@ -896,7 +897,7 @@ def _run_backtest(
     strategy_preset: dict[str, object],
 ) -> None:
     if not _TW_SYMBOL_PATTERN.fullmatch(symbol):
-        st.error("股票代碼格式錯誤，請輸入 4 到 6 碼台股代碼。")
+        st.error("股票代碼格式錯誤，請輸入 4 到 6 碼英數台股代碼，或從名稱搜尋結果選擇股票。")
         return
 
     start_ts = _as_taipei_start(start_date)

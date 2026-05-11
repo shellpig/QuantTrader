@@ -145,6 +145,39 @@ def test_finmind_fetch_splits_normalizes_schema() -> None:
     assert str(split_df["date"].dtype) == f"datetime64[ns, {TAIPEI_TZ}]"
 
 
+def test_finmind_fetch_stock_info_normalizes_schema() -> None:
+    class DummyResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "data": [
+                    {
+                        "stock_id": "2330",
+                        "stock_name": "台積電",
+                        "type": "twse",
+                        "industry_category": "半導體",
+                    }
+                ]
+            }
+
+    class DummySession:
+        def get(self, *args, **kwargs) -> DummyResponse:  # noqa: ANN002, ANN003
+            return DummyResponse()
+
+    fetcher = FinMindFetcher(token="dummy-token", session=DummySession())
+    info = fetcher.fetch_stock_info()
+
+    assert info.columns.tolist() == ["symbol", "name", "type", "industry"]
+    assert info.iloc[0].to_dict() == {
+        "symbol": "2330",
+        "name": "台積電",
+        "type": "twse",
+        "industry": "半導體",
+    }
+
+
 @pytest.mark.integration
 def test_finmind_daily_2330() -> None:
     token = _resolve_finmind_token()
