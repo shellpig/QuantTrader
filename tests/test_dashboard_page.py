@@ -596,6 +596,8 @@ def test_dashboard_page_refresh_quote_updates_session_payload(monkeypatch) -> No
         "daily_df": pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume", "symbol"]),
         "technical": technical,
         "quote": old_quote,
+        "subject_name": "台積電",
+        "analysis_time": "2026-05-11 14:35:20",
         "bid_ask": None,
         "chip": None,
         "candle_patterns": [],
@@ -648,18 +650,77 @@ def test_dashboard_page_refresh_quote_updates_session_payload(monkeypatch) -> No
     updated = dummy.session_state["dashboard_payload"]
     assert updated["quote"].price == 123.45
     assert updated["bid_ask"].label == "買盤較積極"
+    assert updated["subject_name"] == "台積電"
+    assert updated["analysis_time"] == "2026-05-11 14:35:20"
     assert dummy.rerun_called_count == 1
+
+
+def test_dashboard_page_renders_analysis_subject_and_time(monkeypatch) -> None:
+    import src.ui.pages.dashboard as dashboard_module
+
+    payload = {
+        "symbol": "2330",
+        "ready": True,
+        "error": None,
+        "daily_df": pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume", "symbol"]),
+        "technical": _make_technical_summary(),
+        "quote": None,
+        "subject_name": "台積電",
+        "analysis_time": "2026-05-11 14:35:20",
+        "bid_ask": None,
+        "chip": None,
+        "candle_patterns": [],
+        "chart_patterns": [],
+        "multi_timeframe": MultiTimeframeAnalysis(
+            daily=TimeframeTrend(timeframe="daily", trend_direction="盤整", strength="中"),
+            weekly=TimeframeTrend(timeframe="weekly", trend_direction="盤整", strength="中"),
+            monthly=TimeframeTrend(timeframe="monthly", trend_direction="盤整", strength="中"),
+        ),
+        "analysis": None,
+        "ai_enabled": False,
+    }
+    dummy = _DummySt(symbol="2330", analyze_clicked=False)
+    dummy.session_state["dashboard_payload"] = payload
+    monkeypatch.setattr(dashboard_module, "st", dummy)
+
+    render_dashboard_page()
+
+    assert "台積電（2330）｜分析時間：2026-05-11 14:35:20" in dummy.caption_messages
 
 
 def test_dashboard_payload_builds_multi_timeframe_from_date_column(monkeypatch, tmp_path) -> None:
     import src.ui.pages.dashboard as dashboard_module
 
+    class _Realtime:
+        @classmethod
+        def from_config(cls):
+            return cls()
+
+        def fetch_quote(self, symbol: str):  # noqa: ANN201
+            return RealtimeQuote(
+                symbol=symbol,
+                name="台積電",
+                price=100.0,
+                change=0.0,
+                change_pct=0.0,
+                open=100.0,
+                high=101.0,
+                low=99.0,
+                yesterday_close=100.0,
+                volume=1000,
+                timestamp="10:00:00",
+            )
+
+        def fetch_bid_ask_structure(self, quote):  # noqa: ANN001, ANN201
+            return None
+
     storage = ParquetStorage(data_dir=tmp_path)
     storage.save_daily("2330", _make_daily_df())
     monkeypatch.setattr(dashboard_module, "ParquetStorage", lambda: storage)
-    monkeypatch.setattr(dashboard_module, "RealtimeFetcher", None)
+    monkeypatch.setattr(dashboard_module, "RealtimeFetcher", _Realtime)
     monkeypatch.setattr(dashboard_module, "st", _DummySt())
     monkeypatch.setattr(dashboard_module, "get_config", lambda: {"ai": {"enabled": False}, "ui": {"theme": "midnight_blue"}})
+    monkeypatch.setattr(dashboard_module, "_format_analysis_time", lambda: "2026-05-11 14:35:20")
     monkeypatch.setattr(
         dashboard_module,
         "_prepare_daily_data_for_dashboard",
@@ -675,6 +736,8 @@ def test_dashboard_payload_builds_multi_timeframe_from_date_column(monkeypatch, 
 
     assert payload["ready"] is True
     assert isinstance(payload["multi_timeframe"], MultiTimeframeAnalysis)
+    assert payload["subject_name"] == "台積電"
+    assert payload["analysis_time"] == "2026-05-11 14:35:20"
 
 
 def test_build_recent_institutional_table_keeps_last_five_days() -> None:

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from datetime import datetime
 import re
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import streamlit as st
@@ -37,6 +39,7 @@ from src.ui.themes import get_theme
 _TW_SYMBOL_PATTERN = re.compile(r"^[0-9A-Z]{4,6}$")
 _STATE_KEY = "dashboard_payload"
 _KLINE_COUNT_OPTIONS = (30, 60, 90, 120, 180, 240, 360)
+_TAIPEI_TZ = ZoneInfo("Asia/Taipei")
 
 _HELP_TEXTS: dict[str, str] = {
     "trend_direction": (
@@ -184,6 +187,8 @@ def render_dashboard_page() -> None:
         st.warning(str(payload.get("error", "個股分析資料尚未準備完成。")))
         return
 
+    _render_analysis_info(payload)
+
     tabs = st.tabs(["總覽", "籌碼與量價", "型態與週期", "AI 劇本"])
     with tabs[0]:
         refresh_clicked = _render_tab_overview(
@@ -287,6 +292,8 @@ def _build_dashboard_payload(symbol: str) -> dict[str, Any]:
         "daily_df": daily,
         "technical": technical,
         "quote": quote,
+        "subject_name": _resolve_subject_name(symbol, quote),
+        "analysis_time": _format_analysis_time(),
         "bid_ask": bid_ask,
         "chip": chip,
         "chip_recent_df": chip_recent_df,
@@ -297,6 +304,26 @@ def _build_dashboard_payload(symbol: str) -> dict[str, Any]:
         "analysis": analysis,
         "ai_enabled": ai_enabled,
     }
+
+
+def _render_analysis_info(payload: dict[str, Any]) -> None:
+    symbol = str(payload.get("symbol", "")).strip().upper()
+    subject_name = str(payload.get("subject_name", "")).strip()
+    analysis_time = str(payload.get("analysis_time", "")).strip()
+    subject = f"{subject_name}（{symbol}）" if subject_name and subject_name != symbol else symbol
+    if analysis_time:
+        st.caption(f"{subject}｜分析時間：{analysis_time}")
+    else:
+        st.caption(subject)
+
+
+def _resolve_subject_name(symbol: str, quote: RealtimeQuote | None) -> str:
+    name = str(getattr(quote, "name", "") or "").strip()
+    return name or symbol
+
+
+def _format_analysis_time() -> str:
+    return datetime.now(_TAIPEI_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _prepare_daily_data_for_dashboard(symbol: str, storage: ParquetStorage) -> tuple[pd.DataFrame, str | None]:
