@@ -17,6 +17,7 @@
 | **V1.10** | 2026/05/10 | Phase 7-D 驗收完成：7-D-1 核心引擎與 7-D-2 Walk-Forward tab、中文說明、回測次數預估、summary/window/stability table、CSV 匯出、Phase 7 回歸皆通過。 |
 | **V1.11** | 2026/05/10 | 新增 Phase 6-B：設定頁與側邊欄 UI 小修。包含隱藏 Streamlit 自動頁面入口、預設外觀改為 `midnight_blue`、一般設定與策略設定儲存/恢復流程分離、策略類型選項補齊 8 種並顯示中文說明、每種策略提供一組預設 preset、已儲存 preset 可單獨清除。 |
 | **V2.0** | 2026/05/10 | 新增 Phase 8（個股綜合分析儀表板）：8-A 技術面自動判讀引擎、8-B K 線型態辨識、8-C 籌碼分析管線、8-D 即時行情接入、8-E AI 綜合分析與操作劇本、8-F 儀表板 UI。新增 TWSE MIS 即時報價、FinMind 法人/融資融券管線、`src/analysis/` 模組群。 |
+| **V2.1** | 2026/05/11 | 確認 Phase 9（美股 US-1 支援）規格：第一版只做美股日 K、調整後價格、回測與技術分析；不做即時行情、籌碼、分 K、匯率換算、財報與期權。新增多市場基礎、`market=us` 資料管線、USD 回測與既有 UI 市場切換規格。 |
 
 ---
 
@@ -34,7 +35,7 @@
 | **時序資料庫** | TimescaleDB + Redis | **DuckDB + Parquet** | 零伺服器設定，單一 .db 檔，個人規模綽綽有餘 |
 | **監控儀表板** | Prometheus + Grafana | **Streamlit 本機 UI** | 單機工具不需要監控基礎設施 |
 | **容器化部署** | Docker + Kubernetes | **Python venv（uv）** | 個人單程式，無需容器編排 |
-| **目標市場** | 台股、美股、加密貨幣 | **台股（.TW）為主** | 先深耕一個市場，驗證架構後再擴展 |
+| **目標市場** | 台股、美股、加密貨幣 | **台股（.TW）為主；Phase 9 規劃美股 US-1（日 K 研究）** | 先深耕台股；美股第一版僅擴充研究、回測與技術分析，不接實盤 |
 | **下單功能** | OMS/EMS 實盤 | **不接實盤（純研究）** | 個人版目標：研究、回測、AI 問答 |
 | **演算法拆單** | TWAP / VWAP / Iceberg | **不需要** | 不接實盤 |
 | **分級權限** | L1 / L2 / L3 | **不需要** | 個人單用戶 |
@@ -2363,6 +2364,236 @@ realtime:
 
 ---
 
+### Phase 9：美股 US-1 支援
+
+#### Phase 9 定位
+
+Phase 9 的目標是把系統從「台股專用」擴充為「台股為主、可研究美股日線」的多市場架構。第一版稱為 **US-1**，只支援美股日 K、調整後價格、回測與技術分析，不處理任何需要即時授權、交易所延遲規範或複雜跨幣別結算的功能。
+
+**US-1 正式支援：**
+
+- 美股股票與 ETF：例如 `AAPL`、`MSFT`、`NVDA`、`SPY`、`QQQ`、`VOO`。
+- 美股 class shares ticker：例如 UI 可接受 `BRK.B`，內部正規化為 `BRK-B`。
+- 美股日 K raw data 與 adjusted daily data。
+- 回測頁選擇美股後，可使用既有策略跑日線回測。
+- 個股分析頁選擇美股後，可使用技術面總覽、K 線圖、型態辨識、多週期趨勢與 AI 劇本。
+- 資料管理頁選擇美股後，可手動更新 / 重建日 K。
+
+**US-1 明確不做：**
+
+- 不做美股即時行情、盤前盤後即時、買一 / 賣一、五檔報價或 WebSocket。
+- 不做美股分 K、tick、option、期貨或 crypto。
+- 不做籌碼、法人、融資融券、券商分點或 short interest。
+- 不做美股財報、基本面、產業分類或 ETF 成分股。
+- 不做 USD/TWD 匯率換算，所有美股回測與報表均以 USD 呈現。
+- 不做實盤下單與券商串接。
+- 不支援非美股 suffix，例如 `.L`、`.TO`、`.HK`。
+
+#### Phase 9-A：多市場基礎架構
+
+**目標：** 系統正式引入 `market` 概念，讓 `tw` 與 `us` 可以共用資料、回測與 UI 管線；台股既有流程必須維持預設且不退化。
+
+**市場設定：**
+
+| market | 顯示名稱 | timezone | currency | lot size | volume 顯示 | 主要資料源 |
+|:---|:---|:---|:---|---:|:---|:---|
+| `tw` | 台股 | `Asia/Taipei` | `TWD` | 1000 股 | 張 / 股依畫面語意 | FinMind + yfinance fallback |
+| `us` | 美股 | `America/New_York` | `USD` | 1 股 | shares | yfinance |
+
+**資料路徑：**
+
+```text
+data/raw/{market}/{symbol}/daily.parquet
+data/raw/{market}/{symbol}/minute.parquet          # US-1 不使用
+data/processed/{market}/{symbol}/adj_daily.parquet
+```
+
+**DuckDB metadata：**
+
+`data_meta` 必須把 `market` 納入資料列與主鍵：
+
+```sql
+PRIMARY KEY (market, symbol, freq)
+```
+
+既有台股 metadata 若缺少 `market`，遷移時視為 `tw`。
+
+**設計要求：**
+
+- `market` 預設值仍為 `tw`，避免破壞既有呼叫。
+- Storage、DataMaintenance、回測資料載入、資料管理頁與個股分析資料載入均需傳遞 `market`。
+- timezone 不得再假設全系統只有 `Asia/Taipei`；所有 datetime 仍必須 timezone-aware。
+- `symbol` 驗證必須與 `market` 綁定，並保留路徑穿越防護。
+- 單一執行流程必須只存在一個明確 `market` context。回測頁單次 run、個股分析單次 payload、資料管理單次更新皆不得混合 `tw` 與 `us` DataFrame。
+- US-1 不做跨市場 portfolio、跨市場 concat、跨市場 benchmark 或台美資料對齊。若未來需要跨市場比較，必須另開 phase，先定義統一 timezone / currency / calendar 對齊規則。
+
+#### Phase 9-B：美股日 K 資料管線
+
+**目標：** 美股日線可以透過 yfinance 抓取、清洗、存 raw、產生 adjusted daily，並支援增量更新與重建。
+
+**資料源規格：**
+
+- Provider：`yfinance`
+- 支援顆粒度：daily only
+- 不支援 minute；若 caller 對 `market="us"` 請求 minute，應回傳友善的 `NotImplementedError` / `FetcherError`，不得默默抓取不完整資料。
+- yfinance 屬第三方非官方資料源，定位為個人研究用途，不保證商用品質或即時準確性。
+- 美股批次更新需節流。DataMaintenance 或資料管理頁若一次更新多個 `market="us"` symbol，每個 yfinance request 間隔至少 1 秒，避免觸發 429 Too Many Requests 或短暫封鎖。
+
+**Ticker 正規化：**
+
+| 使用者輸入 | 內部 symbol |
+|:---|:---|
+| `aapl` | `AAPL` |
+| `SPY` | `SPY` |
+| `brk.b` | `BRK-B` |
+| `BRK-B` | `BRK-B` |
+
+第一版只允許美股常見 ticker 格式：英文字母、數字、單一 `-` 或單一 `.` class share 表示法。不得允許 `/`、`\`、`..`、絕對路徑或交易所 suffix。
+
+**標準欄位：**
+
+`STANDARD_COLUMNS` 不變：
+
+| 欄位 | 型別 | 說明 |
+|:---|:---|:---|
+| `date` | timezone-aware datetime | 美股為 `America/New_York` 交易日 |
+| `open` | float64 | 開盤價 |
+| `high` | float64 | 最高價 |
+| `low` | float64 | 最低價 |
+| `close` | float64 | 收盤價 |
+| `volume` | int64 | 成交股數 shares |
+| `symbol` | str | 正規化 ticker |
+
+**調整後價格：**
+
+台股回測維持現有行為（使用 raw daily）。美股回測與技術分析預設使用 `processed/us/{symbol}/adj_daily.parquet`。調整方式：
+
+```text
+price_adjustment_ratio = Adj Close / Close
+adjusted_open  = Open  * price_adjustment_ratio
+adjusted_high  = High  * price_adjustment_ratio
+adjusted_low   = Low   * price_adjustment_ratio
+adjusted_close = Adj Close
+```
+
+**成交量調整：**
+
+美股 adjusted daily 的 `volume` 必須使用 split-adjusted shares，避免拆股前成交量在 OBV、量能放大 / 縮小判讀中被低估。
+
+成交量不可直接用 `Adj Close / Close` 反向調整，因為 `Adj Close` 可能包含股利調整，不一定只反映股票分割。正確規則是使用 split-only factor：
+
+```text
+adjusted_volume = raw_volume * cumulative_split_factor
+```
+
+或等價表示：
+
+```text
+adjusted_volume = raw_volume / split_only_price_ratio
+```
+
+其中 `cumulative_split_factor` / `split_only_price_ratio` 必須只來自 split events，不得混入 dividend adjustment。
+
+若 yfinance 回傳資料缺少 `Adj Close` 或 `Close` 無法計算價格比例，則保存 raw OHLCV 作為 fallback，但 UI / log / 回傳狀態需標示「本次使用未調整價格」。若無法取得 split events 或無法確認 split factor，則不得宣稱 volume 已完成 split-adjust；所有 volume-dependent 指標與說明（OBV、量能放大 / 縮小、量價結構）必須顯示資料限制提示，或改用 raw volume 路徑並標示限制。
+
+#### Phase 9-C：美股回測支援
+
+**目標：** 回測頁可選擇美股市場，輸入美股 ticker，使用 adjusted daily 執行既有策略回測。
+
+**UI 規格：**
+
+- 既有回測頁新增 `市場` selector：`台股` / `美股`。
+- 預設市場維持 `台股`。
+- 選擇美股時，輸入提示改為 `AAPL / MSFT / SPY / BRK.B`。
+- 美股資料不存在或過舊時，自動更新 `market="us"` 日 K。
+- 報表幣別顯示 `USD`，不得顯示 `TWD` 或 `張`。
+- 美股 DCA 介面需顯示提示：「US-1 DCA 最小買入單位為 1 整股，不支援碎股。若每月投入金額低於股價，該期可能不會買進。」
+
+**成本模型：**
+
+| 項目 | 台股 | 美股 US-1 |
+|:---|:---|:---|
+| 幣別 | TWD | USD |
+| 最小交易單位 | 1000 股為一張；DCA 可 1 股 | 1 股 |
+| tick size | 台股級距 | `0.01` |
+| 證交稅 | 賣出課稅 | 0 |
+| ETF 稅率 | 台股 ETF 特例 | 不另分 |
+| 預設手續費 | config `commission_rate` + discount | 0（硬編碼） |
+
+既有 `CostCalculator` 改名 `TWCostCalculator`，新增 `USCostCalculator` 與 `create_cost_calculator(market)` factory。US-1 美股成本參數（commission=0、tax=0、tick_size=0.01）硬編碼於 `USCostCalculator`，不開放 config.yaml 調整。若 US-2 需要支援券商分層費率或 SEC fee / TAF / ADR fee，再於 config.yaml 新增 `backtest.us` 區段。
+
+**策略支援：**
+
+既有日線策略可共用：MA、RSI、KD、MACD、BBANDS、BIAS、Donchian、DCA。若策略內存在台股交易單位或台股成本假設，需改為從市場設定讀取。
+
+#### Phase 9-D：美股技術分析儀表板
+
+**目標：** 既有個股分析頁可選美股，顯示純技術分析與 AI 劇本；台股專屬即時 / 籌碼功能在美股模式停用。
+
+**美股模式啟用：**
+
+- 技術面總覽
+- 日 K 圖與 K 棒數量切換
+- MA / KD / MACD / 量價結構
+- K 線型態與 W 底 / M 頭
+- 日 / 週 / 月多週期趨勢
+- AI 綜合分析與操作劇本（若 AI enabled）
+
+**美股模式停用：**
+
+- TWSE MIS 即時行情
+- 買一 / 賣一
+- 盤中量
+- 三大法人
+- 融資融券
+- 籌碼 tab 內容
+
+美股成交量以 shares 顯示，不得轉換為台股「張」。美股畫面需標註日期以紐約交易日為準。
+
+AI 劇本語言固定為繁體中文。即使市場為美股、ticker 為英文、幣別為 USD，`AIAdvisor` prompt 仍必須明確要求模型完全使用繁體中文輸出，建議在 prompt 結尾加入：
+
+```text
+You must reply entirely in Traditional Chinese (zh-TW).
+```
+
+#### Phase 9-E：資料管理頁美股支援
+
+**目標：** 資料管理頁可選美股並手動更新 / 重建日 K。
+
+**UI 規格：**
+
+- 新增 `市場` selector。
+- 台股模式維持現有日 K / 分 K / 籌碼相關能力。
+- 美股模式只顯示日 K 更新 / 重建與資料狀態。
+- 美股分 K 顯示停用提示：「US-1 尚未支援美股分 K」。
+- 顯示資料來源、資料起訖日、筆數、最後更新時間、是否使用調整後價格。
+
+#### Phase 9-F：整合回歸與文件收束
+
+**目標：** Phase 9 完成後更新文件與測試指南，確認台股既有功能未退化，美股 US-1 功能可手動驗收。
+
+**需更新文件：**
+
+- `量化交易系統規格書_shellpig版.md`
+- `開發設計方針.md`
+- `測試指南.md`
+- `PROJECT_BRIEF.md`（Phase 9 實作或驗收完成後再更新，不在規格討論稿先動）
+
+**Phase 9 已知限制：**
+
+| 限制 | 影響 | 降級方案 |
+|:---|:---|:---|
+| yfinance 非官方資料源 | 資料可能延遲、缺漏或欄位變動 | 明確標示研究用途；必要時 US-2 改接付費資料源 |
+| yfinance request rate limit | 批次更新多檔美股可能觸發 429 或短暫封鎖 | 美股批次更新每檔間隔至少 1 秒；429 顯示外部資料源限制 |
+| split factor 缺失 | adjusted volume 無法保證與 split-adjusted price 對齊，OBV / 量能判讀可能失真 | 不宣稱 volume 已 split-adjust；量能相關指標顯示資料限制提示 |
+| 不支援美股即時 | 個股分析無盤中價格 | 使用最新日 K 收盤資料 |
+| 不支援美股分 K | 無法做 intraday 策略 | US-1 僅聲明日線回測 |
+| 不支援籌碼 / short interest | 美股分析缺少資金面 | 美股 dashboard 僅顯示技術面與 AI 劇本 |
+| 不做匯率換算 | 無台幣資產總覽 | 報表全部以 USD 呈現 |
+| 不做財報 / 基本面 | 無 EPS 或營收輔助 | 後續另開基本面資料 phase |
+
+---
+
 ### 子階段總覽
 
 | Phase | 子階段 | 工期 | 有 AI 輔助 |
@@ -2375,7 +2606,8 @@ realtime:
 | **6** UI/UX 強化 | 6-A → 6-B（2 段） | 1.5-3 天 | ✅ |
 | **7** 策略擴充 | 7-A → 7-D（4 段） | 9.5-14 天 | |
 | **8** 個股綜合分析儀表板 | 8-A → 8-G（7 段） | 11.5-18 天 | ✅ |
-| **合計** | 32 個子階段 | **54.5-69 天（約 12-16 週）** | |
+| **9** 美股 US-1 支援 | 9-A → 9-F（6 段） | 8-13 天 | ✅ |
+| **合計** | 38 個子階段 | **62.5-82 天（約 14-18 週）** | |
 
 ---
 
@@ -2385,13 +2617,15 @@ realtime:
 | :--- | :--- | :--- |
 | **FinMind API（免費層）** | 免費 | 每日 3,000 次請求；初期夠用 |
 | **LLM API（AI 問答）** | 約 $1-5 USD/月 | 依 provider、模型與問答頻率而定 |
-| **yfinance** | 免費 | 非官方 API，使用量大時有被封風險 |
+| **yfinance** | 免費 | 非官方 API；台股 fallback 與 Phase 9 美股 US-1 日 K 資料源，使用量大時有被封或欄位變動風險 |
+| **美股付費資料源（US-2 以後可選）** | 暫不納入 | US-1 不採購；若 yfinance 品質不足，再評估 Polygon、Alpha Vantage 或其他供應商 |
 | **Streamlit（本機）** | 免費 | 本機 localhost 運行 |
 | **合計（初期）** | 約 $1-5 USD/月 | ≈ NT$30-150/月 |
 
 **費用升級觸發條件：**
 - 若 FinMind 免費層不足 → 升級付費方案（NT$300/月），可取得完整歷史分K
 - 若 LLM API 費用過高 → 增加 prompt caching 優化、切換較便宜模型、或限制每日問答次數
+- 若美股資料品質或穩定性不足 → 另開 US-2，評估付費美股資料源（Polygon、Alpha Vantage 等）；US-1 既有功能不受影響，US-2 只擴充資料源與成本精度，不修改 US-1 已有流程；不得在 US-1 偷偷擴大資料商依賴
 
 ---
 
@@ -2418,18 +2652,27 @@ realtime:
 
 ## 附錄 B：2026-04-26 架構決策補充
 
-### B.1 未來擴充美股的邊界
+### B.1 美股擴充邊界
 
-目前版本仍以台股為唯一正式支援市場，不在本階段實作美股資料源、美股手續費模型、美股交易日曆或美股 UI 流程。
+2026-04-26 的原始決策是「只保留 `market` 擴充接口，不宣稱已支援美股」。2026-05-11 規格討論後，決定將 Phase 9 規劃為 **美股 US-1 支援**，但範圍仍需嚴格限制：只做美股日 K、調整後價格、回測與技術分析。
 
-但為避免未來擴充時大幅重構，後續修改資料層與回測層時，應避免新增更多台股硬編碼。設計上先保留 `market` 概念，預設值為 `tw`，未來可擴充為 `us`。
+Phase 9 之前的正式支援市場仍是台股。Phase 9 完成後，正式支援市場為：
+
+- `tw`：台股完整既有功能。
+- `us`：美股 US-1（日 K + adjusted daily + 回測 + 技術分析）。
+
+US-1 不等於完整美股平台，不支援即時、分 K、籌碼、財報、期權、匯率換算或實盤。
+
+為避免後續擴充時大幅重構，資料層與回測層必須停止新增台股硬編碼。設計上以 `market` 作為第一層分流，預設值仍為 `tw`。
 
 建議逐步調整方向：
 
 - 資料路徑由 `data/raw/tw/{symbol}` 漸進抽象為 `data/raw/{market}/{symbol}`。
 - `symbol` 驗證需與 `market` 綁定，台股先採白名單格式，並禁止路徑穿越。
-- 市場設定集中管理：timezone、currency、lot size、tick rule、tax rule、symbol suffix。
-- 本階段只保留擴充接口，不宣稱已支援美股。
+- 市場設定集中管理：timezone、currency、lot size、volume unit、tick rule、tax rule、price tick（詳見 Phase 9-A `MarketSpec`）。
+- metadata 主鍵必須納入 `market`，避免 `2330` / `AAPL` 或未來同名 ticker 混用資料狀態。
+- UI 不新增獨立美股頁，既有回測頁、個股分析頁與資料管理頁加市場切換。
+- US-1 完成前，不得在 UI 暗示美股完整支援。
 
 ### B.2 AI 技術分析改為可選 LLM Provider
 

@@ -10,11 +10,13 @@
 
 台股量化交易研究工具（個人版），運行於 Windows 11 本機。聚焦研究與回測，不接實盤。三大核心功能：自動化台股資料管道、回測引擎（向量化 + 事件驅動）、AI 技術分析問答。
 
+2026-05-11 Phase 9 規格已確認：美股 US-1 支援（美股日 K、調整後價格、回測與技術分析），尚未實作。
+
 ## 技術棧
 
 - Python 3.12+、套件管理 `uv`（`pyproject.toml`）
 - 資料處理 pandas、技術指標 pandas-ta
-- 台股資料 FinMind API + yfinance 備援
+- 台股資料 FinMind API + yfinance 備援；Phase 9 規劃美股日 K 使用 yfinance
 - 儲存 DuckDB + Parquet（零伺服器）
 - UI Streamlit、圖表 Plotly
 - AI LLM（OpenAI / Anthropic / Gemini，provider-neutral）
@@ -61,6 +63,8 @@ data/                （gitignore，執行時自動建立）
   raw/tw/{symbol}/       daily.parquet, minute.parquet,
                          institutional.parquet, margin.parquet
   processed/tw/{symbol}/ adj_daily.parquet
+  raw/us/{symbol}/       daily.parquet（Phase 9 規劃，尚未實作）
+  processed/us/{symbol}/ adj_daily.parquet（Phase 9 規劃，尚未實作）
   backtest/              回測結果快照
   quant.duckdb           元資料
 ```
@@ -69,7 +73,7 @@ data/                （gitignore，執行時自動建立）
 
 1. **零設定啟動**：不依賴任何外部伺服器（無 PostgreSQL、無 Redis、無 Docker）。
 2. **免費資料優先**：FinMind 免費層為主、yfinance 備援。一次性下載歷史 → Parquet 落地、日常增量更新。
-3. **時區鐵律**：所有 datetime 必須 timezone-aware（`Asia/Taipei`），禁止 naive datetime。
+3. **時區鐵律**：所有 datetime 必須 timezone-aware；目前台股使用 `Asia/Taipei`，Phase 9 規劃美股使用 `America/New_York`，禁止 naive datetime。
 4. **雙引擎並行**：`generate_signals`（向量化）與 `on_bar`（事件驅動）是並行設計，非可互換（已知設計決策，見已知問題）。
 5. **策略即文件**：每個策略為獨立 Python 類別，透過 `config.yaml` 的 `strategies[]` preset 管理參數。
 6. **AI 可選**：`config.yaml` 設定 `ai.enabled=false` 時，AI 功能關閉，不需要任何 API Key。
@@ -178,16 +182,24 @@ risk:
 | 8-E | ✅ 完成 | AI 綜合分析與操作劇本：DashboardAnalysis/TradingScenario dataclass、structured JSON 輸出、三情境劇本、AI disabled/error 降級例外 |
 | 8-F | ✅ 完成 | 個股分析儀表板 UI：4 tab 總覽、籌碼與量價、型態與週期、AI 劇本；缺資料、重新整理報價、英文字母股票代碼、多週期資料欄位 regression 已補 |
 | 8-G | ✅ 完成 | 新手友善說明文字：技術分析總覽 tooltip、K 棒型態詳細說明、量價結構 caption、籌碼術語解釋、壓力支撐概念、短線分數組成，已完成人工驗收 |
+| 9-A | 📋 規格已確認，尚未實作 | 多市場基礎架構：`MarketSpec`、`market` context、storage/meta/maintenance market-aware、禁止混合台美 DataFrame |
+| 9-B | 📋 規格已確認，尚未實作 | 美股日 K 資料管線：yfinance daily、`BRK.B`→`BRK-B`、`America/New_York`、adjusted OHLC、split-adjusted volume、批次節流 |
+| 9-C | 📋 規格已確認，尚未實作 | 美股回測支援：回測頁市場切換、USD、1 股單位、`USCostCalculator`、DCA 不支援碎股 warning |
+| 9-D | 📋 規格已確認，尚未實作 | 美股技術分析儀表板：技術面/K線/型態/AI 劇本；停用即時、籌碼；AI 強制繁中輸出 |
+| 9-E | 📋 規格已確認，尚未實作 | 資料管理頁美股支援：市場切換，美股只做日 K 更新/重建，停用分 K 與籌碼 |
+| 9-F | 📋 規格已確認，尚未實作 | Phase 9 整合回歸與文件收束：Phase 9 測試、手動驗收、Phase 完成後更新 brief/已知問題 |
 
 ## 當前待辦
 
 見 `驗證後已知問題.md`（每次必讀）。
 
-主線：Phase 8-A~G 已完成。8-G 已完成新手友善說明文字實作、測試與人工驗收。
+主線：Phase 8-A~G 已完成。8-G 已完成新手友善說明文字實作、測試與人工驗收。Phase 9 規格已確認，尚未實作。
 
 2026-05-11 狀態：
-- 最新基準 commit：`ecbd2d9 Fix dashboard chart UX and pattern detection issues`
-- 目前工作樹含未提交的 Phase 8 follow-up 修正與文件更新。
+- 最新基準 commit：`ed4af93 Add stock name search and indicator values`
+- 目前工作樹含未提交的 Phase 9 規格文件更新（`量化交易系統規格書_shellpig版.md`、`開發設計方針.md`、`測試指南.md`、`PROJECT_BRIEF.md`）。
+- Phase 9 規格已確認並寫入正式文件：US-1 範圍為美股日 K + 調整後價格 + 回測 + 技術分析；不做即時、籌碼、分 K、財報、期權、匯率換算。
+- Phase 9 規格已納入審查重點：split-adjusted volume、禁止混合台美 DataFrame、yfinance 批次 request 至少 1 秒節流、美股 DCA 不支援碎股 warning、AI prompt 強制繁體中文。
 - Phase 8 + 回測頁相關回歸：`tests/test_technical_summary.py tests/test_pattern.py tests/test_chip_analysis.py tests/test_realtime.py tests/test_advisor.py tests/test_dashboard_page.py tests/test_backtest_page.py -m "not integration"` 為 98 passed, 1 deselected。
 - Realtime / dashboard 針對性回歸：`tests/test_realtime.py tests/test_dashboard_page.py -m "not integration"` 為 37 passed。
 - `py_compile src\data\realtime.py src\ui\pages\dashboard.py` 通過；Phase 8 全範圍 py_compile 曾因 Windows/OneDrive `__pycache__` 權限擋住，elevated 重跑通過。
@@ -224,54 +236,53 @@ risk:
 
 ## 規格文件索引
 
-### 量化交易系統規格書_shellpig版.md（~2466 行）
+### 量化交易系統規格書_shellpig版.md（~2709 行）
 
 | 區段 | 行範圍 | 何時讀 |
 |:---|:---|:---|
-| 修訂歷史 | 3-19 | 查版本變更 |
-| 專案願景與目標 | 45-60 | 理解定位 |
-| 技術語言與套件選型 | 62-89 | 技術決策參考 |
-| 系統架構（四層架構圖） | 91-175 | 理解整體結構 |
-| 資料來源規劃 | 177-221 | 修改 fetcher 時 |
-| 資料品質與清洗（L1/L2/L3、時區） | 223-293 | 修改 cleaner 時 |
-| 回測引擎規格 | 295-484 | 修改 backtest 時 |
-| AI 技術分析模組 | 486-633 | 修改 ai/advisor 時 |
-| 風控規格 | 635-648 | 風控相關 |
-| 本機部署規格 | 650-746 | 環境設定 |
-| 測試策略 | 748-769 | 測試方針 |
-| Phase 1-4 開發計畫 | 771-950 | 查歷史 phase 規格 |
-| Phase 5 回測體驗 | 952-1069 | 修改 DCA / 股價走勢 |
-| Phase 6 UI/UX | 1071-1220 | 修改主題切換、設定頁與側邊欄 UI 小修 |
-| Phase 7-A 策略擴充 | 1222-1410 | 實作新策略時必讀 |
-| Phase 7-B 策略研究工作台 | 1412-1536 | 實作批次比較/K 線圖/overlay 時必讀 |
-| Phase 7-C 參數掃描 | 1538-1661 | 實作參數掃描時必讀 |
-| Phase 7-D Walk-Forward Analysis | 1663-1931 | 實作 WFA / OOS 驗證時必讀 |
-| Phase 8 個股綜合分析儀表板（8-A~8-F） | 1933-2259 | 實作 analysis/ / realtime / dashboard 時必讀 |
-| **Phase 8-G 新手友善說明文字** | **2261-2351** | **實作儀表板說明文字時必讀** |
-| Phase 8 已知限制 | 2353-2364 | Phase 8 限制查閱 |
-| 子階段總覽 + 費用估算 | 2366-2396 | 總覽 |
-| 附錄 A：免責聲明全文 | 2398-2417 | 免責聲明文案 |
-| 附錄 B：架構決策補充 | 2419-2466 | 市場抽象與 AI provider 抽象 |
+| 修訂歷史 | 3-22 | 查版本變更，Phase 9 為 `V2.1` |
+| 專案願景與目標 | 46-61 | 理解定位 |
+| 技術語言與套件選型 | 63-90 | 技術決策參考 |
+| 系統架構（四層架構圖） | 92-176 | 理解整體結構 |
+| 資料來源規劃 | 178-222 | 修改 fetcher 時 |
+| 資料品質與清洗（L1/L2/L3、時區） | 224-294 | 修改 cleaner / timezone 時 |
+| 回測引擎規格 | 296-485 | 修改 backtest 時 |
+| AI 技術分析模組 | 487-634 | 修改 ai/advisor 時 |
+| 風控規格 | 636-649 | 風控相關 |
+| 本機部署規格 | 651-747 | 環境設定 |
+| 測試策略 | 749-770 | 測試方針 |
+| Phase 1-4 開發計畫 | 772-951 | 查歷史 phase 規格 |
+| Phase 5 回測體驗 | 953-1070 | 修改 DCA / 股價走勢 |
+| Phase 6 UI/UX | 1072-1221 | 修改主題切換、設定頁與側邊欄 UI 小修 |
+| Phase 7 策略擴充（7-A~7-D） | 1223-1932 | 策略、研究工作台、參數掃描、WFA |
+| Phase 8 個股綜合分析儀表板（8-A~8-G） | 1934-2365 | 實作 analysis/ / realtime / dashboard / 說明文字時必讀 |
+| **Phase 9 美股 US-1 支援** | **2367-2595** | **美股日 K、調整後價格、回測、技術分析、多市場架構時必讀** |
+| 子階段總覽 | 2597-2612 | Phase 總覽 |
+| 費用估算 | 2614-2630 | API / yfinance / US-2 資料源成本 |
+| 附錄 A：免責聲明全文 | 2632-2651 | 免責聲明文案 |
+| 附錄 B：架構決策補充 | 2653-2709 | 美股邊界與 AI provider 抽象 |
 
-### 開發設計方針.md（~5658 行）
+### 開發設計方針.md（~6132 行）
 
 | 區段 | 行範圍 | 何時讀 |
 |:---|:---|:---|
-| 全域規範（型別、時區、測試、目錄） | 9-166 | 新 session 第一次實作前 |
-| Phase 1 資料基礎建設 | 168-720 | 修改 data/ 時 |
-| Phase 2 向量化回測 | 722-1194 | 修改 engine_vec / cost / metrics |
-| Phase 3 事件驅動引擎 | 1196-1618 | 修改 engine_event / account / events |
-| Phase 4 AI + Streamlit UI | 1620-2205 | 修改 ai/ / indicators/ / ui/ |
-| Phase 6-A 主題切換 | 2207-2321 | 修改 themes.py / settings.py |
-| Phase 6-B 設定頁與側邊欄 UI 小修 | 2323-2479 | 修改 app.py / themes.py / config.py / strategy_config.py / settings.py 時必讀 |
-| Phase 7-A 策略擴充 | 2481-2941 | 實作新策略時必讀 |
-| Phase 7-B 策略研究工作台 | 2943-3323 | 實作批次比較/K 線圖/overlay 時必讀 |
-| Phase 7-C 參數掃描 | 3325-3715 | 實作參數掃描時必讀 |
-| Phase 7-D Walk-Forward Analysis | 3717-4146 | 實作 WFA runner / UI tab 時必讀 |
-| Phase 8 個股綜合分析儀表板（8-A~8-F） | 4148-5233 | 實作 analysis/ / realtime / dashboard 時必讀 |
-| **Phase 8-G 新手友善說明文字** | **5237-5658** | **實作儀表板說明文字時必讀** |
+| 全域規範（型別、時區、測試、目錄） | 9-168 | 新 session 第一次實作前；Phase 9 起 timezone 改 market-aware |
+| Phase 1 資料基礎建設 | 170-722 | 修改 data/ 時 |
+| Phase 2 向量化回測 | 724-1196 | 修改 engine_vec / cost / metrics |
+| Phase 3 事件驅動引擎 | 1198-1620 | 修改 engine_event / account / events |
+| Phase 4 AI + Streamlit UI | 1622-2089 | 修改 ai/ / indicators/ / ui/ |
+| 架構補充：市場與 AI Provider 抽象 | 2131-2228 | 市場抽象、Phase 9 US-1 邊界、AI provider 抽象 |
+| Phase 6-A 主題切換 | 2232-2344 | 修改 themes.py / settings.py |
+| Phase 6-B 設定頁與側邊欄 UI 小修 | 2346-2502 | 修改 app.py / themes.py / config.py / strategy_config.py / settings.py 時必讀 |
+| Phase 7-A 策略擴充 | 2506-2964 | 實作新策略時必讀 |
+| Phase 7-B 策略研究工作台 | 2966-3346 | 實作批次比較/K 線圖/overlay 時必讀 |
+| Phase 7-C 參數掃描 | 3348-3738 | 實作參數掃描時必讀 |
+| Phase 7-D Walk-Forward Analysis | 3740-4169 | 實作 WFA runner / UI tab 時必讀 |
+| Phase 8-A~8-F 個股綜合分析儀表板 | 4171-5258 | 實作 analysis/ / realtime / dashboard 時必讀 |
+| Phase 8-G 新手友善說明文字 | 5260-5683 | 實作儀表板說明文字時必讀 |
+| **Phase 9 美股 US-1 支援** | **5685-6132** | **實作多市場基礎、美股資料管線、回測、dashboard、資料管理頁前必讀** |
 
-### 測試指南.md（~2270 行）
+### 測試指南.md（~2587 行）
 
 | 區段 | 行範圍 | 何時讀 |
 |:---|:---|:---|
@@ -289,7 +300,9 @@ risk:
 | Phase 8 測試（8-A~8-F） | 1878-2126 | 個股分析儀表板測試 |
 | **Phase 8-G 測試** | **2128-2174** | **儀表板說明文字測試** |
 | Phase 8 全階段回歸 | 2176-2194 | Phase 8 完成後 |
-| 全專案回歸 + 測試統計 | 2196-2270 | Phase 完成後 |
+| **Phase 9 測試（9-A~9-F）** | **2196-2504** | **美股 US-1 實作與驗收時必讀** |
+| 全專案最終回歸 | 2506-2544 | Phase 完成後 |
+| 測試數量統計總覽 | 2546-2587 | 測試統計與 Phase 9 估算 |
 
 ### 驗證後已知問題.md（~785 行）
 
