@@ -60,6 +60,15 @@ class _DummySt:
     def text_input(self, *args, **kwargs) -> str:  # noqa: ANN002, ANN003
         return self._symbol
 
+    def form(self, *args, **kwargs):  # noqa: ANN002, ANN003
+        return _DummyCtx()
+
+    def form_submit_button(self, *args, **kwargs) -> bool:  # noqa: ANN002, ANN003
+        key = str(kwargs.get("key", ""))
+        if key in self._button_map:
+            return bool(self._button_map[key])
+        return self._analyze_clicked
+
     def button(self, *args, **kwargs) -> bool:  # noqa: ANN002, ANN003
         key = str(kwargs.get("key", ""))
         if key in self._button_map:
@@ -292,7 +301,86 @@ def test_dashboard_tab_overview_after_hours_uses_latest_daily_close_and_volume(m
 
     metric_map = dict(dummy.metrics)
     assert metric_map.get("收盤價") == "122.00"
-    assert metric_map.get("日成交量(張)") == "9,876"
+    assert metric_map.get("日成交量(張)") == "9"
+
+
+def test_dashboard_tab_overview_after_hours_uses_quote_when_daily_is_stale(monkeypatch) -> None:
+    import src.ui.pages.dashboard as dashboard_module
+
+    dummy = _MetricCaptureSt()
+    monkeypatch.setattr(dashboard_module, "st", dummy)
+    quote = RealtimeQuote(
+        symbol="3163",
+        name="波若威",
+        price=1040.0,
+        change=30.0,
+        change_pct=2.9703,
+        open=1030.0,
+        high=1050.0,
+        low=1000.0,
+        yesterday_close=1010.0,
+        volume=697,
+        timestamp="13:30:00",
+        trade_date="2026-05-11",
+        is_market_open=False,
+    )
+    df = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2026-05-07", "2026-05-08"]),
+            "open": [1075.0, 1035.0],
+            "high": [1100.0, 1050.0],
+            "low": [1070.0, 1000.0],
+            "close": [1085.0, 1010.0],
+            "volume": [1259591, 1353449],
+            "symbol": ["3163", "3163"],
+        }
+    )
+    _render_tab_overview(quote=quote, technical=_make_technical_summary(), df=df)
+
+    metric_map = dict(dummy.metrics)
+    assert metric_map.get("收盤價") == "1040.00"
+    assert metric_map.get("日成交量(張)") == "697"
+    assert metric_map.get("漲跌") == "+30.00"
+
+
+def test_dashboard_tab_overview_after_hours_ignores_estimated_stale_quote(monkeypatch) -> None:
+    import src.ui.pages.dashboard as dashboard_module
+
+    dummy = _MetricCaptureSt()
+    monkeypatch.setattr(dashboard_module, "st", dummy)
+    quote = RealtimeQuote(
+        symbol="3163",
+        name="波若威",
+        price=1010.0,
+        change=0.0,
+        change_pct=0.0,
+        open=1030.0,
+        high=1050.0,
+        low=1000.0,
+        yesterday_close=1010.0,
+        volume=697,
+        timestamp="13:30:00",
+        trade_date="2026-05-11",
+        is_market_open=False,
+        is_estimated_price=True,
+        price_label="昨收價(無成交)",
+    )
+    df = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2026-05-08"]),
+            "open": [1035.0],
+            "high": [1050.0],
+            "low": [1000.0],
+            "close": [1010.0],
+            "volume": [1353449],
+            "symbol": ["3163"],
+        }
+    )
+    _render_tab_overview(quote=quote, technical=_make_technical_summary(), df=df)
+
+    metric_map = dict(dummy.metrics)
+    assert metric_map.get("收盤價") == "1010.00"
+    assert metric_map.get("日成交量(張)") == "1,353"
 
 
 def test_dashboard_tab_chip_no_data(monkeypatch) -> None:
@@ -317,6 +405,12 @@ def test_dashboard_option_menu_entry() -> None:
     app_path = Path("src/ui/app.py")
     source = app_path.read_text(encoding="utf-8")
     assert "個股分析" in source
+
+
+def test_dashboard_page_uses_form_submit_for_enter() -> None:
+    source = Path("src/ui/pages/dashboard.py").read_text(encoding="utf-8")
+    assert "st.form(" in source
+    assert "st.form_submit_button(" in source
 
 
 def test_dashboard_page_not_ready_payload_does_not_render_tabs(monkeypatch) -> None:

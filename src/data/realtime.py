@@ -29,6 +29,7 @@ class RealtimeQuote:
     yesterday_close: float
     volume: int
     timestamp: str
+    trade_date: str | None = None
     best_bid: list[float] = field(default_factory=list)
     best_ask: list[float] = field(default_factory=list)
     best_bid_vol: list[int] = field(default_factory=list)
@@ -219,6 +220,7 @@ class RealtimeFetcher:
         symbol = str(row.get("c", "")).strip()
         name = str(row.get("n", "")).strip()
         timestamp = str(row.get("t", "")).strip()
+        trade_date = self._parse_trade_date(row.get("d") or row.get("^"))
         now = datetime.fromtimestamp(float(self._clock()), ZoneInfo(TAIPEI_TZ))
         is_market_open = self._is_market_open(timestamp, now=now)
 
@@ -242,6 +244,8 @@ class RealtimeFetcher:
             price_label = "昨收價(無成交)"
         else:
             price = yesterday_close
+            is_estimated_price = True
+            price_label = "昨收價(無成交)"
         open_price = self._safe_float(row.get("o"), default=price)
         high = self._safe_float(row.get("h"), default=price)
         low = self._safe_float(row.get("l"), default=price)
@@ -262,6 +266,7 @@ class RealtimeFetcher:
             yesterday_close=float(yesterday_close),
             volume=int(volume),
             timestamp=timestamp,
+            trade_date=trade_date,
             best_bid=best_bid,
             best_ask=best_ask,
             best_bid_vol=best_bid_vol,
@@ -283,6 +288,19 @@ class RealtimeFetcher:
         if ask1 is not None:
             return float(ask1)
         return None
+
+    @staticmethod
+    def _parse_trade_date(value: Any) -> str | None:
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text or text in {"-", "--"}:
+            return None
+        try:
+            parsed = datetime.strptime(text, "%Y%m%d")
+        except ValueError:
+            return None
+        return parsed.strftime("%Y-%m-%d")
 
     @staticmethod
     def _safe_float(value: Any, *, default: float | None) -> float | None:

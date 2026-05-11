@@ -43,12 +43,14 @@ def _twse_payload(
     f: str = "120_140_160",
     c: str = "2330",
     n: str = "台積電",
+    d: str = "20260511",
 ) -> dict:
     return {
         "msgArray": [
             {
                 "c": c,
                 "n": n,
+                "d": d,
                 "z": z,
                 "y": y,
                 "o": o,
@@ -77,6 +79,7 @@ def test_parse_twse_response_normal() -> None:
     assert quote.low == 98.0
     assert quote.volume == 12345
     assert quote.timestamp == "10:15:01"
+    assert quote.trade_date == "2026-05-11"
 
 
 def test_parse_twse_response_no_trade() -> None:
@@ -135,6 +138,22 @@ def test_parse_twse_response_no_trade_does_not_set_midpoint_as_price() -> None:
     )
     assert quote.price == 726.5
     assert quote.estimated_price == 731.5
+
+
+def test_parse_twse_response_after_hours_no_trade_is_marked_estimated() -> None:
+    fetcher = RealtimeFetcher(clock=lambda: datetime(2026, 5, 11, 14, 30, 0, tzinfo=ZoneInfo("Asia/Taipei")).timestamp())
+    quote = fetcher._parse_twse_response(
+        _twse_payload(
+            z="-",
+            y="1010.0",
+            d="20260511",
+            t="13:30:00",
+        )
+    )
+    assert quote.price == 1010.0
+    assert quote.trade_date == "2026-05-11"
+    assert quote.is_estimated_price is True
+    assert quote.price_label == "昨收價(無成交)"
 
 
 def test_parse_five_levels() -> None:

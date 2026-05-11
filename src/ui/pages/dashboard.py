@@ -48,8 +48,9 @@ def render_dashboard_page() -> None:
     st.title("個股分析")
     st.caption("整合技術面、籌碼、型態與 AI 劇本的個股儀表板。")
 
-    symbol = st.text_input("股票代碼", value="", key="dashboard_symbol").strip().upper()
-    analyze_clicked = st.button("分析", type="primary", key="dashboard_analyze")
+    with st.form(key="dashboard_form", clear_on_submit=False):
+        symbol = st.text_input("股票代碼", value="", key="dashboard_symbol").strip().upper()
+        analyze_clicked = st.form_submit_button("分析", type="primary", key="dashboard_analyze")
 
     if not symbol:
         st.info("請先輸入股票代碼。")
@@ -347,6 +348,7 @@ def _render_tab_overview(
     st.subheader("行情總覽")
     latest_close = _safe_latest_daily_value(df, "close")
     latest_volume = _safe_latest_daily_int(df, "volume")
+    latest_date = _safe_latest_daily_date(df)
     if quote is not None and quote.is_market_open:
         bid1 = quote.best_bid[0] if quote.best_bid else None
         ask1 = quote.best_ask[0] if quote.best_ask else None
@@ -361,8 +363,13 @@ def _render_tab_overview(
         cols[4].metric("盤中量(張)", f"{max(0, int(quote.volume)):,}")
         cols[5].metric("狀態", "盤中資料")
     elif quote is not None:
-        close_for_display = latest_close if latest_close is not None else quote.price
-        daily_volume_for_display = latest_volume if latest_volume is not None else int(quote.volume)
+        use_quote_daily = _should_use_quote_daily_snapshot(quote, latest_date)
+        close_for_display = quote.price if use_quote_daily else (latest_close if latest_close is not None else quote.price)
+        daily_volume_for_display = (
+            int(quote.volume)
+            if use_quote_daily
+            else (_shares_to_lots(latest_volume) if latest_volume is not None else int(quote.volume))
+        )
         change = float(close_for_display - quote.yesterday_close)
         change_pct = float((change / quote.yesterday_close * 100.0) if quote.yesterday_close else 0.0)
         cols = st.columns(5)
@@ -437,6 +444,27 @@ def _safe_latest_daily_int(df: pd.DataFrame, column: str) -> int | None:
     if value is None:
         return None
     return int(value)
+
+
+def _shares_to_lots(shares: int) -> int:
+    return max(0, int(shares)) // 1000
+
+
+def _safe_latest_daily_date(df: pd.DataFrame) -> str | None:
+    if df.empty or "date" not in df.columns:
+        return None
+    dates = pd.to_datetime(df["date"], errors="coerce").dropna()
+    if dates.empty:
+        return None
+    return dates.max().strftime("%Y-%m-%d")
+
+
+def _should_use_quote_daily_snapshot(quote: RealtimeQuote, latest_daily_date: str | None) -> bool:
+    if quote.is_market_open or quote.is_estimated_price or not quote.trade_date:
+        return False
+    if latest_daily_date is None:
+        return True
+    return quote.trade_date > latest_daily_date
 
 
 def _refresh_realtime_snapshot(symbol: str) -> tuple[RealtimeQuote | None, BidAskStructure | None, str | None]:

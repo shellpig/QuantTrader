@@ -188,17 +188,17 @@ risk:
 - 最新基準 commit：`ecbd2d9 Fix dashboard chart UX and pattern detection issues`
 - 目前工作樹含未提交的 Phase 8 follow-up 修正與文件更新。
 - Phase 8 + 回測頁相關回歸：`tests/test_technical_summary.py tests/test_pattern.py tests/test_chip_analysis.py tests/test_realtime.py tests/test_advisor.py tests/test_dashboard_page.py tests/test_backtest_page.py -m "not integration"` 為 98 passed, 1 deselected。
-- Realtime / dashboard 針對性回歸：`tests/test_realtime.py tests/test_dashboard_page.py -m "not integration"` 為 33 passed。
+- Realtime / dashboard 針對性回歸：`tests/test_realtime.py tests/test_dashboard_page.py -m "not integration"` 為 37 passed。
 - `py_compile src\data\realtime.py src\ui\pages\dashboard.py` 通過；Phase 8 全範圍 py_compile 曾因 Windows/OneDrive `__pycache__` 權限擋住，elevated 重跑通過。
 - 8-A 驗證結果：`tests/test_technical_summary.py` 13 passed
 - 8-B 驗證結果：`tests/test_pattern.py` 15 passed
 - 8-C 驗證結果：`tests/test_chip_analysis.py` 14 passed
 - 8-D 驗證結果：`tests/test_realtime.py` 17 passed；新增非交易日 / 盤後即時報價時間判斷、`z="-"` 時不把買賣中間估算價塞進 `quote.price` 的 regression
 - 8-E 驗證結果：`tests/test_advisor.py` 15 passed, 1 deselected（integration test 未跑）
-- 8-F 驗證結果：`tests/test_dashboard_page.py` 16 passed；已覆蓋缺日線資料不 crash、重新整理報價更新 session payload 並 rerun、英文字母股票代碼、多週期 date 欄位 payload、盤中買一/賣一顯示、盤後收盤價/日成交量、近 5 日法人表格與籌碼抓取錯誤提示
+- 8-F 驗證結果：`tests/test_dashboard_page.py` 19 passed；已覆蓋缺日線資料不 crash、重新整理報價更新 session payload 並 rerun、英文字母股票代碼、多週期 date 欄位 payload、盤中買一/賣一顯示、盤後收盤價/日成交量、近 5 日法人表格與籌碼抓取錯誤提示、輸入框 Enter 透過 form submit 穩定觸發分析、日線股數轉張顯示
 - 回測頁 follow-up 驗證：`tests/test_backtest_page.py` 9 passed；已覆蓋回測載入前自動同步日線資料與 primary/fallback 資料源切換
 - 8-F 手動驗收修正：日 K 線圖高度、支撐/壓力標註、拖曳平移、range slider、型態顯示、K 線 X 軸改 categorical 消除週末空隙
-- Phase 8 後續修正：W 底 / M 頭同時偵測時改判為區間震盪；支撐/壓力改取近 20 日低點 / 近 60 日高點極值；資料管理頁支援 `00981A` 這類英文字母股票代碼；K 棒數量下拉；個股分析與回測自動補抓/更新日線；籌碼 tab 自動補抓並顯示近 5 交易日三大法人；盤中行情改顯示買一/賣一與盤中量，盤後顯示最新日線收盤價與日成交量；`RealtimeQuote.estimated_price` 獨立承載買賣中間估算價，`quote.price` 不再默默等於估算價
+- Phase 8 後續修正：W 底 / M 頭同時偵測時改判為區間震盪；支撐/壓力改取近 20 日低點 / 近 60 日高點極值；資料管理頁支援 `00981A` 這類英文字母股票代碼；K 棒數量下拉；個股分析與回測自動補抓/更新日線；籌碼 tab 自動補抓並顯示近 5 交易日三大法人；盤中行情改顯示買一/賣一與盤中量，盤後顯示最新日線收盤價與日成交量；`RealtimeQuote.estimated_price` 獨立承載買賣中間估算價，`quote.price` 不再默默等於估算價；個股分析輸入框改用 form submit 支援 Enter；盤後日線成交量由股數轉張顯示
 - 新增模組：`src/analysis/technical_summary.py`、`src/analysis/pattern.py`、`src/analysis/chip_analysis.py`、`src/data/realtime.py`、`src/ui/pages/dashboard.py`
 - 修改模組：`src/data/fetcher.py`、`src/data/storage.py`、`src/data/realtime.py`、`src/core/constants.py`、`config.yaml`、`src/ui/app.py`、`src/ui/pages/dashboard.py`、`src/ui/pages/backtest.py`、`src/ui/pages/data_management.py`、`src/analysis/technical_summary.py`、`src/analysis/pattern.py`、`src/analysis/chip_analysis.py`
 - 8-E 修改模組：`src/ai/advisor.py`、`src/core/exceptions.py`、`tests/test_advisor.py`
@@ -232,7 +232,7 @@ risk:
 | 系統架構（四層架構圖） | 91-175 | 理解整體結構 |
 | 資料來源規劃 | 177-221 | 修改 fetcher 時 |
 | 資料品質與清洗（L1/L2/L3、時區） | 223-293 | 修改 cleaner 時 |
-| 回測引擎規格 | 295-484 | 修改 backtest 時 |
+| 回測引擎規格 | 295-484 | 修改 backtest 時 |[run_quanttrader.bat](run_quanttrader.bat)
 | AI 技術分析模組 | 486-633 | 修改 ai/advisor 時 |
 | 風控規格 | 635-648 | 風控相關 |
 | 本機部署規格 | 650-746 | 環境設定 |
