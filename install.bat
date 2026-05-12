@@ -8,7 +8,6 @@ echo   QuantTrader Setup
 echo  ====================================
 echo.
 
-:: ── Step 1: Check uv ─────────────────────────────────────────
 echo [1/3] Checking uv package manager...
 
 set "UV_EXE=uv"
@@ -17,13 +16,11 @@ if %ERRORLEVEL% NEQ 0 (
     if exist "%USERPROFILE%\.local\bin\uv.exe" (
         set "UV_EXE=%USERPROFILE%\.local\bin\uv.exe"
         set "PATH=%USERPROFILE%\.local\bin;%PATH%"
-        echo      Found uv at %USERPROFILE%\.local\bin\uv.exe
         goto :uv_found
     )
     if exist "%APPDATA%\uv\bin\uv.exe" (
         set "UV_EXE=%APPDATA%\uv\bin\uv.exe"
         set "PATH=%APPDATA%\uv\bin;%PATH%"
-        echo      Found uv at %APPDATA%\uv\bin\uv.exe
         goto :uv_found
     )
 
@@ -33,7 +30,7 @@ if %ERRORLEVEL% NEQ 0 (
     if %ERRORLEVEL% NEQ 0 (
         echo.
         echo  [ERROR] Failed to install uv.
-        echo  Please visit https://docs.astral.sh/uv/ to install manually, then re-run this script.
+        echo  Please visit https://docs.astral.sh/uv/ and install manually, then re-run.
         echo.
         pause
         exit /b 1
@@ -41,61 +38,55 @@ if %ERRORLEVEL% NEQ 0 (
 
     set "PATH=%USERPROFILE%\.local\bin;%APPDATA%\uv\bin;%PATH%"
 
-    where uv >nul 2>&1
-    if %ERRORLEVEL% NEQ 0 (
-        if exist "%USERPROFILE%\.local\bin\uv.exe" (
-            set "UV_EXE=%USERPROFILE%\.local\bin\uv.exe"
-        ) else if exist "%APPDATA%\uv\bin\uv.exe" (
-            set "UV_EXE=%APPDATA%\uv\bin\uv.exe"
-        ) else (
-            echo.
-            echo  [ERROR] uv installed but executable not found.
-            echo  Please close this window and re-run install.bat.
-            echo.
-            pause
-            exit /b 1
-        )
+    if exist "%USERPROFILE%\.local\bin\uv.exe" (
+        set "UV_EXE=%USERPROFILE%\.local\bin\uv.exe"
+        goto :uv_found
     )
-    echo      uv installed successfully!
+    if exist "%APPDATA%\uv\bin\uv.exe" (
+        set "UV_EXE=%APPDATA%\uv\bin\uv.exe"
+        goto :uv_found
+    )
+
+    echo.
+    echo  [ERROR] uv installed but not found. Close and re-run install.bat.
+    echo.
+    pause
+    exit /b 1
 ) else (
     echo      uv already installed.
 )
 
 :uv_found
+echo      OK
 
-:: ── Step 2: Install Python packages ──────────────────────────
 echo.
-echo [2/3] Installing Python packages (may take 1-3 min on first run)...
+echo [2/3] Installing Python packages (may take a few minutes)...
 echo.
 "%UV_EXE%" sync
 if %ERRORLEVEL% NEQ 0 (
     echo.
-    echo  [ERROR] Package installation failed. Please screenshot the error above.
+    echo  [ERROR] Package installation failed.
     echo.
     pause
     exit /b 1
 )
 
-:: ── Step 3: Create .env ───────────────────────────────────────
 echo.
-echo [3/3] Setting up environment config...
+echo [3/3] Setting up .env config...
 if not exist ".env" (
     copy ".env.example" ".env" >nul
     echo      .env created.
     echo.
-    echo  +--------------------------------------------------+
-    echo  ^|  Please open .env and fill in your API keys:    ^|
-    echo  ^|    FINMIND_TOKEN   - Taiwan stock data (needed) ^|
-    echo  ^|    ANTHROPIC_API_KEY - AI features (optional)   ^|
-    echo  +--------------------------------------------------+
+    echo      Please open .env and fill in your API keys:
+    echo        FINMIND_TOKEN    - Taiwan stock data (required)
+    echo        ANTHROPIC_API_KEY - AI features (optional)
     echo.
-    set /p OPEN_ENV="  Open .env in Notepad now? (y/n) "
+    set /p OPEN_ENV="      Open .env in Notepad now? (y/n) "
     if /i "!OPEN_ENV!"=="y" notepad ".env"
 ) else (
     echo      .env already exists, skipping.
 )
 
-:: ── Done ──────────────────────────────────────────────────────
 echo.
 echo  ====================================
 echo   Setup complete!
