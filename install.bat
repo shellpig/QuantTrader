@@ -65,10 +65,19 @@ echo.
 "%UV_EXE%" sync
 if %ERRORLEVEL% NEQ 0 (
     echo.
-    echo  [ERROR] Package installation failed.
+    echo      Sync failed. Removing old .venv and retrying...
     echo.
-    pause
-    exit /b 1
+    if exist ".venv" (
+        powershell -NoProfile -Command "Remove-Item -Recurse -Force '.venv'"
+    )
+    "%UV_EXE%" sync
+    if %ERRORLEVEL% NEQ 0 (
+        echo.
+        echo  [ERROR] Package installation failed.
+        echo.
+        pause
+        exit /b 1
+    )
 )
 
 echo.
