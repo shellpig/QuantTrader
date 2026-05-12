@@ -62,6 +62,7 @@ echo      OK
 echo.
 echo [2/3] Installing Python packages (may take a few minutes)...
 echo.
+set "UV_LINK_MODE=copy"
 "%UV_EXE%" sync
 if %ERRORLEVEL% NEQ 0 (
     echo.
