@@ -2,7 +2,7 @@
 name = "quanttrader"
 version = "0.1.0"
 description = "Personal quantitative trading research toolkit for Taiwan stocks"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.14"
 dependencies = [
     "pandas>=2.2",
     "pandas-ta>=0.3.14b1",

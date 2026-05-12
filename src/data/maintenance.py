@@ -69,7 +69,7 @@ class DataMaintenance:
         7. Return quality report
         """
         normalized_market = normalize_market(market)
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         if self._supports_us_adjusted_bundle(normalized_market):
             raw_df, adjusted_df, splits_df, _ = self._fetch_us_daily_bundle(symbol=symbol, start="2000-01-01", end=today)
             cleaned_df, report = self.cleaner.clean(raw_df, symbol=symbol)
@@ -96,7 +96,7 @@ class DataMaintenance:
         """Recompute adjusted prices from stored raw daily data."""
         normalized_market = normalize_market(market)
         if self._supports_us_adjusted_bundle(normalized_market):
-            today = datetime.now().strftime("%Y-%m-%d")
+            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
             raw_df, adjusted_df, splits_df, _ = self._fetch_us_daily_bundle(symbol=symbol, start="2000-01-01", end=today)
             cleaned_df, _ = self.cleaner.clean(raw_df, symbol=symbol)
             self.storage.save_adjusted(
@@ -144,7 +144,7 @@ class DataMaintenance:
         """
         normalized_market = normalize_market(market)
         existing = self.storage.load_daily(symbol, market=normalized_market)
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         if existing.empty:
             start = "2000-01-01"
         else:
