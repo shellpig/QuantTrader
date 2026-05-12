@@ -20,12 +20,13 @@ from src.core.constants import (
     TAIPEI_TZ,
 )
 from src.core.exceptions import FetcherError
+from src.core.market import get_market_spec, normalize_market, normalize_symbol
 
 
-def _empty_standard_dataframe() -> pd.DataFrame:
+def _empty_standard_dataframe(timezone: str = TAIPEI_TZ) -> pd.DataFrame:
     return pd.DataFrame(
         {
-            "date": pd.Series(dtype=f"datetime64[ns, {TAIPEI_TZ}]"),
+            "date": pd.Series(dtype=f"datetime64[ns, {timezone}]"),
             "open": pd.Series(dtype="float64"),
             "high": pd.Series(dtype="float64"),
             "low": pd.Series(dtype="float64"),
@@ -103,14 +104,8 @@ def _empty_margin_dataframe() -> pd.DataFrame:
     )[MARGIN_COLUMNS]
 
 
-def localize_to_taipei(df: pd.DataFrame, col: str = "date") -> pd.DataFrame:
-    """
-    Standardize datetime column to Asia/Taipei.
-
-    If source datetimes are naive, they are localized to Asia/Taipei.
-    If source datetimes are timezone-aware, they are converted to Asia/Taipei.
-    """
-    target_dtype = f"datetime64[ns, {TAIPEI_TZ}]"
+def _localize_to_timezone(df: pd.DataFrame, timezone: str, col: str = "date") -> pd.DataFrame:
+    target_dtype = f"datetime64[ns, {timezone}]"
 
     if col not in df.columns:
         raise FetcherError(f"Missing required datetime column: {col}")
@@ -124,16 +119,26 @@ def localize_to_taipei(df: pd.DataFrame, col: str = "date") -> pd.DataFrame:
     series = pd.to_datetime(out[col], errors="coerce")
 
     if series.dt.tz is None:
-        out[col] = series.dt.tz_localize(TAIPEI_TZ)
+        out[col] = series.dt.tz_localize(timezone)
     else:
-        out[col] = series.dt.tz_convert(TAIPEI_TZ)
+        out[col] = series.dt.tz_convert(timezone)
     out[col] = out[col].astype(target_dtype)
     return out
 
 
-def _finalize_schema(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
+def localize_to_taipei(df: pd.DataFrame, col: str = "date") -> pd.DataFrame:
+    """
+    Standardize datetime column to Asia/Taipei.
+
+    If source datetimes are naive, they are localized to Asia/Taipei.
+    If source datetimes are timezone-aware, they are converted to Asia/Taipei.
+    """
+    return _localize_to_timezone(df=df, timezone=TAIPEI_TZ, col=col)
+
+
+def _finalize_schema(df: pd.DataFrame, symbol: str, timezone: str = TAIPEI_TZ) -> pd.DataFrame:
     if df.empty:
-        return _empty_standard_dataframe()
+        return _empty_standard_dataframe(timezone=timezone)
 
     out = df.copy()
 
@@ -145,15 +150,15 @@ def _finalize_schema(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
     out["date"] = pd.to_datetime(out["date"], errors="coerce")
     out = out.dropna(subset=["date"]).copy()
     if out.empty:
-        return _empty_standard_dataframe()
+        return _empty_standard_dataframe(timezone=timezone)
 
-    out = localize_to_taipei(out, col="date")
+    out = _localize_to_timezone(out, timezone=timezone, col="date")
 
     for price_col in ("open", "high", "low", "close"):
         out[price_col] = pd.to_numeric(out[price_col], errors="coerce")
     out = out.dropna(subset=["open", "high", "low", "close"]).copy()
     if out.empty:
-        return _empty_standard_dataframe()
+        return _empty_standard_dataframe(timezone=timezone)
 
     out["volume"] = pd.to_numeric(out["volume"], errors="coerce").fillna(0).astype("int64")
     out["open"] = out["open"].astype("float64")
@@ -740,52 +745,99 @@ class YFinanceFetcher(IDataFetcher):
 
     VALID_MINUTE_FREQ = {"1", "5", "15", "30", "60"}
 
-    def __init__(self, downloader: Callable[..., pd.DataFrame] | None = None):
+    def __init__(self, downloader: Callable[..., pd.DataFrame] | None = None, market: str = "tw"):
         self._downloader = downloader or yf.download
+        self._market = normalize_market(market)
+        self._timezone = get_market_spec(self._market).timezone
 
     def fetch_daily(self, symbol: str, start: str, end: str) -> pd.DataFrame:
-        ticker = f"{symbol}.TW"
-        try:
-            raw = self._downloader(
-                ticker,
-                start=start,
-                end=end,
-                interval="1d",
-                auto_adjust=False,
-                progress=False,
-                group_by="column",
-                threads=False,
-            )
-        except Exception as exc:  # noqa: BLE001 - normalize provider errors
-            raise FetcherError(f"yfinance download failed for {ticker}") from exc
+        normalized_symbol = normalize_symbol(symbol, market=self._market)
+        ticker = self._ticker_from_symbol(normalized_symbol)
+        raw = self._download_ohlcv(
+            ticker=ticker,
+            start=start,
+            end=end,
+            interval="1d",
+            include_actions=False,
+        )
+        return self._normalize_yfinance(raw, symbol=normalized_symbol)
 
-        return self._normalize_yfinance(raw, symbol=symbol)
+    def fetch_daily_with_adjusted(self, symbol: str, start: str, end: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, bool]:
+        normalized_symbol = normalize_symbol(symbol, market=self._market)
+        ticker = self._ticker_from_symbol(normalized_symbol)
+        raw = self._download_ohlcv(
+            ticker=ticker,
+            start=start,
+            end=end,
+            interval="1d",
+            include_actions=True,
+        )
+        if self._market != "us":
+            daily = self._normalize_yfinance(raw, symbol=normalized_symbol)
+            return daily, daily.copy(deep=True), _empty_splits_dataframe(), False
+
+        extended = self._normalize_yfinance_extended(raw, symbol=normalized_symbol)
+        return self._build_us_adjusted_bundle(extended, symbol=normalized_symbol)
 
     def fetch_minute(self, symbol: str, start: str, end: str, freq: str = "1") -> pd.DataFrame:
-        if freq not in self.VALID_MINUTE_FREQ:
-            raise ValueError(f"Unsupported minute frequency: {freq}")
-
-        interval_map = {"1": "1m", "5": "5m", "15": "15m", "30": "30m", "60": "60m"}
-        ticker = f"{symbol}.TW"
+        if self._market == "us":
+            raise FetcherError("US-1 does not support US minute data.")
         try:
-            raw = self._downloader(
-                ticker,
+            interval_map = {"1": "1m", "5": "5m", "15": "15m", "30": "30m", "60": "60m"}
+            if freq not in self.VALID_MINUTE_FREQ:
+                raise ValueError(f"Unsupported minute frequency: {freq}")
+
+            normalized_symbol = normalize_symbol(symbol, market=self._market)
+            ticker = self._ticker_from_symbol(normalized_symbol)
+            raw = self._download_ohlcv(
+                ticker=ticker,
                 start=start,
                 end=end,
                 interval=interval_map[freq],
-                auto_adjust=False,
-                progress=False,
-                group_by="column",
-                threads=False,
+                include_actions=False,
             )
+            return self._normalize_yfinance(raw, symbol=normalized_symbol)
+        except ValueError:
+            raise
+
+    def _download_ohlcv(
+        self,
+        ticker: str,
+        start: str,
+        end: str,
+        interval: str,
+        include_actions: bool,
+    ) -> pd.DataFrame:
+        kwargs: dict[str, Any] = {
+            "start": start,
+            "end": end,
+            "interval": interval,
+            "auto_adjust": False,
+            "progress": False,
+            "group_by": "column",
+            "threads": False,
+        }
+        if include_actions:
+            kwargs["actions"] = True
+        try:
+            return self._downloader(ticker, **kwargs)
         except Exception as exc:  # noqa: BLE001 - normalize provider errors
             raise FetcherError(f"yfinance download failed for {ticker}") from exc
 
-        return self._normalize_yfinance(raw, symbol=symbol)
+    def _ticker_from_symbol(self, symbol: str) -> str:
+        if self._market == "tw":
+            return f"{symbol}.TW"
+        return symbol
 
     def _normalize_yfinance(self, raw: pd.DataFrame | None, symbol: str) -> pd.DataFrame:
+        extended = self._normalize_yfinance_extended(raw, symbol=symbol)
+        if extended.empty:
+            return _empty_standard_dataframe(self._timezone)
+        return extended[STANDARD_COLUMNS].copy()
+
+    def _normalize_yfinance_extended(self, raw: pd.DataFrame | None, symbol: str) -> pd.DataFrame:
         if raw is None or raw.empty:
-            return _empty_standard_dataframe()
+            return pd.DataFrame(columns=[*STANDARD_COLUMNS, "adj_close", "stock_splits"])
 
         normalized = raw.copy()
         if isinstance(normalized.columns, pd.MultiIndex):
@@ -800,8 +852,106 @@ class YFinanceFetcher(IDataFetcher):
                 "High": "high",
                 "Low": "low",
                 "Close": "close",
+                "Adj Close": "adj_close",
                 "Volume": "volume",
+                "Stock Splits": "stock_splits",
             }
         )
+        if "adj_close" not in mapped.columns:
+            mapped["adj_close"] = pd.NA
+        if "stock_splits" not in mapped.columns:
+            mapped["stock_splits"] = pd.NA
         mapped["symbol"] = symbol
-        return _finalize_schema(mapped, symbol=symbol)
+
+        standard = _finalize_schema(mapped, symbol=symbol, timezone=self._timezone)
+        if standard.empty:
+            return pd.DataFrame(columns=[*STANDARD_COLUMNS, "adj_close", "stock_splits"])
+
+        extras = mapped[["date", "adj_close", "stock_splits"]].copy()
+        extras["date"] = pd.to_datetime(extras["date"], errors="coerce")
+        extras = extras.dropna(subset=["date"]).copy()
+        if not extras.empty:
+            extras = _localize_to_timezone(extras, timezone=self._timezone, col="date")
+            extras["adj_close"] = pd.to_numeric(extras["adj_close"], errors="coerce")
+            extras["stock_splits"] = pd.to_numeric(extras["stock_splits"], errors="coerce")
+            extras = extras.sort_values("date").drop_duplicates(subset=["date"], keep="last")
+
+        out = standard.merge(extras, on="date", how="left")
+        out["adj_close"] = pd.to_numeric(out["adj_close"], errors="coerce")
+        out["stock_splits"] = pd.to_numeric(out["stock_splits"], errors="coerce")
+        return out[[*STANDARD_COLUMNS, "adj_close", "stock_splits"]]
+
+    def _build_us_adjusted_bundle(
+        self,
+        extended: pd.DataFrame,
+        symbol: str,
+    ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, bool]:
+        if extended.empty:
+            empty = _empty_standard_dataframe(self._timezone)
+            return empty, empty, _empty_splits_dataframe(), False
+
+        work = extended.copy()
+        work["close"] = pd.to_numeric(work["close"], errors="coerce")
+        work["adj_close"] = pd.to_numeric(work["adj_close"], errors="coerce")
+        work = work[work["close"] > 0].copy()
+        if work.empty:
+            empty = _empty_standard_dataframe(self._timezone)
+            return empty, empty, _empty_splits_dataframe(), False
+
+        ratio = pd.to_numeric(work["adj_close"] / work["close"], errors="coerce")
+        ratio = ratio.replace([float("inf"), float("-inf")], pd.NA)
+        valid_ratio_mask = ratio.notna() & (ratio > 0)
+        has_any_valid_ratio = bool(valid_ratio_mask.any())
+        if has_any_valid_ratio:
+            work = work.loc[valid_ratio_mask].copy()
+            work["price_ratio"] = ratio.loc[valid_ratio_mask].astype("float64")
+        else:
+            work["price_ratio"] = 1.0
+
+        split_events = pd.to_numeric(work["stock_splits"], errors="coerce").fillna(0.0).astype("float64")
+        has_split_column = "stock_splits" in extended.columns and extended["stock_splits"].notna().any()
+        volume_split_adjusted = has_split_column
+
+        cumulative = 1.0
+        factors: list[float] = [1.0] * len(work)
+        split_values = split_events.tolist()
+        for idx in range(len(split_values) - 1, -1, -1):
+            factors[idx] = cumulative
+            split_val = split_values[idx]
+            if split_val > 0:
+                cumulative *= split_val
+
+        adjusted = work.copy()
+        for col in ("open", "high", "low"):
+            adjusted[col] = pd.to_numeric(adjusted[col], errors="coerce") * adjusted["price_ratio"]
+        if has_any_valid_ratio:
+            adjusted["close"] = adjusted["adj_close"]
+        else:
+            adjusted["close"] = pd.to_numeric(adjusted["close"], errors="coerce")
+        adjusted["volume"] = pd.to_numeric(adjusted["volume"], errors="coerce").fillna(0.0)
+        if volume_split_adjusted:
+            adjusted["volume"] = (adjusted["volume"] * pd.Series(factors, index=adjusted.index)).round()
+        adjusted["volume"] = adjusted["volume"].astype("int64")
+        adjusted = adjusted.dropna(subset=["open", "high", "low", "close"]).copy()
+        adjusted = adjusted[STANDARD_COLUMNS].sort_values("date").reset_index(drop=True)
+
+        raw_daily = work[STANDARD_COLUMNS].copy().sort_values("date").reset_index(drop=True)
+        splits = self._build_us_splits_dataframe(work[["date", "stock_splits"]].copy(), symbol=symbol)
+        return raw_daily, adjusted, splits, bool(volume_split_adjusted)
+
+    def _build_us_splits_dataframe(self, splits_raw: pd.DataFrame, symbol: str) -> pd.DataFrame:
+        if splits_raw.empty:
+            return _empty_splits_dataframe()
+
+        out = splits_raw.copy()
+        out["stock_splits"] = pd.to_numeric(out["stock_splits"], errors="coerce")
+        out = out[out["stock_splits"] > 0].copy()
+        if out.empty:
+            return _empty_splits_dataframe()
+
+        out["before_price"] = out["stock_splits"].astype("float64")
+        out["after_price"] = 1.0
+        out["symbol"] = symbol
+        out = out[["date", "before_price", "after_price", "symbol"]]
+        out = out.sort_values("date").drop_duplicates(subset=["date", "symbol"], keep="last").reset_index(drop=True)
+        return out

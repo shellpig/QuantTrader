@@ -7,6 +7,7 @@ import pytest
 
 from src.core.config import get_config
 from src.core.constants import STANDARD_COLUMNS, TAIPEI_TZ
+from src.core.market import get_market_spec
 from src.core.exceptions import FetcherError
 from src.data.fetcher import FinMindFetcher, YFinanceFetcher, localize_to_taipei
 
@@ -54,6 +55,240 @@ def test_empty_dataframe_has_standard_columns() -> None:
     result = fetcher.fetch_daily(symbol="2330", start="2025-01-01", end="2025-01-31")
     _assert_standard_columns(result)
     assert result.empty
+
+
+def _build_yf_daily_df(
+    dates: list[str],
+    *,
+    open_: list[float],
+    high: list[float],
+    low: list[float],
+    close: list[float],
+    volume: list[int],
+    adj_close: list[float] | None = None,
+    stock_splits: list[float] | None = None,
+) -> pd.DataFrame:
+    idx = pd.to_datetime(dates)
+    data: dict[str, list[float] | list[int]] = {
+        "Open": open_,
+        "High": high,
+        "Low": low,
+        "Close": close,
+        "Volume": volume,
+    }
+    if adj_close is not None:
+        data["Adj Close"] = adj_close
+    if stock_splits is not None:
+        data["Stock Splits"] = stock_splits
+    return pd.DataFrame(data, index=idx)
+
+
+def test_yfinance_us_daily_uses_raw_ticker_without_tw_suffix() -> None:
+    calls: list[str] = []
+
+    def downloader(ticker: str, **kwargs) -> pd.DataFrame:  # noqa: ANN003
+        calls.append(ticker)
+        return _build_yf_daily_df(
+            ["2025-01-02"],
+            open_=[100],
+            high=[101],
+            low=[99],
+            close=[100],
+            volume=[1234],
+            adj_close=[100],
+        )
+
+    fetcher = YFinanceFetcher(downloader=downloader, market="us")
+    fetcher.fetch_daily(symbol="AAPL", start="2025-01-01", end="2025-01-31")
+    assert calls == ["AAPL"]
+
+
+def test_yfinance_us_daily_normalizes_class_share_symbol() -> None:
+    calls: list[str] = []
+
+    def downloader(ticker: str, **kwargs) -> pd.DataFrame:  # noqa: ANN003
+        calls.append(ticker)
+        return _build_yf_daily_df(
+            ["2025-01-02"],
+            open_=[100],
+            high=[101],
+            low=[99],
+            close=[100],
+            volume=[1234],
+            adj_close=[100],
+        )
+
+    fetcher = YFinanceFetcher(downloader=downloader, market="us")
+    df = fetcher.fetch_daily(symbol="BRK.B", start="2025-01-01", end="2025-01-31")
+    assert calls == ["BRK-B"]
+    assert df.loc[0, "symbol"] == "BRK-B"
+
+
+def test_yfinance_tw_daily_keeps_tw_suffix() -> None:
+    calls: list[str] = []
+
+    def downloader(ticker: str, **kwargs) -> pd.DataFrame:  # noqa: ANN003
+        calls.append(ticker)
+        return _build_yf_daily_df(
+            ["2025-01-02"],
+            open_=[100],
+            high=[101],
+            low=[99],
+            close=[100],
+            volume=[1234],
+            adj_close=[100],
+        )
+
+    fetcher = YFinanceFetcher(downloader=downloader, market="tw")
+    fetcher.fetch_daily(symbol="2330", start="2025-01-01", end="2025-01-31")
+    assert calls == ["2330.TW"]
+
+
+def test_yfinance_us_daily_normalizes_timezone_to_new_york() -> None:
+    ny_tz = get_market_spec("us").timezone
+    fetcher = YFinanceFetcher(
+        downloader=lambda *args, **kwargs: _build_yf_daily_df(
+            ["2025-01-02", "2025-01-03"],
+            open_=[100, 101],
+            high=[101, 102],
+            low=[99, 100],
+            close=[100, 101],
+            volume=[1000, 1001],
+            adj_close=[100, 101],
+        ),
+        market="us",
+    )
+
+    df = fetcher.fetch_daily(symbol="AAPL", start="2025-01-01", end="2025-01-31")
+    assert str(df["date"].dtype) == f"datetime64[ns, {ny_tz}]"
+
+
+def test_yfinance_us_daily_keeps_volume_as_shares() -> None:
+    fetcher = YFinanceFetcher(
+        downloader=lambda *args, **kwargs: _build_yf_daily_df(
+            ["2025-01-02"],
+            open_=[100],
+            high=[101],
+            low=[99],
+            close=[100],
+            volume=[356650253],
+            adj_close=[100],
+        ),
+        market="us",
+    )
+
+    df = fetcher.fetch_daily(symbol="AAPL", start="2025-01-01", end="2025-01-31")
+    assert int(df.loc[0, "volume"]) == 356650253
+
+
+def test_yfinance_us_adjusted_ohlc_uses_adj_close_ratio() -> None:
+    fetcher = YFinanceFetcher(
+        downloader=lambda *args, **kwargs: _build_yf_daily_df(
+            ["2025-01-02"],
+            open_=[120],
+            high=[130],
+            low=[110],
+            close=[100],
+            volume=[1000],
+            adj_close=[50],
+            stock_splits=[0.0],
+        ),
+        market="us",
+    )
+
+    raw_df, adjusted_df, _, _ = fetcher.fetch_daily_with_adjusted("AAPL", "2025-01-01", "2025-01-31")
+    assert not raw_df.empty
+    assert adjusted_df.loc[0, "open"] == pytest.approx(60.0)
+    assert adjusted_df.loc[0, "high"] == pytest.approx(65.0)
+    assert adjusted_df.loc[0, "low"] == pytest.approx(55.0)
+    assert adjusted_df.loc[0, "close"] == pytest.approx(50.0)
+
+
+def test_yfinance_us_adjusted_volume_uses_split_factor() -> None:
+    fetcher = YFinanceFetcher(
+        downloader=lambda *args, **kwargs: _build_yf_daily_df(
+            ["2025-01-01", "2025-01-02"],
+            open_=[100, 25],
+            high=[101, 26],
+            low=[99, 24],
+            close=[100, 25],
+            volume=[1000, 2000],
+            adj_close=[50, 25],
+            stock_splits=[0.0, 4.0],
+        ),
+        market="us",
+    )
+
+    _, adjusted_df, _, volume_adjusted = fetcher.fetch_daily_with_adjusted("AAPL", "2025-01-01", "2025-01-31")
+    assert volume_adjusted is True
+    assert int(adjusted_df.loc[0, "volume"]) == 4000
+    assert int(adjusted_df.loc[1, "volume"]) == 2000
+
+
+def test_yfinance_us_adjusted_volume_does_not_use_dividend_ratio() -> None:
+    fetcher = YFinanceFetcher(
+        downloader=lambda *args, **kwargs: _build_yf_daily_df(
+            ["2025-01-01", "2025-01-02"],
+            open_=[100, 25],
+            high=[101, 26],
+            low=[99, 24],
+            close=[100, 25],
+            volume=[1000, 2000],
+            adj_close=[90, 25],  # include dividend-like adjustment in price ratio
+            stock_splits=[0.0, 4.0],
+        ),
+        market="us",
+    )
+
+    _, adjusted_df, _, _ = fetcher.fetch_daily_with_adjusted("AAPL", "2025-01-01", "2025-01-31")
+    assert int(adjusted_df.loc[0, "volume"]) == 4000
+
+
+def test_yfinance_us_adjusted_warns_when_split_factor_missing() -> None:
+    fetcher = YFinanceFetcher(
+        downloader=lambda *args, **kwargs: _build_yf_daily_df(
+            ["2025-01-01"],
+            open_=[100],
+            high=[101],
+            low=[99],
+            close=[100],
+            volume=[1000],
+            adj_close=[95],
+            stock_splits=None,
+        ),
+        market="us",
+    )
+
+    _, adjusted_df, _, volume_adjusted = fetcher.fetch_daily_with_adjusted("AAPL", "2025-01-01", "2025-01-31")
+    assert volume_adjusted is False
+    assert int(adjusted_df.loc[0, "volume"]) == 1000
+
+
+def test_yfinance_us_adjusted_fallback_when_adj_close_missing() -> None:
+    fetcher = YFinanceFetcher(
+        downloader=lambda *args, **kwargs: _build_yf_daily_df(
+            ["2025-01-01"],
+            open_=[100],
+            high=[101],
+            low=[99],
+            close=[100],
+            volume=[1000],
+            adj_close=None,
+            stock_splits=[0.0],
+        ),
+        market="us",
+    )
+
+    raw_df, adjusted_df, _, _ = fetcher.fetch_daily_with_adjusted("AAPL", "2025-01-01", "2025-01-31")
+    assert not raw_df.empty
+    assert not adjusted_df.empty
+    assert adjusted_df.loc[0, "close"] == pytest.approx(100.0)
+
+
+def test_yfinance_us_minute_is_not_supported() -> None:
+    fetcher = YFinanceFetcher(downloader=lambda *args, **kwargs: pd.DataFrame(), market="us")
+    with pytest.raises(FetcherError, match="US-1 does not support US minute data"):
+        fetcher.fetch_minute("AAPL", "2025-01-01", "2025-01-02", freq="1")
 
 
 def test_finmind_fetch_eps_normalization_prefers_basic_eps() -> None:
@@ -203,6 +438,36 @@ def test_yfinance_daily_2330() -> None:
 
     _assert_standard_columns(df)
     assert str(df["date"].dtype) == f"datetime64[ns, {TAIPEI_TZ}]"
+
+
+@pytest.mark.integration
+def test_yfinance_us_daily_aapl_integration() -> None:
+    fetcher = YFinanceFetcher(market="us")
+    try:
+        df = fetcher.fetch_daily(symbol="AAPL", start="2025-01-01", end="2025-02-01")
+    except FetcherError as exc:
+        pytest.skip(f"yfinance unavailable during integration test: {exc}")
+
+    if df.empty:
+        pytest.skip("yfinance returned empty data (provider/network unavailable).")
+
+    _assert_standard_columns(df)
+    assert str(df["date"].dtype) == "datetime64[ns, America/New_York]"
+
+
+@pytest.mark.integration
+def test_yfinance_us_daily_spy_integration() -> None:
+    fetcher = YFinanceFetcher(market="us")
+    try:
+        df = fetcher.fetch_daily(symbol="SPY", start="2025-01-01", end="2025-02-01")
+    except FetcherError as exc:
+        pytest.skip(f"yfinance unavailable during integration test: {exc}")
+
+    if df.empty:
+        pytest.skip("yfinance returned empty data (provider/network unavailable).")
+
+    _assert_standard_columns(df)
+    assert str(df["date"].dtype) == "datetime64[ns, America/New_York]"
 
 
 @pytest.mark.integration

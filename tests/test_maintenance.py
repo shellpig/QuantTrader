@@ -6,9 +6,12 @@ import pandas as pd
 import pytest
 
 from src.core.constants import STANDARD_COLUMNS
+from src.core.market import get_market_spec
 from src.data.cleaner import DataCleaner
+import src.data.maintenance as maintenance_module
 from src.data.maintenance import DataMaintenance
 from src.data.storage import DuckDBMeta, ParquetStorage
+from src.core.exceptions import FetcherError
 
 
 def _make_daily(symbol: str, start: str, periods: int, close_base: float = 100.0) -> pd.DataFrame:
@@ -38,8 +41,10 @@ class StubFetcher:
         self.incremental_daily = incremental_daily
         self.dividends = dividends
         self.splits = splits if splits is not None else pd.DataFrame(columns=["date", "before_price", "after_price", "symbol"])
+        self.daily_calls: list[tuple[str, str, str]] = []
 
     def fetch_daily(self, symbol: str, start: str, end: str) -> pd.DataFrame:
+        self.daily_calls.append((symbol, start, end))
         if start <= "2000-01-01":
             return self.full_daily.copy(deep=True)
 
@@ -59,6 +64,56 @@ class StubFetcher:
 
     def fetch_splits(self, symbol: str) -> pd.DataFrame:
         return self.splits.copy(deep=True)
+
+
+class YFinanceFetcher:
+    def __init__(
+        self,
+        full_raw: pd.DataFrame,
+        full_adjusted: pd.DataFrame,
+        incremental_raw: pd.DataFrame | None,
+        incremental_adjusted: pd.DataFrame | None,
+        splits: pd.DataFrame | None = None,
+        raise_fetch_error: bool = False,
+    ) -> None:
+        self.full_raw = full_raw
+        self.full_adjusted = full_adjusted
+        self.incremental_raw = incremental_raw
+        self.incremental_adjusted = incremental_adjusted
+        self.splits = splits if splits is not None else pd.DataFrame(columns=["date", "before_price", "after_price", "symbol"])
+        self.bundle_calls: list[tuple[str, str, str]] = []
+        self.raise_fetch_error = raise_fetch_error
+
+    def fetch_daily(self, symbol: str, start: str, end: str) -> pd.DataFrame:
+        return pd.DataFrame(columns=STANDARD_COLUMNS)
+
+    def fetch_minute(self, symbol: str, start: str, end: str, freq: str = "1") -> pd.DataFrame:
+        return pd.DataFrame(columns=STANDARD_COLUMNS)
+
+    def fetch_daily_with_adjusted(self, symbol: str, start: str, end: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, bool]:
+        if self.raise_fetch_error:
+            raise FetcherError("yfinance provider rate limited (HTTP 429).")
+        self.bundle_calls.append((symbol, start, end))
+        if start <= "2000-01-01":
+            return (
+                self.full_raw.copy(deep=True),
+                self.full_adjusted.copy(deep=True),
+                self.splits.copy(deep=True),
+                True,
+            )
+        if self.incremental_raw is None or self.incremental_raw.empty:
+            return (
+                pd.DataFrame(columns=STANDARD_COLUMNS),
+                pd.DataFrame(columns=STANDARD_COLUMNS),
+                pd.DataFrame(columns=["date", "before_price", "after_price", "symbol"]),
+                True,
+            )
+        return (
+            self.incremental_raw.copy(deep=True),
+            self.incremental_adjusted.copy(deep=True) if self.incremental_adjusted is not None else pd.DataFrame(columns=STANDARD_COLUMNS),
+            self.splits.copy(deep=True),
+            True,
+        )
 
 
 def test_rebuild_symbol_saves_and_updates_meta(tmp_path) -> None:
@@ -240,3 +295,180 @@ def test_update_daily_rebuilds_adjusted_when_no_new_rows(tmp_path) -> None:
     adjusted_dates = pd.to_datetime(adjusted["date"], errors="coerce")
     adjusted_first = adjusted.loc[adjusted_dates.dt.strftime("%Y-%m-%d") == "2024-06-24", "close"].iloc[0]
     assert adjusted_first == pytest.approx(95.0)
+
+
+def test_maintenance_passes_market_to_storage(tmp_path) -> None:
+    existing = _make_daily("AAPL", "2024-01-01", 2)
+    incremental = _make_daily("AAPL", "2024-01-03", 1)
+    fetcher = StubFetcher(full_daily=existing, incremental_daily=incremental, dividends=pd.DataFrame())
+    storage = ParquetStorage(data_dir=tmp_path / "data")
+    meta = DuckDBMeta(db_path=str(tmp_path / "meta.duckdb"))
+    cleaner = DataCleaner()
+    maintenance = DataMaintenance(fetcher, storage, meta, cleaner)
+
+    storage.save_daily("AAPL", existing, market="us")
+    added = maintenance.update_daily("AAPL", market="us")
+    loaded = storage.load_daily("AAPL", market="us")
+    row = meta.get_meta("AAPL", "daily", market="us")
+    expected_path = tmp_path / "data" / "raw" / "us" / "AAPL" / "daily.parquet"
+
+    assert added == 1
+    assert expected_path.exists()
+    assert str(loaded["date"].dtype) == f"datetime64[ns, {get_market_spec('us').timezone}]"
+    assert row is not None
+    assert row["market"] == "us"
+
+
+def test_maintenance_rebuild_us_symbol_saves_raw_and_adjusted(tmp_path) -> None:
+    ny_tz = get_market_spec("us").timezone
+    full_raw = pd.DataFrame(
+        {
+            "date": pd.Series(pd.date_range("2024-01-01", periods=2, tz=ny_tz)),
+            "open": [100.0, 101.0],
+            "high": [101.0, 102.0],
+            "low": [99.0, 100.0],
+            "close": [100.0, 101.0],
+            "volume": [1000, 1200],
+            "symbol": ["AAPL", "AAPL"],
+        }
+    )[STANDARD_COLUMNS]
+    full_adjusted = full_raw.copy(deep=True)
+    full_adjusted["close"] = [95.0, 96.0]
+
+    fetcher = YFinanceFetcher(
+        full_raw=full_raw,
+        full_adjusted=full_adjusted,
+        incremental_raw=None,
+        incremental_adjusted=None,
+    )
+    storage = ParquetStorage(data_dir=tmp_path / "data")
+    meta = DuckDBMeta(db_path=str(tmp_path / "meta.duckdb"))
+    cleaner = DataCleaner()
+    maintenance = DataMaintenance(fetcher, storage, meta, cleaner)
+
+    report = maintenance.rebuild_symbol("AAPL", market="us")
+    raw_saved = storage.load_daily("AAPL", market="us")
+    adjusted_saved = storage.load_adjusted("AAPL", market="us")
+
+    assert report.total_rows == 2
+    assert len(raw_saved) == 2
+    assert len(adjusted_saved) == 2
+    assert adjusted_saved.loc[0, "close"] == pytest.approx(95.0)
+
+
+def test_maintenance_update_us_symbol_is_incremental(tmp_path) -> None:
+    ny_tz = get_market_spec("us").timezone
+    existing = pd.DataFrame(
+        {
+            "date": pd.Series(pd.date_range("2024-01-01", periods=2, tz=ny_tz)),
+            "open": [100.0, 101.0],
+            "high": [101.0, 102.0],
+            "low": [99.0, 100.0],
+            "close": [100.0, 101.0],
+            "volume": [1000, 1200],
+            "symbol": ["AAPL", "AAPL"],
+        }
+    )[STANDARD_COLUMNS]
+    existing_adj = existing.copy(deep=True)
+    existing_adj["close"] = [95.0, 96.0]
+    incremental = pd.DataFrame(
+        {
+            "date": [pd.Timestamp("2024-01-03", tz=ny_tz)],
+            "open": [102.0],
+            "high": [103.0],
+            "low": [101.0],
+            "close": [102.0],
+            "volume": [1300],
+            "symbol": ["AAPL"],
+        }
+    )[STANDARD_COLUMNS]
+    incremental_adj = incremental.copy(deep=True)
+    incremental_adj["close"] = [97.0]
+
+    fetcher = YFinanceFetcher(
+        full_raw=existing,
+        full_adjusted=existing_adj,
+        incremental_raw=incremental,
+        incremental_adjusted=incremental_adj,
+    )
+    storage = ParquetStorage(data_dir=tmp_path / "data")
+    meta = DuckDBMeta(db_path=str(tmp_path / "meta.duckdb"))
+    cleaner = DataCleaner()
+    maintenance = DataMaintenance(fetcher, storage, meta, cleaner)
+
+    storage.save_daily("AAPL", existing, market="us")
+    storage.save_adjusted("AAPL", existing_adj, market="us")
+
+    added = maintenance.update_daily("AAPL", market="us")
+    merged_raw = storage.load_daily("AAPL", market="us")
+    merged_adj = storage.load_adjusted("AAPL", market="us")
+
+    assert added == 1
+    assert len(merged_raw) == 3
+    assert len(merged_adj) == 3
+    assert float(merged_adj.loc[len(merged_adj) - 1, "close"]) == pytest.approx(97.0)
+
+
+def test_maintenance_batch_update_us_symbols_throttles_yfinance(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    ny_tz = get_market_spec("us").timezone
+    incremental = pd.DataFrame(
+        {
+            "date": [pd.Timestamp("2024-01-01", tz=ny_tz)],
+            "open": [100.0],
+            "high": [101.0],
+            "low": [99.0],
+            "close": [100.0],
+            "volume": [1000],
+            "symbol": ["AAPL"],
+        }
+    )[STANDARD_COLUMNS]
+    fetcher = YFinanceFetcher(
+        full_raw=incremental,
+        full_adjusted=incremental,
+        incremental_raw=incremental,
+        incremental_adjusted=incremental,
+    )
+    storage = ParquetStorage(data_dir=tmp_path / "data")
+    meta = DuckDBMeta(db_path=str(tmp_path / "meta.duckdb"))
+    cleaner = DataCleaner()
+    maintenance = DataMaintenance(fetcher, storage, meta, cleaner)
+
+    fake_now = {"t": 100.0}
+    sleeps: list[float] = []
+
+    def fake_monotonic() -> float:
+        return fake_now["t"]
+
+    def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        fake_now["t"] += seconds
+
+    monkeypatch.setattr(maintenance_module.time, "monotonic", fake_monotonic)
+    monkeypatch.setattr(maintenance_module.time, "sleep", fake_sleep)
+
+    maintenance.update_daily("AAPL", market="us")
+    maintenance.update_daily("MSFT", market="us")
+
+    assert sleeps
+    assert sleeps[-1] >= maintenance_module.US_YFINANCE_REQUEST_INTERVAL_SECONDS
+
+
+def test_maintenance_us_rate_limit_reports_provider_error(tmp_path) -> None:
+    empty = pd.DataFrame(columns=STANDARD_COLUMNS)
+    fetcher = YFinanceFetcher(
+        full_raw=empty,
+        full_adjusted=empty,
+        incremental_raw=empty,
+        incremental_adjusted=empty,
+        raise_fetch_error=True,
+    )
+    storage = ParquetStorage(data_dir=tmp_path / "data")
+    meta = DuckDBMeta(db_path=str(tmp_path / "meta.duckdb"))
+    cleaner = DataCleaner()
+    maintenance = DataMaintenance(fetcher, storage, meta, cleaner)
+
+    with pytest.raises(FetcherError, match="rate limited|429"):
+        maintenance.update_daily("AAPL", market="us")
+
+    assert meta.get_meta("AAPL", "daily", market="us") is None
+    assert storage.load_daily("AAPL", market="us").empty
