@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -14,6 +13,7 @@ import requests
 
 from src.core.config import get_config
 from src.core.exceptions import AICallError, AIDisabledError
+from src.core.market import get_market_spec, normalize_market, normalize_symbol
 from src.data.storage import ParquetStorage
 
 SYSTEM_PROMPT = """你是一個台股技術分析助理。你的工作是：
@@ -31,7 +31,7 @@ DISCLAIMER = """⚠️ 免責聲明：以上分析僅為技術指標數值的客
 技術分析基於歷史數據，不保證未來走勢。AI 無法預測市場，所有投資決策
 請自行判斷，並以券商官方行情為準。投資一定有風險，過去績效不代表未來報酬。"""
 
-DASHBOARD_SYSTEM_PROMPT = """你是台股個股儀表板的分析助理。
+DASHBOARD_SYSTEM_PROMPT = """你是個股儀表板的分析助理。
 請依使用者提供的結構化資料，輸出 JSON 物件（不要額外文字），欄位如下：
 {
   "industry_overview": ["...", "...", "..."],
@@ -50,6 +50,8 @@ DASHBOARD_SYSTEM_PROMPT = """你是台股個股儀表板的分析助理。
 2) 劇本價位需基於提供的支撐/壓力區間。
 3) 語氣為研究情境推演，不得出現保證獲利、必買等語句。
 4) 使用繁體中文。"""
+
+_TRADITIONAL_CHINESE_REQUIREMENT = "You must reply entirely in Traditional Chinese (zh-TW)."
 
 TOOLS: list[dict[str, Any]] = [
     {
@@ -103,7 +105,6 @@ DEFAULT_MODELS = {
 }
 
 SUPPORTED_FREQS = {"daily", "60min", "30min", "5min"}
-_TW_SYMBOL_PATTERN = re.compile(r"^\d{4,6}$")
 _PERIOD_TO_ROWS = {
     "1mo": 22,
     "3mo": 66,
@@ -636,6 +637,8 @@ class AIAdvisor:
         chip_summary: Any | None,
         company_info: dict[str, Any] | None,
         recent_prices: pd.DataFrame,
+        market: str = "tw",
+        currency: str | None = None,
     ) -> DashboardAnalysis:
         """Generate dashboard analysis with structured JSON output."""
         if not self.enabled:
@@ -644,18 +647,27 @@ class AIAdvisor:
             raise AICallError(self._provider_error)
         if self.provider_adapter is None:
             raise AICallError("AI provider adapter is not initialized.")
+        normalized_market = normalize_market(market)
+        try:
+            normalized_symbol = normalize_symbol(symbol, market=normalized_market)
+        except ValueError as exc:
+            raise AICallError(f"Invalid symbol for market={normalized_market}: {symbol}") from exc
+        resolved_currency = str(currency or get_market_spec(normalized_market).currency)
 
         payload = self._build_dashboard_payload(
-            symbol=symbol,
+            symbol=normalized_symbol,
             technical_summary=technical_summary,
             chip_summary=chip_summary,
             company_info=company_info,
             recent_prices=recent_prices,
+            market=normalized_market,
+            currency=resolved_currency,
         )
         user_prompt = (
             "請依下列資料輸出 JSON。\n"
             "注意 scenarios 必須恰好 3 個。\n"
-            f"DATA:\n{json.dumps(payload, ensure_ascii=False, default=str)}"
+            f"DATA:\n{json.dumps(payload, ensure_ascii=False, default=str)}\n\n"
+            f"{_TRADITIONAL_CHINESE_REQUIREMENT}"
         )
 
         try:
@@ -701,6 +713,8 @@ class AIAdvisor:
         chip_summary: Any | None,
         company_info: dict[str, Any] | None,
         recent_prices: pd.DataFrame,
+        market: str = "tw",
+        currency: str = "TWD",
     ) -> dict[str, Any]:
         close_summary: dict[str, Any] = {}
         if isinstance(recent_prices, pd.DataFrame) and not recent_prices.empty and "close" in recent_prices.columns:
@@ -763,6 +777,8 @@ class AIAdvisor:
 
         return {
             "symbol": str(symbol),
+            "market": str(market),
+            "currency": str(currency),
             "technical_summary": tech,
             "chip_summary": chip,
             "company_info": company_info or {},
@@ -875,26 +891,35 @@ class AIAdvisor:
             return parsed
         return None
 
-    def _handle_get_price_data(self, symbol: str, period: str, freq: str = "daily") -> dict[str, Any]:
+    def _handle_get_price_data(
+        self,
+        symbol: str,
+        period: str,
+        freq: str = "daily",
+        market: str = "tw",
+    ) -> dict[str, Any]:
         """Return capped OHLCV snapshots for AI tool usage."""
-        if not self._is_valid_tw_symbol(symbol):
+        normalized_market = normalize_market(market)
+        try:
+            normalized_symbol = normalize_symbol(symbol, market=normalized_market)
+        except ValueError:
             return {"error": f"Invalid symbol format: {symbol}"}
         if freq not in SUPPORTED_FREQS:
             return {"error": f"Unsupported freq: {freq}"}
 
         if freq == "daily":
-            df = self.storage.load_daily(symbol)
+            df = self.storage.load_daily(normalized_symbol, market=normalized_market)
         else:
-            df = self.storage.load_minute(symbol)
+            df = self.storage.load_minute(normalized_symbol, market=normalized_market)
 
         if df.empty:
-            return {"error": f"No local data for symbol: {symbol}"}
+            return {"error": f"No local data for symbol: {normalized_symbol}"}
 
         out = df.copy()
         out["date"] = pd.to_datetime(out["date"], errors="coerce")
         out = out.dropna(subset=["date"]).sort_values("date")
         if out.empty:
-            return {"error": f"No valid datetime rows for symbol: {symbol}"}
+            return {"error": f"No valid datetime rows for symbol: {normalized_symbol}"}
 
         target_rows = min(self._period_rows(period), 60)
         out = out.tail(target_rows)
@@ -908,12 +933,12 @@ class AIAdvisor:
                     "low": float(row["low"]),
                     "close": float(row["close"]),
                     "volume": int(row["volume"]),
-                    "symbol": str(row.get("symbol", symbol)),
+                    "symbol": str(row.get("symbol", normalized_symbol)),
                 }
             )
 
         return {
-            "symbol": symbol,
+            "symbol": normalized_symbol,
             "freq": freq,
             "data_count": len(records),
             "latest_date": records[-1]["date"] if records else None,
@@ -925,22 +950,26 @@ class AIAdvisor:
         symbol: str,
         indicators: list[str],
         period: str = "6mo",
+        market: str = "tw",
     ) -> dict[str, Any]:
         """Calculate a minimal set of indicators for phase 4-A tool calls."""
-        if not self._is_valid_tw_symbol(symbol):
+        normalized_market = normalize_market(market)
+        try:
+            normalized_symbol = normalize_symbol(symbol, market=normalized_market)
+        except ValueError:
             return {"error": f"Invalid symbol format: {symbol}"}
         if not isinstance(indicators, list) or not indicators:
             return {"error": "indicators must be a non-empty list"}
 
-        df = self.storage.load_daily(symbol)
+        df = self.storage.load_daily(normalized_symbol, market=normalized_market)
         if df.empty:
-            return {"error": f"No local data for symbol: {symbol}"}
+            return {"error": f"No local data for symbol: {normalized_symbol}"}
 
         out = df.copy()
         out["date"] = pd.to_datetime(out["date"], errors="coerce")
         out = out.dropna(subset=["date"]).sort_values("date")
         if out.empty:
-            return {"error": f"No valid datetime rows for symbol: {symbol}"}
+            return {"error": f"No valid datetime rows for symbol: {normalized_symbol}"}
 
         out = out.tail(self._period_rows(period))
         close = pd.to_numeric(out["close"], errors="coerce")
@@ -977,24 +1006,27 @@ class AIAdvisor:
             else:
                 result[name] = {"error": f"Unsupported indicator: {name}"}
 
-        return {"symbol": symbol, "indicators": result}
+        return {"symbol": normalized_symbol, "indicators": result}
 
-    def _handle_get_support_resistance(self, symbol: str, lookback: int = 60) -> dict[str, Any]:
+    def _handle_get_support_resistance(self, symbol: str, lookback: int = 60, market: str = "tw") -> dict[str, Any]:
         """Compute simple support/resistance levels from local daily bars."""
-        if not self._is_valid_tw_symbol(symbol):
+        normalized_market = normalize_market(market)
+        try:
+            normalized_symbol = normalize_symbol(symbol, market=normalized_market)
+        except ValueError:
             return {"error": f"Invalid symbol format: {symbol}"}
         if lookback <= 0:
             return {"error": "lookback must be positive"}
 
-        df = self.storage.load_daily(symbol)
+        df = self.storage.load_daily(normalized_symbol, market=normalized_market)
         if df.empty:
-            return {"error": f"No local data for symbol: {symbol}"}
+            return {"error": f"No local data for symbol: {normalized_symbol}"}
 
         out = df.copy()
         out["date"] = pd.to_datetime(out["date"], errors="coerce")
         out = out.dropna(subset=["date"]).sort_values("date").tail(lookback)
         if out.empty:
-            return {"error": f"No valid datetime rows for symbol: {symbol}"}
+            return {"error": f"No valid datetime rows for symbol: {normalized_symbol}"}
 
         close = pd.to_numeric(out["close"], errors="coerce")
         high = pd.to_numeric(out["high"], errors="coerce")
@@ -1018,7 +1050,7 @@ class AIAdvisor:
             resistances.append({"level": float(ma60), "type": "MA60"})
 
         return {
-            "symbol": symbol,
+            "symbol": normalized_symbol,
             "current_price": current_price,
             "support_levels": sorted(supports, key=lambda x: x["level"]),
             "resistance_levels": sorted(resistances, key=lambda x: x["level"]),
@@ -1045,10 +1077,6 @@ class AIAdvisor:
                 return gemini_key
             return str(secrets.get("google_api_key", "")).strip()
         return ""
-
-    @staticmethod
-    def _is_valid_tw_symbol(symbol: str) -> bool:
-        return bool(_TW_SYMBOL_PATTERN.fullmatch(str(symbol).strip()))
 
     @staticmethod
     def _period_rows(period: str) -> int:

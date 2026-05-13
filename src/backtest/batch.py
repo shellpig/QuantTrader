@@ -9,6 +9,7 @@ from typing import Any
 
 import pandas as pd
 
+from src.backtest.cost import TWCostCalculator, USCostCalculator
 from src.backtest.engine_vec import VectorizedBacktester
 from src.backtest.metrics import BacktestResult
 
@@ -46,6 +47,7 @@ def run_strategy_batch(
     end_date: str,
     presets: list[dict[str, Any]],
     initial_capital: float = 1_000_000,
+    cost_calculator: TWCostCalculator | USCostCalculator | None = None,
 ) -> BatchResult:
     """Run VectorizedBacktester for each preset; collect StrategyRunSummary per preset."""
     summaries: list[StrategyRunSummary] = []
@@ -73,7 +75,10 @@ def run_strategy_batch(
 
         try:
             strategy = _build_strategy(strategy_type, params)
-            engine = VectorizedBacktester(initial_capital=initial_capital)
+            engine = VectorizedBacktester(
+                initial_capital=initial_capital,
+                cost_calculator=cost_calculator,
+            )
             result = engine.run(strategy=strategy, data=data)
             summaries.append(StrategyRunSummary(
                 preset_name=preset_name,

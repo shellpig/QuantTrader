@@ -2,13 +2,20 @@ from __future__ import annotations
 
 import pandas as pd
 
-from src.backtest.cost import CostCalculator
+from src.backtest.cost import CostCalculator, USCostCalculator
 from src.backtest.dca import run_dca_backtest
 from src.core.constants import TAIPEI_TZ
+from src.core.market import get_market_spec
 
 
-def _build_daily_data(dates: list[str], *, close: float, symbol: str = "2330") -> pd.DataFrame:
-    ts = pd.to_datetime(dates).tz_localize(TAIPEI_TZ)
+def _build_daily_data(
+    dates: list[str],
+    *,
+    close: float,
+    symbol: str = "2330",
+    timezone: str = TAIPEI_TZ,
+) -> pd.DataFrame:
+    ts = pd.to_datetime(dates).tz_localize(timezone)
     return pd.DataFrame(
         {
             "date": ts,
@@ -95,3 +102,50 @@ def test_skip_row_is_written_when_no_trading_day_after_target_until_month_end() 
     assert row["reason"] == "NO_TRADING_DAY_UNTIL_MONTH_END"
     assert pd.Timestamp(row["date"]).date().isoformat() == "2026-01-31"
     assert float(row["cumulative_invested"]) == 1000.0
+
+
+def test_us_dca_uses_one_share_minimum_unit() -> None:
+    ny_tz = get_market_spec("us").timezone
+    data = _build_daily_data(["2026-01-15"], close=350.0, symbol="AAPL", timezone=ny_tz)
+    result = run_dca_backtest(
+        data=data,
+        symbol="AAPL",
+        start_ts=pd.Timestamp("2026-01-01", tz=ny_tz),
+        end_exclusive=pd.Timestamp("2026-02-01", tz=ny_tz),
+        params={
+            "monthly_day": 15,
+            "monthly_amount": 500.0,
+            "min_buy_unit": 1000,
+            "buy_price_field": "close",
+        },
+        cost_calculator=USCostCalculator(slippage_ticks=0),
+        market="us",
+    )
+
+    row = result.transactions.iloc[0]
+    assert row["status"] == "FILLED"
+    assert int(row["buy_shares"]) == 1
+
+
+def test_us_dca_monthly_amount_below_price_does_not_crash() -> None:
+    ny_tz = get_market_spec("us").timezone
+    data = _build_daily_data(["2026-01-15"], close=350.0, symbol="AAPL", timezone=ny_tz)
+    result = run_dca_backtest(
+        data=data,
+        symbol="AAPL",
+        start_ts=pd.Timestamp("2026-01-01", tz=ny_tz),
+        end_exclusive=pd.Timestamp("2026-02-01", tz=ny_tz),
+        params={
+            "monthly_day": 15,
+            "monthly_amount": 100.0,
+            "min_buy_unit": 1,
+            "buy_price_field": "close",
+        },
+        cost_calculator=USCostCalculator(slippage_ticks=0),
+        market="us",
+    )
+
+    row = result.transactions.iloc[0]
+    assert row["status"] == "SKIPPED"
+    assert row["reason"] == "INSUFFICIENT_FOR_MIN_BUY_UNIT"
+    assert float(row["cash_balance"]) == 100.0

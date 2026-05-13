@@ -11,6 +11,7 @@ from typing import Any
 import pandas as pd
 
 from src.backtest.batch import _build_strategy
+from src.backtest.cost import TWCostCalculator, USCostCalculator
 from src.backtest.engine_vec import VectorizedBacktester
 from src.backtest.metrics import BacktestResult
 from src.core.strategy_config import (
@@ -120,6 +121,7 @@ def run_parameter_sweep(
     strategy_type: str,
     param_candidates: dict[str, list[Any]],
     initial_capital: float = 1_000_000,
+    cost_calculator: TWCostCalculator | USCostCalculator | None = None,
 ) -> SweepResult:
     """Run VectorizedBacktester for every valid parameter combination.
 
@@ -136,7 +138,10 @@ def run_parameter_sweep(
     for params in valid_list:
         try:
             strategy = _build_strategy(strategy_type, params)
-            engine = VectorizedBacktester(initial_capital=initial_capital)
+            engine = VectorizedBacktester(
+                initial_capital=initial_capital,
+                cost_calculator=cost_calculator,
+            )
             bt = engine.run(strategy=strategy, data=data)
             results.append(SweepRunSummary(
                 params=params,

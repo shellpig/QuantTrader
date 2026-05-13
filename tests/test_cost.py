@@ -2,7 +2,45 @@ from __future__ import annotations
 
 import pytest
 
-from src.backtest.cost import CostCalculator
+from src.backtest.cost import (
+    CostCalculator,
+    TWCostCalculator,
+    USCostCalculator,
+    create_cost_calculator,
+)
+
+
+def test_create_cost_calculator_returns_tw_by_default() -> None:
+    calc = create_cost_calculator()
+    assert isinstance(calc, TWCostCalculator)
+
+
+def test_create_cost_calculator_returns_us() -> None:
+    calc = create_cost_calculator(market="us")
+    assert isinstance(calc, USCostCalculator)
+
+
+def test_create_cost_calculator_rejects_unknown_market() -> None:
+    with pytest.raises(ValueError):
+        create_cost_calculator(market="hk")
+
+
+def test_us_cost_calculator_defaults_to_zero_tax_and_commission() -> None:
+    calc = USCostCalculator(slippage_ticks=0)
+    cost = calc.calculate(price=100.0, quantity=10, side="BUY")
+    assert cost.tax == 0.0
+    assert cost.commission == 0.0
+
+
+def test_us_cost_calculator_uses_one_cent_tick() -> None:
+    calc = USCostCalculator(slippage_ticks=1)
+    assert calc.get_tick_size(500.0) == pytest.approx(0.01, abs=1e-9)
+
+
+def test_us_cost_does_not_apply_tw_minimum_commission() -> None:
+    calc = USCostCalculator(commission_per_trade=0.0, slippage_ticks=0)
+    cost = calc.calculate(price=1.0, quantity=1, side="BUY")
+    assert cost.commission == 0.0
 
 
 def test_tick_size_boundaries() -> None:

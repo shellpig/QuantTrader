@@ -57,9 +57,11 @@ from src.backtest.engine_vec import VectorizedBacktester
 from src.backtest.metrics import BacktestResult
 from src.backtest.report import TearsheetReport
 from src.backtest.dca import DcaBacktestResult, run_dca_backtest
+from src.backtest.cost import create_cost_calculator
 from src.core.config import get_config
 from src.core.constants import TAIPEI_TZ
 from src.core.exceptions import FetcherError
+from src.core.market import get_market_spec, normalize_market, normalize_symbol
 from src.core.strategy_config import (
     STRATEGY_META,
     format_param_caption,
@@ -81,6 +83,7 @@ from src.strategy.examples.macd_cross import MACDCrossStrategy
 from src.strategy.examples.rsi import RSIStrategy
 
 _TW_SYMBOL_PATTERN = re.compile(r"^[0-9A-Z]{4,6}$")
+_US_SYMBOL_HINT = "AAPL / MSFT / SPY / BRK.B"
 _VECTOR_ENGINE_LABEL = "向量化引擎"
 _EVENT_ENGINE_LABEL = "事件驅動引擎"
 _TRADE_MARKER_BASE_SIZE = 10
@@ -100,6 +103,8 @@ _SUPPORTED_TYPES = {
     "moving_average_cross", "dollar_cost_averaging",
     "rsi", "kd_cross", "macd_cross", "bollinger_band", "bias", "donchian_breakout",
 }
+_MARKET_OPTION_LABELS: tuple[str, str] = ("台股", "美股")
+_MARKET_BY_LABEL: dict[str, str] = {"台股": "tw", "美股": "us"}
 
 
 # ---------------------------------------------------------------------------
@@ -135,7 +140,8 @@ def render() -> None:
 # ---------------------------------------------------------------------------
 
 def _render_single_backtest_tab() -> None:
-    symbol, start_date, end_date = _input_symbol_and_dates("single")
+    market = _render_market_selector("single")
+    symbol, start_date, end_date = _input_symbol_and_dates("single", market=market)
 
     c1, c2 = st.columns(2)
     with c1:
@@ -166,6 +172,7 @@ def _render_single_backtest_tab() -> None:
             end_date=pd.Timestamp(end_date),
             engine_name=engine_name,
             strategy_preset=selected_strategy,
+            market=market,
         )
 
 
@@ -174,14 +181,20 @@ def _render_single_backtest_tab() -> None:
 # ---------------------------------------------------------------------------
 
 def _render_batch_comparison_tab() -> None:
-    symbol, start_date, end_date = _input_symbol_and_dates("batch")
+    market = _render_market_selector("batch")
+    symbol, start_date, end_date = _input_symbol_and_dates("batch", market=market)
 
     if st.button("批次回測全部策略", type="primary", key="batch_run"):
-        if not _TW_SYMBOL_PATTERN.fullmatch(symbol):
-            st.error("股票代碼格式錯誤，請輸入 4 到 6 碼英數台股代碼，或從名稱搜尋結果選擇股票。")
+        try:
+            normalized_symbol = normalize_symbol(symbol, market=market)
+        except ValueError:
+            if market == "tw":
+                st.error("股票代碼格式錯誤，請輸入 4 到 6 碼英數台股代碼，或從名稱搜尋結果選擇股票。")
+            else:
+                st.error("美股代碼格式錯誤，請輸入合法美股 ticker（例如 AAPL、MSFT、SPY、BRK.B）。")
             return
-        start_ts = _as_taipei_start(pd.Timestamp(start_date))
-        end_exclusive = _as_taipei_start(pd.Timestamp(end_date)) + pd.Timedelta(days=1)
+        start_ts = _as_market_start(pd.Timestamp(start_date), market)
+        end_exclusive = _as_market_start(pd.Timestamp(end_date), market) + pd.Timedelta(days=1)
         if end_exclusive <= start_ts:
             st.error("結束日期必須晚於開始日期。")
             return
@@ -189,10 +202,11 @@ def _render_batch_comparison_tab() -> None:
         with st.spinner("載入資料並執行批次回測…"):
             try:
                 data = _load_backtest_data(
-                    symbol=symbol,
+                    symbol=normalized_symbol,
                     start_ts=start_ts,
                     end_exclusive=end_exclusive,
                     require_adjusted=True,
+                    market=market,
                 )
             except Exception as exc:  # noqa: BLE001
                 st.error(f"讀取資料失敗：{exc}")
@@ -205,20 +219,23 @@ def _render_batch_comparison_tab() -> None:
             presets = get_strategy_presets(get_config())
             batch = run_strategy_batch(
                 data=data,
-                symbol=symbol,
+                symbol=normalized_symbol,
                 start_date=start_ts.strftime("%Y-%m-%d"),
                 end_date=(end_exclusive - pd.Timedelta(days=1)).strftime("%Y-%m-%d"),
                 presets=presets,
+                cost_calculator=create_cost_calculator(market=market),
             )
 
         st.session_state["batch_result"] = batch
         st.session_state["batch_data"] = data
         st.session_state["batch_presets"] = presets
+        st.session_state["batch_market"] = market
 
     batch: BatchResult | None = st.session_state.get("batch_result")
     if batch is None:
         st.info("設定股票代碼與日期後，點選「批次回測全部策略」。")
         return
+    batch_market = st.session_state.get("batch_market", market)
 
     # Build comparison dataframe
     rows = []
@@ -242,6 +259,7 @@ def _render_batch_comparison_tab() -> None:
     df_compare = pd.DataFrame(rows)
 
     st.subheader(f"{batch.symbol} 策略比較（{batch.start_date} ~ {batch.end_date}）")
+    st.caption(f"幣別：{get_market_spec(batch_market).currency}")
 
     sel = st.dataframe(
         df_compare,
@@ -274,7 +292,7 @@ def _render_batch_comparison_tab() -> None:
             data: pd.DataFrame = st.session_state.get("batch_data", pd.DataFrame())
             presets = st.session_state.get("batch_presets", [])
             preset = next((p for p in presets if p.get("name") == summary.preset_name), {})
-            _render_tearsheet_metrics(result)
+            _render_tearsheet_metrics(result, market=batch_market)
             _render_price_and_indicator_panel(
                 price_df=data,
                 trades=result.trades,
@@ -282,6 +300,7 @@ def _render_batch_comparison_tab() -> None:
                 symbol=batch.symbol,
                 strategy_type=summary.strategy_type,
                 strategy_params=preset.get("params", {}),
+                market=batch_market,
             )
 
 
@@ -339,7 +358,8 @@ _SWEEP_DEFAULTS: dict[str, dict[str, str]] = {
 
 
 def _render_sweep_tab() -> None:
-    symbol, start_date, end_date = _input_symbol_and_dates("sweep")
+    market = _render_market_selector("sweep")
+    symbol, start_date, end_date = _input_symbol_and_dates("sweep", market=market)
 
     sweep_types = list(SWEEP_PARAM_SPECS.keys())
     type_labels = [STRATEGY_META[t]["label"] for t in sweep_types]
@@ -386,11 +406,16 @@ def _render_sweep_tab() -> None:
     )
 
     if st.button("開始掃描", type="primary", key="sweep_run", disabled=(parse_error or over_limit)):
-        if not _TW_SYMBOL_PATTERN.fullmatch(symbol):
-            st.error("股票代碼格式錯誤，請輸入 4 到 6 碼英數台股代碼，或從名稱搜尋結果選擇股票。")
+        try:
+            normalized_symbol = normalize_symbol(symbol, market=market)
+        except ValueError:
+            if market == "tw":
+                st.error("股票代碼格式錯誤，請輸入 4 到 6 碼英數台股代碼，或從名稱搜尋結果選擇股票。")
+            else:
+                st.error("美股代碼格式錯誤，請輸入合法美股 ticker（例如 AAPL、MSFT、SPY、BRK.B）。")
             return
-        start_ts = _as_taipei_start(pd.Timestamp(start_date))
-        end_exclusive = _as_taipei_start(pd.Timestamp(end_date)) + pd.Timedelta(days=1)
+        start_ts = _as_market_start(pd.Timestamp(start_date), market)
+        end_exclusive = _as_market_start(pd.Timestamp(end_date), market) + pd.Timedelta(days=1)
         if end_exclusive <= start_ts:
             st.error("結束日期必須晚於開始日期。")
             return
@@ -398,10 +423,11 @@ def _render_sweep_tab() -> None:
         with st.spinner("載入資料並執行參數掃描…"):
             try:
                 data = _load_backtest_data(
-                    symbol=symbol,
+                    symbol=normalized_symbol,
                     start_ts=start_ts,
                     end_exclusive=end_exclusive,
                     require_adjusted=True,
+                    market=market,
                 )
             except Exception as exc:  # noqa: BLE001
                 st.error(f"讀取資料失敗：{exc}")
@@ -413,17 +439,19 @@ def _render_sweep_tab() -> None:
 
             sweep = run_parameter_sweep(
                 data=data,
-                symbol=symbol,
+                symbol=normalized_symbol,
                 start_date=start_ts.strftime("%Y-%m-%d"),
                 end_date=(end_exclusive - pd.Timedelta(days=1)).strftime("%Y-%m-%d"),
                 strategy_type=strategy_type,
                 param_candidates=param_candidates,
                 initial_capital=float(initial_capital),
+                cost_calculator=create_cost_calculator(market=market),
             )
 
         st.session_state["sweep_result"] = sweep
         st.session_state["sweep_data"] = data
         st.session_state["sweep_run_capital"] = float(initial_capital)
+        st.session_state["sweep_market"] = market
 
     sweep_result: SweepResult | None = st.session_state.get("sweep_result")
     if sweep_result is None:
@@ -434,6 +462,7 @@ def _render_sweep_tab() -> None:
         sweep_result,
         st.session_state.get("sweep_data", pd.DataFrame()),
         initial_capital=st.session_state.get("sweep_run_capital", 1_000_000.0),
+        market=st.session_state.get("sweep_market", market),
     )
 
 
@@ -441,6 +470,7 @@ def _render_sweep_results(
     sweep: SweepResult,
     data: pd.DataFrame,
     initial_capital: float,
+    market: str = "tw",
 ) -> None:
     meta = STRATEGY_META.get(sweep.strategy_type)
     type_label = meta["label"] if meta else sweep.strategy_type
@@ -450,6 +480,7 @@ def _render_sweep_results(
         f"策略：{type_label}　"
         f"{sweep.total_combos} 組合中 {sweep.valid_combos} 個合法"
     )
+    st.caption(f"幣別：{get_market_spec(market).currency}")
 
     _SORT_OPTIONS: dict[str, tuple[str, bool]] = {
         "Sharpe Ratio（夏普比率）": ("sharpe_ratio", False),
@@ -536,7 +567,7 @@ def _render_sweep_results(
         st.warning("此組合無詳細結果（執行時出錯）。")
         return
 
-    _render_tearsheet_metrics(s.result)
+    _render_tearsheet_metrics(s.result, market=market)
     if not data.empty:
         _render_price_and_indicator_panel(
             price_df=data,
@@ -545,6 +576,7 @@ def _render_sweep_results(
             symbol=sweep.symbol,
             strategy_type=sweep.strategy_type,
             strategy_params=s.params,
+            market=market,
         )
 
 
@@ -560,7 +592,8 @@ def _render_walk_forward_tab() -> None:
         f"最多 **{MAX_WFA_WINDOWS}** 段視窗；每段組合數不可超過 **{MAX_COMBOS}**。"
     )
 
-    symbol, start_date, end_date = _input_symbol_and_dates("wfa")
+    market = _render_market_selector("wfa")
+    symbol, start_date, end_date = _input_symbol_and_dates("wfa", market=market)
 
     sweep_types = list(SWEEP_PARAM_SPECS.keys())
     type_labels = [STRATEGY_META[t]["label"] for t in sweep_types]
@@ -656,11 +689,16 @@ def _render_walk_forward_tab() -> None:
         "開始 Walk-Forward 分析", type="primary", key="wfa_run",
         disabled=(parse_error or over_limit),
     ):
-        if not _TW_SYMBOL_PATTERN.fullmatch(symbol):
-            st.error("股票代碼格式錯誤，請輸入 4 到 6 碼英數台股代碼，或從名稱搜尋結果選擇股票。")
+        try:
+            normalized_symbol = normalize_symbol(symbol, market=market)
+        except ValueError:
+            if market == "tw":
+                st.error("股票代碼格式錯誤，請輸入 4 到 6 碼英數台股代碼，或從名稱搜尋結果選擇股票。")
+            else:
+                st.error("美股代碼格式錯誤，請輸入合法美股 ticker（例如 AAPL、MSFT、SPY、BRK.B）。")
             return
-        start_ts = _as_taipei_start(pd.Timestamp(start_date))
-        end_exclusive = _as_taipei_start(pd.Timestamp(end_date)) + pd.Timedelta(days=1)
+        start_ts = _as_market_start(pd.Timestamp(start_date), market)
+        end_exclusive = _as_market_start(pd.Timestamp(end_date), market) + pd.Timedelta(days=1)
         if end_exclusive <= start_ts:
             st.error("結束日期必須晚於開始日期。")
             return
@@ -668,10 +706,11 @@ def _render_walk_forward_tab() -> None:
         with st.spinner("載入資料中…"):
             try:
                 data = _load_backtest_data(
-                    symbol=symbol,
+                    symbol=normalized_symbol,
                     start_ts=start_ts,
                     end_exclusive=end_exclusive,
                     require_adjusted=True,
+                    market=market,
                 )
             except Exception as exc:  # noqa: BLE001
                 st.error(f"讀取資料失敗：{exc}")
@@ -691,7 +730,7 @@ def _render_walk_forward_tab() -> None:
         try:
             wfa_data = data.set_index("date")
             summary = run_walk_forward_analysis(
-                symbol=symbol,
+                symbol=normalized_symbol,
                 data=wfa_data,
                 strategy_type=strategy_type,
                 param_ranges=param_candidates,
@@ -701,6 +740,7 @@ def _render_walk_forward_tab() -> None:
                 oos_months=int(oos_months),
                 step_months=int(step_months),
                 progress_fn=on_progress,
+                cost_calculator=create_cost_calculator(market=market),
             )
         except ValueError as exc:
             progress_bar.empty()
@@ -712,14 +752,19 @@ def _render_walk_forward_tab() -> None:
         status_text.text("WFA 完成！")
 
         st.session_state["wfa_result"] = summary
-        st.session_state["wfa_result_symbol"] = symbol
+        st.session_state["wfa_result_symbol"] = normalized_symbol
+        st.session_state["wfa_market"] = market
 
     wfa_summary: WalkForwardSummary | None = st.session_state.get("wfa_result")
     if wfa_summary is None:
         st.info("設定股票代碼、日期與參數範圍後，點選「開始 Walk-Forward 分析」。")
         return
 
-    _render_wfa_results(wfa_summary, symbol=st.session_state.get("wfa_result_symbol", ""))
+    _render_wfa_results(
+        wfa_summary,
+        symbol=st.session_state.get("wfa_result_symbol", ""),
+        market=st.session_state.get("wfa_market", market),
+    )
 
 
 def _fmt_wfa_metric(value: float, metric: str) -> str:
@@ -728,13 +773,14 @@ def _fmt_wfa_metric(value: float, metric: str) -> str:
     return f"{value * 100:.2f}%"
 
 
-def _render_wfa_results(summary: WalkForwardSummary, *, symbol: str) -> None:
+def _render_wfa_results(summary: WalkForwardSummary, *, symbol: str, market: str = "tw") -> None:
     meta = STRATEGY_META.get(summary.strategy_type)
     type_label = meta["label"] if meta else summary.strategy_type
     metric_label = _OPTIMIZE_METRIC_LABELS.get(summary.optimize_metric, summary.optimize_metric)
 
     st.subheader(f"{symbol} Walk-Forward 分析結果")
     st.caption(f"策略：{type_label}　IS 最佳化指標：{metric_label}")
+    st.caption(f"幣別：{get_market_spec(market).currency}")
 
     agg = summary.aggregate
 
@@ -872,10 +918,32 @@ def _render_wfa_results(summary: WalkForwardSummary, *, symbol: str) -> None:
 # Shared input helper
 # ---------------------------------------------------------------------------
 
-def _input_symbol_and_dates(key_prefix: str) -> tuple[str, Any, Any]:
+def _render_market_selector(key_prefix: str) -> str:
+    label = st.selectbox("市場", options=list(_MARKET_OPTION_LABELS), index=0, key=f"{key_prefix}_market")
+    return _MARKET_BY_LABEL[label]
+
+
+def _input_symbol_and_dates(key_prefix: str, market: str = "tw") -> tuple[str, Any, Any]:
+    normalized_market = normalize_market(market)
     today = pd.Timestamp.today().date()
     default_start = (pd.Timestamp.today() - pd.Timedelta(days=365 * 3)).date()
-    symbol = render_stock_selector("股票代碼或名稱", key_prefix=key_prefix, default="2330")
+    if normalized_market == "tw":
+        symbol = render_stock_selector("股票代碼或名稱", key_prefix=key_prefix, default="2330")
+    else:
+        raw_symbol = st.text_input(
+            "美股代碼",
+            value="AAPL",
+            key=f"{key_prefix}_us_symbol",
+            placeholder=_US_SYMBOL_HINT,
+        ).strip()
+        if not raw_symbol:
+            symbol = ""
+        else:
+            try:
+                symbol = normalize_symbol(raw_symbol, market=normalized_market)
+            except ValueError:
+                symbol = raw_symbol.upper()
+
     d1, d2 = st.columns(2)
     with d1:
         start_date = st.date_input("開始日期", value=default_start, key=f"{key_prefix}_start")
@@ -895,23 +963,31 @@ def _run_backtest(
     end_date: pd.Timestamp,
     engine_name: str,
     strategy_preset: dict[str, object],
+    market: str = "tw",
 ) -> None:
-    if not _TW_SYMBOL_PATTERN.fullmatch(symbol):
-        st.error("股票代碼格式錯誤，請輸入 4 到 6 碼英數台股代碼，或從名稱搜尋結果選擇股票。")
+    normalized_market = normalize_market(market)
+    try:
+        normalized_symbol = normalize_symbol(symbol, market=normalized_market)
+    except ValueError:
+        if normalized_market == "tw":
+            st.error("股票代碼格式錯誤，請輸入 4 到 6 碼英數台股代碼，或從名稱搜尋結果選擇股票。")
+        else:
+            st.error("美股代碼格式錯誤，請輸入合法美股 ticker（例如 AAPL、MSFT、SPY、BRK.B）。")
         return
 
-    start_ts = _as_taipei_start(start_date)
-    end_exclusive = _as_taipei_start(end_date) + pd.Timedelta(days=1)
+    start_ts = _as_market_start(start_date, normalized_market)
+    end_exclusive = _as_market_start(end_date, normalized_market) + pd.Timedelta(days=1)
     if end_exclusive <= start_ts:
         st.error("結束日期必須晚於開始日期。")
         return
 
     try:
         data = _load_backtest_data(
-            symbol=symbol,
+            symbol=normalized_symbol,
             start_ts=start_ts,
             end_exclusive=end_exclusive,
             require_adjusted=True,
+            market=normalized_market,
         )
     except Exception as exc:  # noqa: BLE001
         st.error(f"讀取資料失敗：{exc}")
@@ -932,33 +1008,49 @@ def _run_backtest(
                 st.error("策略參數錯誤：short_window 必須小於 long_window。")
                 return
             strategy = MACrossStrategy(ma_short=ma_short, ma_long=ma_long)
-            _run_standard_backtest(strategy, data, engine_name, symbol, start_ts, end_exclusive, strategy_type, strategy_params)
+            _run_standard_backtest(
+                strategy,
+                data,
+                engine_name,
+                normalized_symbol,
+                start_ts,
+                end_exclusive,
+                strategy_type,
+                strategy_params,
+                market=normalized_market,
+            )
             return
 
         if strategy_type == "dollar_cost_averaging":
             if engine_name != _VECTOR_ENGINE_LABEL:
                 st.info("定期定額策略使用專用回測流程，已忽略回測引擎選擇。")
+            if normalized_market == "us":
+                st.warning("US-1 DCA 最小買入單位為 1 整股，不支援碎股。若每月投入金額低於股價，該期可能不會買進。")
             dca_result = run_dca_backtest(
                 data=data,
-                symbol=symbol,
+                symbol=normalized_symbol,
                 start_ts=start_ts,
                 end_exclusive=end_exclusive,
                 params=strategy_params,
+                cost_calculator=create_cost_calculator(market=normalized_market),
+                market=normalized_market,
             )
-            _render_dca_summary(dca_result)
-            _render_dca_transactions(dca_result.transactions)
+            _render_dca_summary(dca_result, market=normalized_market)
+            _render_dca_transactions(dca_result.transactions, market=normalized_market)
             trade_markers = _dca_transactions_to_trade_markers(dca_result.transactions)
             st.divider()
             _render_price_and_indicator_panel(
                 price_df=data,
                 trades=trade_markers,
                 signals=None,
-                symbol=symbol,
+                symbol=normalized_symbol,
                 strategy_type=strategy_type,
                 strategy_params=strategy_params,
+                market=normalized_market,
             )
             st.divider()
-            _render_eps_panel(symbol=symbol, end_ts=end_exclusive - pd.Timedelta(days=1))
+            if normalized_market == "tw":
+                _render_eps_panel(symbol=normalized_symbol, end_ts=end_exclusive - pd.Timedelta(days=1))
             return
 
         if strategy_type == "rsi":
@@ -999,7 +1091,17 @@ def _run_backtest(
             st.error(f"目前不支援策略類型：{strategy_type}")
             return
 
-        _run_standard_backtest(strategy, data, engine_name, symbol, start_ts, end_exclusive, strategy_type, strategy_params)
+        _run_standard_backtest(
+            strategy,
+            data,
+            engine_name,
+            normalized_symbol,
+            start_ts,
+            end_exclusive,
+            strategy_type,
+            strategy_params,
+            market=normalized_market,
+        )
 
     except Exception as exc:  # noqa: BLE001
         st.error(f"回測執行失敗：{exc}")
@@ -1014,11 +1116,18 @@ def _run_standard_backtest(
     end_exclusive: pd.Timestamp,
     strategy_type: str = "",
     strategy_params: dict | None = None,
+    market: str = "tw",
 ) -> None:
-    engine = VectorizedBacktester() if engine_name == _VECTOR_ENGINE_LABEL else EventDrivenBacktester()
+    normalized_market = normalize_market(market)
+    cost_calculator = create_cost_calculator(market=normalized_market)
+    engine = (
+        VectorizedBacktester(cost_calculator=cost_calculator)
+        if engine_name == _VECTOR_ENGINE_LABEL
+        else EventDrivenBacktester(cost_calculator=cost_calculator)
+    )
     result = engine.run(strategy=strategy, data=data)  # type: ignore[arg-type]
 
-    _render_tearsheet_metrics(result)
+    _render_tearsheet_metrics(result, market=normalized_market)
 
     st.divider()
     _render_price_and_indicator_panel(
@@ -1028,14 +1137,17 @@ def _run_standard_backtest(
         symbol=symbol,
         strategy_type=strategy_type,
         strategy_params=strategy_params or {},
+        market=normalized_market,
     )
     st.divider()
-    _render_eps_panel(symbol=symbol, end_ts=end_exclusive - pd.Timedelta(days=1))
+    if normalized_market == "tw":
+        _render_eps_panel(symbol=symbol, end_ts=end_exclusive - pd.Timedelta(days=1))
 
 
-def _render_tearsheet_metrics(result: BacktestResult) -> None:
+def _render_tearsheet_metrics(result: BacktestResult, market: str = "tw") -> None:
     report = TearsheetReport(result)
     figures = report.get_streamlit_figures()
+    currency = get_market_spec(market).currency
 
     m0, m1, m2, m3, m4 = st.columns(5)
     m0.metric("交易次數", f"{int(result.total_trades)}")
@@ -1043,6 +1155,7 @@ def _render_tearsheet_metrics(result: BacktestResult) -> None:
     m2.metric("年化報酬率", f"{result.annual_return * 100:.2f}%")
     m3.metric("最大回撤", f"{result.max_drawdown * 100:.2f}%")
     m4.metric("Sharpe（夏普比率）", f"{result.sharpe_ratio:.2f}")
+    st.caption(f"幣別：{currency}")
 
     config = get_config()
     ui_section = config.get("ui", {}) if isinstance(config, dict) else {}
@@ -1074,6 +1187,7 @@ def _render_price_and_indicator_panel(
     symbol: str,
     strategy_type: str | None = None,
     strategy_params: dict | None = None,
+    market: str = "tw",
 ) -> None:
     st.subheader("股價走勢、均線與成交點位")
     if price_df.empty:
@@ -1085,6 +1199,7 @@ def _render_price_and_indicator_panel(
 
     params = strategy_params or {}
     features = _build_price_features(price_df)
+    candle_colors = _candlestick_colors(market)
 
     has_ohlc = all(c in price_df.columns for c in ("open", "high", "low", "close"))
     indicator_rows = _indicator_subplot_rows(strategy_type)
@@ -1120,10 +1235,10 @@ def _render_price_and_indicator_panel(
             low=price_df["low"],
             close=price_df["close"],
             name="K線",
-            increasing_line_color="#d62728",
-            decreasing_line_color="#2ca02c",
-            increasing_fillcolor="#d62728",
-            decreasing_fillcolor="#2ca02c",
+            increasing_line_color=candle_colors["increasing"],
+            decreasing_line_color=candle_colors["decreasing"],
+            increasing_fillcolor=candle_colors["increasing"],
+            decreasing_fillcolor=candle_colors["decreasing"],
         ))
     else:
         _add(go.Scatter(x=dates, y=features["close"], mode="lines", name="收盤價",
@@ -1243,7 +1358,19 @@ def _render_price_and_indicator_panel(
         fig.update_xaxes(rangeslider_visible=False)
 
     st.plotly_chart(fig, width="stretch")
-    st.caption("K線：漲紅跌綠（台股慣例）。均線：MA5 / MA20 / MA60。Signal marker（菱形）為策略原始訊號，Trade marker（三角形）為引擎實際成交點。")
+    st.caption(_price_panel_caption(market))
+
+
+def _price_panel_caption(market: str = "tw") -> str:
+    if normalize_market(market) == "tw":
+        return "K線：漲紅跌綠（台股慣例）。均線：MA5 / MA20 / MA60。Signal marker（菱形）為策略原始訊號，Trade marker（三角形）為引擎實際成交點。"
+    return "K線：漲綠跌紅（美股常見）。均線：MA5 / MA20 / MA60。Signal marker（菱形）為策略原始訊號，Trade marker（三角形）為引擎實際成交點。"
+
+
+def _candlestick_colors(market: str = "tw") -> dict[str, str]:
+    if normalize_market(market) == "tw":
+        return {"increasing": "#d62728", "decreasing": "#2ca02c"}
+    return {"increasing": "#2ca02c", "decreasing": "#d62728"}
 
 
 def _indicator_subplot_rows(strategy_type: str | None) -> list[dict]:
@@ -1406,13 +1533,14 @@ def _add_signal_marker_traces(
 # DCA helpers (unchanged)
 # ---------------------------------------------------------------------------
 
-def _render_dca_summary(result: DcaBacktestResult) -> None:
+def _render_dca_summary(result: DcaBacktestResult, market: str = "tw") -> None:
+    currency = get_market_spec(market).currency
     st.subheader("定期定額回測摘要")
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("累積投入金額", f"{result.cumulative_invested:,.2f}")
-    c2.metric("目前市值", f"{result.market_value:,.2f}")
-    c3.metric("帳戶現金", f"{result.cash_balance:,.2f}")
-    c4.metric("未實現損益", f"{result.unrealized_pnl:,.2f}")
+    c1.metric(f"累積投入金額（{currency}）", f"{result.cumulative_invested:,.2f}")
+    c2.metric(f"目前市值（{currency}）", f"{result.market_value:,.2f}")
+    c3.metric(f"帳戶現金（{currency}）", f"{result.cash_balance:,.2f}")
+    c4.metric(f"未實現損益（{currency}）", f"{result.unrealized_pnl:,.2f}")
 
     c5, c6, c7, c8 = st.columns(4)
     c5.metric("總報酬率", f"{result.total_return_rate * 100:.2f}%")
@@ -1433,7 +1561,8 @@ def _render_dca_summary(result: DcaBacktestResult) -> None:
         )
 
 
-def _render_dca_transactions(transactions: pd.DataFrame) -> None:
+def _render_dca_transactions(transactions: pd.DataFrame, market: str = "tw") -> None:
+    currency = get_market_spec(market).currency
     st.subheader("定期定額交易紀錄")
     if transactions is None or transactions.empty:
         st.info("尚無定期定額交易紀錄。")
@@ -1458,15 +1587,15 @@ def _render_dca_transactions(transactions: pd.DataFrame) -> None:
         "日期": view["date"].dt.strftime("%Y-%m-%d"),
         "狀態": view["status"],
         "原因": view["reason"],
-        "投入金額": view["invested_amount"],
-        "買入價格": view["buy_price"],
+        f"投入金額（{currency}）": view["invested_amount"],
+        f"買入價格（{currency}）": view["buy_price"],
         "買入股數": view["buy_shares"],
-        "手續費": view["commission"],
-        "實際花費": view["spend"],
-        "剩餘現金": view["cash_balance"],
+        f"手續費（{currency}）": view["commission"],
+        f"實際花費（{currency}）": view["spend"],
+        f"剩餘現金（{currency}）": view["cash_balance"],
         "累積股數": view["cumulative_shares"],
-        "累積投入": view["cumulative_invested"],
-        "平均成本": view["average_cost"],
+        f"累積投入（{currency}）": view["cumulative_invested"],
+        f"平均成本（{currency}）": view["average_cost"],
     })
     st.dataframe(display, width="stretch", hide_index=True)
 
@@ -1500,16 +1629,19 @@ def _load_backtest_data(
     start_ts: pd.Timestamp,
     end_exclusive: pd.Timestamp,
     require_adjusted: bool = True,
+    market: str = "tw",
 ) -> pd.DataFrame:
+    normalized_market = normalize_market(market)
+    timezone = get_market_spec(normalized_market).timezone
     storage = ParquetStorage()
-    _sync_symbol_daily_data(symbol, storage)
-    df = storage.load_adjusted(symbol)
+    _sync_symbol_daily_data(symbol, storage, market=normalized_market)
+    df = storage.load_adjusted(symbol, market=normalized_market)
     if df.empty and require_adjusted:
         raise FetcherError(
             f"{symbol} adjusted data is missing. Please run rebuild_adj_factors (or rebuild_symbol) before backtest."
         )
     if df.empty:
-        df = storage.load_daily(symbol)
+        df = storage.load_daily(symbol, market=normalized_market)
     if df.empty:
         return df
 
@@ -1517,9 +1649,9 @@ def _load_backtest_data(
     data["date"] = pd.to_datetime(data["date"], errors="coerce")
     data = data.dropna(subset=["date"]).copy()
     if data["date"].dt.tz is None:
-        data["date"] = data["date"].dt.tz_localize(TAIPEI_TZ)
+        data["date"] = data["date"].dt.tz_localize(timezone)
     else:
-        data["date"] = data["date"].dt.tz_convert(TAIPEI_TZ)
+        data["date"] = data["date"].dt.tz_convert(timezone)
 
     for col in ("open", "high", "low", "close"):
         data[col] = pd.to_numeric(data[col], errors="coerce")
@@ -1528,8 +1660,9 @@ def _load_backtest_data(
     return data.sort_values("date").reset_index(drop=True)
 
 
-def _sync_symbol_daily_data(symbol: str, storage: ParquetStorage) -> None:
-    fetchers = _build_fetchers_from_config()
+def _sync_symbol_daily_data(symbol: str, storage: ParquetStorage, market: str = "tw") -> None:
+    normalized_market = normalize_market(market)
+    fetchers = _build_fetchers_from_config(market=normalized_market)
     if not fetchers:
         raise FetcherError(f"{symbol} 自動更新日線資料失敗：No available data source. Details: n/a")
 
@@ -1543,7 +1676,7 @@ def _sync_symbol_daily_data(symbol: str, storage: ParquetStorage) -> None:
                 meta=meta,
                 cleaner=DataCleaner(),
             )
-            maintenance.update_daily(symbol)
+            maintenance.update_daily(symbol, market=normalized_market)
             return
         except Exception as exc:  # noqa: BLE001
             errors.append(f"{source}: {exc}")
@@ -1553,14 +1686,15 @@ def _sync_symbol_daily_data(symbol: str, storage: ParquetStorage) -> None:
     raise FetcherError(f"{symbol} 自動更新日線資料失敗：{' | '.join(errors)}")
 
 
-def _build_fetcher_from_config() -> IDataFetcher:
-    fetchers = _build_fetchers_from_config()
+def _build_fetcher_from_config(market: str = "tw") -> IDataFetcher:
+    fetchers = _build_fetchers_from_config(market=market)
     if fetchers:
         return fetchers[0][1]
     raise RuntimeError("No available data source. Details: n/a")
 
 
-def _build_fetchers_from_config() -> list[tuple[str, IDataFetcher]]:
+def _build_fetchers_from_config(market: str = "tw") -> list[tuple[str, IDataFetcher]]:
+    normalized_market = normalize_market(market)
     cfg = get_config()
     data_section = cfg.get("data", {}) if isinstance(cfg, dict) else {}
     primary = str(data_section.get("primary_source", "finmind")).strip().lower()
@@ -1572,10 +1706,10 @@ def _build_fetchers_from_config() -> list[tuple[str, IDataFetcher]]:
         if source in {name for name, _ in fetchers}:
             continue
         try:
-            if source == "finmind":
+            if source == "finmind" and normalized_market == "tw":
                 fetchers.append((source, FinMindFetcher()))
             elif source == "yfinance":
-                fetchers.append((source, YFinanceFetcher()))
+                fetchers.append((source, YFinanceFetcher(market=normalized_market)))
         except Exception:  # noqa: BLE001
             continue
     return fetchers
@@ -1809,10 +1943,15 @@ def _format_eps_value(value: float) -> str:
 
 
 def _as_taipei_start(value: pd.Timestamp) -> pd.Timestamp:
+    return _as_market_start(value, market="tw")
+
+
+def _as_market_start(value: pd.Timestamp, market: str = "tw") -> pd.Timestamp:
+    timezone = get_market_spec(market).timezone
     ts = pd.Timestamp(value).normalize()
     if ts.tzinfo is None:
-        return ts.tz_localize(TAIPEI_TZ)
-    return ts.tz_convert(TAIPEI_TZ)
+        return ts.tz_localize(timezone)
+    return ts.tz_convert(timezone)
 
 
 if __name__ == "__main__":

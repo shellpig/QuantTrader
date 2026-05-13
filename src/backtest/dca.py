@@ -9,10 +9,10 @@ from typing import Any
 
 import pandas as pd
 
-from src.backtest.cost import CostCalculator
-from src.backtest._helpers import ETF_SYMBOLS
-from src.core.constants import TAIPEI_TZ
+from src.backtest.cost import TWCostCalculator, USCostCalculator, create_cost_calculator
+from src.backtest._helpers import is_etf_symbol
 from src.core.config import get_config
+from src.core.market import get_market_spec, normalize_market
 
 
 @dataclass
@@ -37,24 +37,31 @@ def run_dca_backtest(
     start_ts: pd.Timestamp,
     end_exclusive: pd.Timestamp,
     params: dict[str, Any],
-    cost_calculator: CostCalculator | None = None,
+    cost_calculator: TWCostCalculator | USCostCalculator | None = None,
+    market: str = "tw",
 ) -> DcaBacktestResult:
     """Run DCA simulation with external monthly contributions."""
     if end_exclusive <= start_ts:
         raise ValueError("end_exclusive must be after start_ts.")
 
+    normalized_market = normalize_market(market)
+    market_spec = get_market_spec(normalized_market)
+    timezone = market_spec.timezone
+
     monthly_day = int(params.get("monthly_day", 5))
     monthly_amount = float(params.get("monthly_amount", 10_000))
     min_buy_unit = max(1, int(params.get("min_buy_unit", 1)))
+    if normalized_market == "us":
+        min_buy_unit = 1
     buy_price_field = str(params.get("buy_price_field", "close")).strip().lower()
     if buy_price_field != "close":
         raise ValueError("Only buy_price_field='close' is supported.")
 
-    calc = cost_calculator or _build_cost_calculator_from_config()
-    prepared = _prepare_data(data, buy_price_field=buy_price_field)
+    calc = cost_calculator or _build_cost_calculator_from_config(market=normalized_market)
+    prepared = _prepare_data(data, buy_price_field=buy_price_field, timezone=timezone)
     trading_dates = pd.DatetimeIndex(prepared["date"]).sort_values().unique()
 
-    months = _list_schedule_months(start_ts=start_ts, end_exclusive=end_exclusive)
+    months = _list_schedule_months(start_ts=start_ts, end_exclusive=end_exclusive, timezone=timezone)
     if not months:
         return DcaBacktestResult(
             transactions=_empty_transactions(),
@@ -68,7 +75,7 @@ def run_dca_backtest(
             contribution_count=0,
         )
 
-    is_etf = _is_etf_symbol(symbol)
+    is_etf = is_etf_symbol(symbol, market=normalized_market)
     price_indexed = prepared.set_index("date")
 
     cash_balance = 0.0
@@ -88,6 +95,7 @@ def run_dca_backtest(
             year=year,
             month=month,
             monthly_day=monthly_day,
+            timezone=timezone,
         )
         record = {
             "date": pd.NaT,
@@ -152,7 +160,7 @@ def run_dca_backtest(
 
         if pd.isna(record["date"]):
             year_end_day = calendar.monthrange(year, month)[1]
-            record["date"] = pd.Timestamp(year=year, month=month, day=year_end_day, tz=TAIPEI_TZ)
+            record["date"] = pd.Timestamp(year=year, month=month, day=year_end_day, tz=timezone)
 
         record["cash_balance"] = float(cash_balance)
         record["cumulative_shares"] = int(cumulative_shares)
@@ -184,7 +192,7 @@ def run_dca_backtest(
     )
 
 
-def _prepare_data(data: pd.DataFrame, *, buy_price_field: str) -> pd.DataFrame:
+def _prepare_data(data: pd.DataFrame, *, buy_price_field: str, timezone: str) -> pd.DataFrame:
     df = data.copy(deep=True)
     if "date" in df.columns:
         df["date"] = pd.to_datetime(df["date"], errors="coerce")
@@ -199,9 +207,9 @@ def _prepare_data(data: pd.DataFrame, *, buy_price_field: str) -> pd.DataFrame:
         return pd.DataFrame(columns=["date", buy_price_field])
 
     if df["date"].dt.tz is None:
-        df["date"] = df["date"].dt.tz_localize(TAIPEI_TZ)
+        df["date"] = df["date"].dt.tz_localize(timezone)
     else:
-        df["date"] = df["date"].dt.tz_convert(TAIPEI_TZ)
+        df["date"] = df["date"].dt.tz_convert(timezone)
     df["date"] = df["date"].dt.normalize()
     return df.sort_values("date").drop_duplicates(subset=["date"], keep="last").reset_index(drop=True)
 
@@ -212,14 +220,15 @@ def _resolve_buy_date(
     year: int,
     month: int,
     monthly_day: int,
+    timezone: str,
 ) -> dict[str, Any]:
     if trading_dates.empty:
         return {"date": None, "reason": "NO_TRADING_DATES"}
 
     days_in_month = calendar.monthrange(year, month)[1]
-    month_end = pd.Timestamp(date(year, month, days_in_month), tz=TAIPEI_TZ)
+    month_end = pd.Timestamp(date(year, month, days_in_month), tz=timezone)
     if monthly_day <= days_in_month:
-        start_day = pd.Timestamp(date(year, month, monthly_day), tz=TAIPEI_TZ)
+        start_day = pd.Timestamp(date(year, month, monthly_day), tz=timezone)
         candidates = trading_dates[(trading_dates >= start_day) & (trading_dates <= month_end)]
         if len(candidates) == 0:
             return {"date": None, "reason": "NO_TRADING_DAY_UNTIL_MONTH_END"}
@@ -233,17 +242,17 @@ def _resolve_buy_date(
     return {"date": pd.Timestamp(future_candidates[0]), "reason": ""}
 
 
-def _list_schedule_months(*, start_ts: pd.Timestamp, end_exclusive: pd.Timestamp) -> list[tuple[int, int]]:
-    start = pd.Timestamp(start_ts).tz_convert(TAIPEI_TZ) if pd.Timestamp(start_ts).tzinfo else pd.Timestamp(start_ts)
+def _list_schedule_months(*, start_ts: pd.Timestamp, end_exclusive: pd.Timestamp, timezone: str) -> list[tuple[int, int]]:
+    start = pd.Timestamp(start_ts).tz_convert(timezone) if pd.Timestamp(start_ts).tzinfo else pd.Timestamp(start_ts)
     end_inclusive = (pd.Timestamp(end_exclusive) - pd.Timedelta(days=1))
     if start.tzinfo is None:
-        start = start.tz_localize(TAIPEI_TZ)
+        start = start.tz_localize(timezone)
     else:
-        start = start.tz_convert(TAIPEI_TZ)
+        start = start.tz_convert(timezone)
     if end_inclusive.tzinfo is None:
-        end_inclusive = end_inclusive.tz_localize(TAIPEI_TZ)
+        end_inclusive = end_inclusive.tz_localize(timezone)
     else:
-        end_inclusive = end_inclusive.tz_convert(TAIPEI_TZ)
+        end_inclusive = end_inclusive.tz_convert(timezone)
 
     cur = date(start.year, start.month, 1)
     stop = date(end_inclusive.year, end_inclusive.month, 1)
@@ -265,7 +274,7 @@ def _max_affordable_buy_quantity(
     cash: float,
     price: float,
     min_buy_unit: int,
-    cost_calculator: CostCalculator,
+    cost_calculator: TWCostCalculator | USCostCalculator,
     is_etf: bool,
 ) -> int:
     if cash <= 0 or price <= 0:
@@ -298,18 +307,22 @@ def _max_affordable_buy_quantity(
     return best_units * step
 
 
-def _buy_total_spend(*, price: float, quantity: int, cost_calculator: CostCalculator, is_etf: bool) -> float:
+def _buy_total_spend(
+    *,
+    price: float,
+    quantity: int,
+    cost_calculator: TWCostCalculator | USCostCalculator,
+    is_etf: bool,
+) -> float:
     cost = cost_calculator.calculate(price=price, quantity=quantity, side="BUY", is_etf=is_etf)
     return float((price * quantity) + cost.total)
 
 
-def _is_etf_symbol(symbol: str) -> bool:
-    if symbol in ETF_SYMBOLS:
-        return True
-    return len(symbol) == 4 and symbol.startswith("00")
+def _build_cost_calculator_from_config(market: str = "tw") -> TWCostCalculator | USCostCalculator:
+    normalized_market = normalize_market(market)
+    if normalized_market == "us":
+        return create_cost_calculator(market="us")
 
-
-def _build_cost_calculator_from_config() -> CostCalculator:
     try:
         cfg = get_config().get("backtest", {})
         if not isinstance(cfg, dict):
@@ -317,7 +330,8 @@ def _build_cost_calculator_from_config() -> CostCalculator:
     except Exception:
         cfg = {}
 
-    return CostCalculator(
+    return create_cost_calculator(
+        market="tw",
         commission_rate=float(cfg.get("commission_rate", 0.001425)),
         commission_discount=float(cfg.get("commission_discount", 0.6)),
         tax_rate=float(cfg.get("tax_rate", 0.003)),

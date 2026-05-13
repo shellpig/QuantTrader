@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import pandas as pd
 
-from src.ui.stock_selector import StockOption, find_stock_matches, format_stock_option, normalize_stock_options
+from src.ui.stock_selector import (
+    StockOption,
+    find_stock_matches,
+    format_stock_option,
+    normalize_stock_options,
+    render_stock_selector,
+)
 
 
 def test_normalize_stock_options_keeps_symbol_and_name() -> None:
@@ -30,3 +36,31 @@ def test_find_stock_matches_by_partial_name_and_symbol() -> None:
     assert find_stock_matches("積", options) == [StockOption(symbol="2330", name="台積電")]
     assert find_stock_matches("00981", options) == [StockOption(symbol="00981A", name="主動統一台股增長")]
     assert format_stock_option(options[0]) == "台積電（2330）"
+
+
+def test_render_stock_selector_us_normalizes_brk_dot_b(monkeypatch) -> None:
+    import src.ui.stock_selector as selector_module
+
+    class _StubSt:
+        def text_input(self, *args, **kwargs) -> str:  # noqa: ANN002, ANN003
+            return "BRK.B"
+
+    monkeypatch.setattr(selector_module, "st", _StubSt())
+
+    out = render_stock_selector("美股代碼", key_prefix="ut_us", market="us", default="")
+
+    assert out == "BRK-B"
+
+
+def test_render_stock_selector_us_returns_upper_for_invalid_symbol(monkeypatch) -> None:
+    import src.ui.stock_selector as selector_module
+
+    class _StubSt:
+        def text_input(self, *args, **kwargs) -> str:  # noqa: ANN002, ANN003
+            return "7203.t"
+
+    monkeypatch.setattr(selector_module, "st", _StubSt())
+
+    out = render_stock_selector("美股代碼", key_prefix="ut_us_invalid", market="us", default="")
+
+    assert out == "7203.T"

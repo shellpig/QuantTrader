@@ -30,6 +30,7 @@ from src.analysis.pattern import (
 from src.analysis.technical_summary import TechnicalSummary, generate_technical_summary
 from src.core.config import get_config
 from src.core.exceptions import AICallError, AIDisabledError
+from src.core.market import get_market_spec, normalize_market, normalize_symbol
 from src.data.cleaner import DataCleaner
 from src.data.fetcher import FinMindFetcher, IDataFetcher, YFinanceFetcher
 from src.data.maintenance import DataMaintenance
@@ -43,6 +44,9 @@ _STATE_KEY = "dashboard_payload"
 _ANALYZE_REQUESTED_KEY = "dashboard_analyze_requested"
 _KLINE_COUNT_OPTIONS = (30, 60, 90, 120, 180, 240, 360)
 _TAIPEI_TZ = ZoneInfo("Asia/Taipei")
+_MARKET_OPTION_LABELS: tuple[str, str] = ("台股", "美股")
+_MARKET_BY_LABEL: dict[str, str] = {"台股": "tw", "美股": "us"}
+_US_SYMBOL_HINT = "AAPL / MSFT / SPY / BRK.B"
 
 _HELP_TEXTS: dict[str, str] = {
     "trend_direction": (
@@ -165,28 +169,29 @@ def render_dashboard_page() -> None:
     st.title("個股分析")
     st.caption("整合技術面、籌碼、型態與 AI 劇本的個股儀表板。")
 
-    symbol = render_stock_selector(
-        "股票代碼或名稱",
-        key_prefix="dashboard",
-        default="",
-        text_input_kwargs={"on_change": _request_dashboard_analysis},
-    )
+    market = _render_market_selector("dashboard")
+    symbol = _input_dashboard_symbol(market=market)
     analyze_clicked = st.button("分析", type="primary", key="dashboard_analyze")
     analyze_requested = bool(st.session_state.pop(_ANALYZE_REQUESTED_KEY, False))
 
     if not symbol:
         st.info("請先輸入股票代碼或名稱。")
         return
-    if not _TW_SYMBOL_PATTERN.fullmatch(symbol):
-        st.warning("股票代碼格式錯誤，請輸入 4~6 位英數台股代碼，或從名稱搜尋結果選擇股票。")
+    try:
+        normalized_symbol = normalize_symbol(symbol, market=market)
+    except ValueError:
+        if market == "tw":
+            st.warning("股票代碼格式錯誤，請輸入 4~6 位英數台股代碼，或從名稱搜尋結果選擇股票。")
+        else:
+            st.warning("美股代碼格式錯誤，請輸入合法美股 ticker（例如 AAPL、MSFT、SPY、BRK.B）。")
         return
 
     if analyze_clicked or analyze_requested:
-        payload = _build_dashboard_payload(symbol)
+        payload = _build_dashboard_payload(normalized_symbol, market=market)
         st.session_state[_STATE_KEY] = payload
 
     payload = st.session_state.get(_STATE_KEY)
-    if not payload or payload.get("symbol") != symbol:
+    if not payload or payload.get("symbol") != normalized_symbol or payload.get("market") != market:
         st.info("輸入股票代碼或名稱後，點選「分析」。")
         return
 
@@ -203,6 +208,7 @@ def render_dashboard_page() -> None:
             quote=payload.get("quote"),
             technical=payload["technical"],
             df=payload["daily_df"],
+            market=market,
         )
     with tabs[1]:
         _render_tab_chip(
@@ -211,6 +217,7 @@ def render_dashboard_page() -> None:
             technical=payload["technical"],
             chip_recent_df=payload.get("chip_recent_df"),
             chip_error=payload.get("chip_error"),
+            market=market,
         )
     with tabs[2]:
         _render_tab_pattern(
@@ -226,7 +233,7 @@ def render_dashboard_page() -> None:
         )
 
     if refresh_clicked:
-        refreshed_quote, refreshed_bid_ask, refresh_error = _refresh_realtime_snapshot(symbol)
+        refreshed_quote, refreshed_bid_ask, refresh_error = _refresh_realtime_snapshot(normalized_symbol, market=market)
         if refreshed_quote is not None:
             payload["quote"] = refreshed_quote
         if refreshed_bid_ask is not None:
@@ -237,12 +244,45 @@ def render_dashboard_page() -> None:
         st.rerun()
 
 
-def _build_dashboard_payload(symbol: str) -> dict[str, Any]:
+def _render_market_selector(key_prefix: str) -> str:
+    label = st.selectbox("市場", options=list(_MARKET_OPTION_LABELS), index=0, key=f"{key_prefix}_market")
+    return normalize_market(_MARKET_BY_LABEL.get(str(label), "tw"))
+
+
+def _input_dashboard_symbol(*, market: str) -> str:
+    normalized_market = normalize_market(market)
+    if normalized_market == "tw":
+        return render_stock_selector(
+            "股票代碼或名稱",
+            key_prefix="dashboard",
+            default="",
+            text_input_kwargs={"on_change": _request_dashboard_analysis},
+        )
+
+    raw_symbol = st.text_input(
+        "美股代碼",
+        value="",
+        key="dashboard_us_symbol",
+        placeholder=_US_SYMBOL_HINT,
+        on_change=_request_dashboard_analysis,
+    ).strip()
+    if not raw_symbol:
+        return ""
+    try:
+        return normalize_symbol(raw_symbol, market=normalized_market)
+    except ValueError:
+        return raw_symbol.upper()
+
+
+def _build_dashboard_payload(symbol: str, market: str = "tw") -> dict[str, Any]:
+    normalized_market = normalize_market(market)
+    market_spec = get_market_spec(normalized_market)
     storage = ParquetStorage()
-    daily, daily_error = _prepare_daily_data_for_dashboard(symbol, storage)
+    daily, daily_error = _prepare_daily_data_for_dashboard(symbol, storage, market=normalized_market)
     if daily_error:
         return {
             "symbol": symbol,
+            "market": normalized_market,
             "ready": False,
             "error": daily_error,
         }
@@ -250,23 +290,29 @@ def _build_dashboard_payload(symbol: str) -> dict[str, Any]:
     if daily.empty:
         return {
             "symbol": symbol,
+            "market": normalized_market,
             "ready": False,
             "error": f"{symbol} 尚無可用日線資料。",
         }
 
-    daily = _normalize_daily_df(daily)
+    daily = _normalize_daily_df(daily, market=normalized_market)
     technical = generate_technical_summary(daily)
 
     quote: RealtimeQuote | None = None
     bid_ask: BidAskStructure | None = None
-    try:
-        realtime = RealtimeFetcher.from_config()
-        quote = realtime.fetch_quote(symbol)
-        bid_ask = realtime.fetch_bid_ask_structure(quote)
-    except Exception as exc:  # noqa: BLE001
-        st.warning(f"即時行情暫時不可用，已改用日線資料顯示：{exc}")
-
-    chip, chip_recent_df, chip_error = _prepare_chip_data_for_dashboard(symbol, storage)
+    chip: ChipSummary | None = None
+    chip_recent_df = pd.DataFrame()
+    chip_error: str | None = None
+    if normalized_market == "tw":
+        try:
+            realtime = RealtimeFetcher.from_config()
+            quote = realtime.fetch_quote(symbol)
+            bid_ask = realtime.fetch_bid_ask_structure(quote)
+        except Exception as exc:  # noqa: BLE001
+            st.warning(f"即時行情暫時不可用，已改用日線資料顯示：{exc}")
+        chip, chip_recent_df, chip_error = _prepare_chip_data_for_dashboard(symbol, storage)
+    else:
+        chip_error = "US-1 尚未支援美股籌碼資料。"
 
     candle_patterns = detect_candle_patterns(daily)
     chart_patterns = detect_chart_pattern(daily)
@@ -285,6 +331,8 @@ def _build_dashboard_payload(symbol: str) -> dict[str, Any]:
                 chip_summary=chip,
                 company_info=None,
                 recent_prices=daily.tail(60),
+                market=normalized_market,
+                currency=market_spec.currency,
             )
         except AIDisabledError:
             analysis = None
@@ -295,13 +343,14 @@ def _build_dashboard_payload(symbol: str) -> dict[str, Any]:
 
     return {
         "symbol": symbol,
+        "market": normalized_market,
         "ready": True,
         "error": None,
         "daily_df": daily,
         "technical": technical,
         "quote": quote,
         "subject_name": _resolve_subject_name(symbol, quote),
-        "analysis_time": _format_analysis_time(),
+        "analysis_time": _format_analysis_time(normalized_market),
         "bid_ask": bid_ask,
         "chip": chip,
         "chip_recent_df": chip_recent_df,
@@ -330,20 +379,31 @@ def _resolve_subject_name(symbol: str, quote: RealtimeQuote | None) -> str:
     return name or symbol
 
 
-def _format_analysis_time() -> str:
-    return datetime.now(_TAIPEI_TZ).strftime("%Y-%m-%d %H:%M:%S")
+def _format_analysis_time(market: str = "tw") -> str:
+    timezone = get_market_spec(market).timezone
+    return datetime.now(ZoneInfo(timezone)).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _request_dashboard_analysis() -> None:
     st.session_state[_ANALYZE_REQUESTED_KEY] = True
 
 
-def _prepare_daily_data_for_dashboard(symbol: str, storage: ParquetStorage) -> tuple[pd.DataFrame, str | None]:
+def _prepare_daily_data_for_dashboard(
+    symbol: str,
+    storage: ParquetStorage,
+    market: str = "tw",
+) -> tuple[pd.DataFrame, str | None]:
+    normalized_market = normalize_market(market)
     try:
-        _sync_symbol_daily_data(symbol, storage)
+        _sync_symbol_daily_data(symbol, storage, market=normalized_market)
     except Exception as exc:  # noqa: BLE001
         return pd.DataFrame(), f"{symbol} 日線資料更新失敗：{exc}"
-    return storage.load_daily(symbol), None
+    if normalized_market == "us":
+        adjusted_df = storage.load_adjusted(symbol, market=normalized_market)
+        if adjusted_df.empty:
+            return pd.DataFrame(), f"{symbol} 尚無可用美股 adjusted 日線資料。"
+        return adjusted_df, None
+    return storage.load_daily(symbol, market=normalized_market), None
 
 
 def _prepare_chip_data_for_dashboard(
@@ -406,8 +466,9 @@ def _style_recent_institutional_table(table: pd.DataFrame) -> pd.io.formats.styl
     return table.style.format(format_map).map(_color_for_net_value, subset=value_cols)
 
 
-def _sync_symbol_daily_data(symbol: str, storage: ParquetStorage) -> None:
-    fetchers = _build_fetchers_from_config()
+def _sync_symbol_daily_data(symbol: str, storage: ParquetStorage, market: str = "tw") -> None:
+    normalized_market = normalize_market(market)
+    fetchers = _build_fetchers_from_config(market=normalized_market)
     if not fetchers:
         raise RuntimeError("No available data source. Details: n/a")
 
@@ -421,7 +482,7 @@ def _sync_symbol_daily_data(symbol: str, storage: ParquetStorage) -> None:
                 meta=meta,
                 cleaner=DataCleaner(),
             )
-            maintenance.update_daily(symbol)
+            maintenance.update_daily(symbol, market=normalized_market)
             return
         except Exception as exc:  # noqa: BLE001
             errors.append(f"{source}: {exc}")
@@ -452,14 +513,15 @@ def _build_chip_fetcher() -> FinMindFetcher:
     )
 
 
-def _build_fetcher_from_config() -> IDataFetcher:
-    fetchers = _build_fetchers_from_config()
+def _build_fetcher_from_config(market: str = "tw") -> IDataFetcher:
+    fetchers = _build_fetchers_from_config(market=market)
     if fetchers:
         return fetchers[0][1]
     raise RuntimeError("No available data source. Details: n/a")
 
 
-def _build_fetchers_from_config() -> list[tuple[str, IDataFetcher]]:
+def _build_fetchers_from_config(market: str = "tw") -> list[tuple[str, IDataFetcher]]:
+    normalized_market = normalize_market(market)
     config = get_config()
     data_section = config.get("data", {}) if isinstance(config, dict) else {}
     primary = str(data_section.get("primary_source", "finmind")).strip().lower()
@@ -471,19 +533,25 @@ def _build_fetchers_from_config() -> list[tuple[str, IDataFetcher]]:
         if source in {name for name, _ in fetchers}:
             continue
         try:
-            if source == "finmind":
+            if source == "finmind" and normalized_market == "tw":
                 fetchers.append((source, FinMindFetcher()))
             elif source == "yfinance":
-                fetchers.append((source, YFinanceFetcher()))
+                fetchers.append((source, YFinanceFetcher(market=normalized_market)))
         except Exception:  # noqa: BLE001
             continue
     return fetchers
 
 
-def _normalize_daily_df(df: pd.DataFrame) -> pd.DataFrame:
+def _normalize_daily_df(df: pd.DataFrame, market: str = "tw") -> pd.DataFrame:
+    timezone = get_market_spec(market).timezone
     out = df.copy()
     out["date"] = pd.to_datetime(out["date"], errors="coerce")
     out = out.dropna(subset=["date"]).sort_values("date").reset_index(drop=True)
+    if not out.empty:
+        if out["date"].dt.tz is None:
+            out["date"] = out["date"].dt.tz_localize(timezone)
+        else:
+            out["date"] = out["date"].dt.tz_convert(timezone)
     for col in ("open", "high", "low", "close", "volume"):
         out[col] = pd.to_numeric(out[col], errors="coerce")
     out = out.dropna(subset=["open", "high", "low", "close", "volume"])
@@ -494,12 +562,27 @@ def _render_tab_overview(
     quote: RealtimeQuote | None,
     technical: TechnicalSummary,
     df: pd.DataFrame,
+    market: str = "tw",
 ) -> bool:
+    normalized_market = normalize_market(market)
     st.subheader("行情總覽")
     latest_close = _safe_latest_daily_value(df, "close")
     latest_volume = _safe_latest_daily_int(df, "volume")
     latest_date = _safe_latest_daily_date(df)
-    if quote is not None and quote.is_market_open:
+    if normalized_market == "us":
+        prev_close, curr_close = _last_two_numeric(_numeric_series(df, "close"))
+        close_for_display = latest_close if latest_close is not None else (curr_close if curr_close is not None else 0.0)
+        change = float(curr_close - prev_close) if prev_close is not None and curr_close is not None else 0.0
+        change_pct = float((change / prev_close * 100.0) if prev_close else 0.0)
+        daily_volume_for_display = max(0, int(latest_volume)) if latest_volume is not None else 0
+        cols = st.columns(5)
+        cols[0].metric("收盤價", f"{close_for_display:.2f}")
+        cols[1].metric("漲跌", f"{change:+.2f}")
+        cols[2].metric("漲跌幅", f"{change_pct:+.2f}%")
+        cols[3].metric("成交量(shares)", f"{daily_volume_for_display:,}")
+        cols[4].metric("狀態", "日線資料")
+        st.caption("美股日期以紐約交易日為準。")
+    elif quote is not None and quote.is_market_open:
         bid1 = quote.best_bid[0] if quote.best_bid else None
         ask1 = quote.best_ask[0] if quote.best_ask else None
         price_for_change = float(bid1) if bid1 is not None else float(quote.price)
@@ -580,6 +663,8 @@ def _render_tab_overview(
     score_pct = max(0.0, min(1.0, float(technical.short_term_score)))
     st.progress(score_pct, text=f"{technical.short_term_label}（{score_pct * 100:.1f}%）")
     st.caption(_HELP_TEXTS["short_term_score"])
+    if normalized_market == "us":
+        return False
     refresh_clicked = st.button("重新整理報價", key="dashboard_refresh_quote", help="重新查詢即時報價")
     return bool(refresh_clicked)
 
@@ -744,7 +829,12 @@ def _should_use_quote_daily_snapshot(quote: RealtimeQuote, latest_daily_date: st
     return quote.trade_date > latest_daily_date
 
 
-def _refresh_realtime_snapshot(symbol: str) -> tuple[RealtimeQuote | None, BidAskStructure | None, str | None]:
+def _refresh_realtime_snapshot(
+    symbol: str,
+    market: str = "tw",
+) -> tuple[RealtimeQuote | None, BidAskStructure | None, str | None]:
+    if normalize_market(market) != "tw":
+        return None, None, "US-1 尚未支援美股即時行情。"
     try:
         realtime = RealtimeFetcher.from_config()
         quote = realtime.fetch_quote(symbol)
@@ -883,8 +973,12 @@ def _render_tab_chip(
     technical: TechnicalSummary,
     chip_recent_df: pd.DataFrame | None = None,
     chip_error: str | None = None,
+    market: str = "tw",
 ) -> None:
     st.subheader("籌碼與量價")
+    if normalize_market(market) == "us":
+        st.info("US-1 尚未支援美股籌碼資料。")
+        return
     if chip_error:
         st.info(chip_error)
 

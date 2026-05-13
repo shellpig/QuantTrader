@@ -12,6 +12,7 @@ from typing import Any
 import pandas as pd
 
 from src.backtest.batch import _build_strategy
+from src.backtest.cost import TWCostCalculator, USCostCalculator
 from src.backtest.engine_vec import VectorizedBacktester
 from src.backtest.metrics import BacktestResult
 from src.backtest.sweep import (
@@ -295,6 +296,7 @@ def run_walk_forward_analysis(
     step_months: int = DEFAULT_STEP_MONTHS,
     max_combinations: int = MAX_COMBOS,
     progress_fn: Callable[[int, int], None] | None = None,
+    cost_calculator: TWCostCalculator | USCostCalculator | None = None,
 ) -> WalkForwardSummary:
     """Run rolling WFA: IS sweep → select best params → OOS validation."""
     if optimize_metric not in SUPPORTED_OPTIMIZE_METRICS:
@@ -334,6 +336,7 @@ def run_walk_forward_analysis(
             strategy_type=strategy_type,
             param_candidates=param_ranges,
             initial_capital=initial_capital,
+            cost_calculator=cost_calculator,
         )
         is_best = _select_best_sweep_run(sweep.results, optimize_metric)
 
@@ -356,7 +359,10 @@ def run_walk_forward_analysis(
         oos_warnings: list[str] = []
         try:
             strategy = _build_strategy(strategy_type, is_best.params)
-            engine = VectorizedBacktester(initial_capital=initial_capital)
+            engine = VectorizedBacktester(
+                initial_capital=initial_capital,
+                cost_calculator=cost_calculator,
+            )
             oos_result = engine.run(strategy=strategy, data=oos_data)
         except Exception as exc:  # noqa: BLE001
             window_results.append(

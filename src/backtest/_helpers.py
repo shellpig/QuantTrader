@@ -4,20 +4,26 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from src.backtest.cost import CostCalculator
+from src.backtest.cost import TWCostCalculator, USCostCalculator, create_cost_calculator
 from src.core.config import get_config
 
 
 ETF_SYMBOLS: frozenset[str] = frozenset({"0050", "0051", "0056", "006208", "00878", "00919"})
 
 
-def is_etf_symbol(symbol: str) -> bool:
+def is_etf_symbol(symbol: str, market: str = "tw") -> bool:
+    if str(market).strip().lower() != "tw":
+        return False
     if symbol in ETF_SYMBOLS:
         return True
     return len(symbol) == 4 and symbol.startswith("00")
 
 
-def build_cost_calculator_from_config() -> CostCalculator:
+def build_cost_calculator_from_config(market: str = "tw") -> TWCostCalculator | USCostCalculator:
+    normalized_market = str(market).strip().lower()
+    if normalized_market == "us":
+        return create_cost_calculator(market="us")
+
     try:
         cfg = get_config().get("backtest", {})
         if not isinstance(cfg, dict):
@@ -25,7 +31,8 @@ def build_cost_calculator_from_config() -> CostCalculator:
     except Exception:
         cfg = {}
 
-    return CostCalculator(
+    return create_cost_calculator(
+        market="tw",
         commission_rate=float(cfg.get("commission_rate", 0.001425)),
         commission_discount=float(cfg.get("commission_discount", 0.6)),
         tax_rate=float(cfg.get("tax_rate", 0.003)),
@@ -38,7 +45,7 @@ def calculate_max_buy_quantity(
     *,
     cash: float,
     price: float,
-    cost_calculator: CostCalculator,
+    cost_calculator: TWCostCalculator | USCostCalculator,
     is_etf: bool,
 ) -> int:
     """

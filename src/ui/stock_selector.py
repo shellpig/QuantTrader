@@ -9,11 +9,13 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
+from src.core.market import normalize_market, normalize_symbol
 from src.data.fetcher import FinMindFetcher
 
 _STOCK_OPTIONS_KEY = "tw_stock_options"
 _STOCK_LOOKUP_ERROR_KEY = "tw_stock_lookup_error"
 _TW_SYMBOL_PATTERN = re.compile(r"^[0-9A-Z]{4,6}$")
+_US_SYMBOL_HINT = "AAPL / MSFT / SPY / BRK.B"
 
 
 @dataclass(frozen=True)
@@ -55,9 +57,26 @@ def render_stock_selector(
     label: str,
     *,
     key_prefix: str,
+    market: str = "tw",
     default: str = "",
     text_input_kwargs: dict[str, Any] | None = None,
 ) -> str:
+    normalized_market = normalize_market(market)
+    if normalized_market == "us":
+        raw = st.text_input(
+            label,
+            value=default,
+            key=f"{key_prefix}_stock_query",
+            placeholder=_US_SYMBOL_HINT,
+            **(text_input_kwargs or {}),
+        ).strip()
+        if not raw:
+            return ""
+        try:
+            return normalize_symbol(raw, market=normalized_market)
+        except ValueError:
+            return raw.upper()
+
     query = st.text_input(
         label,
         value=default,

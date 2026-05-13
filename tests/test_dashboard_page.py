@@ -189,7 +189,7 @@ def _make_technical_summary() -> TechnicalSummary:
     )
 
 
-def _make_daily_df(periods: int = 90) -> pd.DataFrame:
+def _make_daily_df(periods: int = 90, symbol: str = "2330") -> pd.DataFrame:
     return pd.DataFrame(
         {
             "date": pd.date_range("2025-01-01", periods=periods, freq="D"),
@@ -198,7 +198,7 @@ def _make_daily_df(periods: int = 90) -> pd.DataFrame:
             "low": [99.0 + i for i in range(periods)],
             "close": [100.5 + i for i in range(periods)],
             "volume": [1000 + i for i in range(periods)],
-            "symbol": ["2330"] * periods,
+            "symbol": [symbol] * periods,
         }
     )
 
@@ -228,7 +228,7 @@ def test_dashboard_page_accepts_alphanumeric_symbol(monkeypatch) -> None:
     monkeypatch.setattr(
         dashboard_module,
         "_build_dashboard_payload",
-        lambda symbol: {"symbol": symbol, "ready": False, "error": f"{symbol} 尚無本機日線資料"},
+        lambda symbol, market="tw": {"symbol": symbol, "market": market, "ready": False, "error": f"{symbol} 尚無本機日線資料"},
     )
 
     render_dashboard_page()
@@ -518,6 +518,15 @@ def test_dashboard_tab_chip_no_data(monkeypatch) -> None:
     assert any("尚未載入籌碼資料" in msg for msg in dummy.info_messages)
 
 
+def test_dashboard_tab_chip_us_mode_shows_not_supported(monkeypatch) -> None:
+    import src.ui.pages.dashboard as dashboard_module
+
+    dummy = _DummySt()
+    monkeypatch.setattr(dashboard_module, "st", dummy)
+    _render_tab_chip(chip=None, bid_ask=None, technical=_make_technical_summary(), market="us")
+    assert any("US-1 尚未支援美股籌碼資料" in msg for msg in dummy.info_messages)
+
+
 def test_tab_overview_renders_with_help_texts(monkeypatch) -> None:
     import src.ui.pages.dashboard as dashboard_module
 
@@ -560,6 +569,25 @@ def test_tab_chip_renders_with_help_texts(monkeypatch) -> None:
         technical=_make_technical_summary(),
         chip_recent_df=pd.DataFrame({"日期": ["2026-01-01"], "外資": [1], "投信": [0], "自營商": [-1]}),
     )
+
+
+def test_dashboard_tab_overview_us_mode_uses_shares_label(monkeypatch) -> None:
+    import src.ui.pages.dashboard as dashboard_module
+
+    dummy = _MetricCaptureSt()
+    monkeypatch.setattr(dashboard_module, "st", dummy)
+    monkeypatch.setattr(dashboard_module, "get_config", lambda: {"ui": {"theme": "midnight_blue"}})
+    _render_tab_overview(
+        quote=None,
+        technical=_make_technical_summary(),
+        df=_make_daily_df(symbol="AAPL", periods=80),
+        market="us",
+    )
+
+    metric_map = dict(dummy.metrics)
+    assert "成交量(shares)" in metric_map
+    assert "日成交量(張)" not in metric_map
+    assert any("美股日期以紐約交易日為準" in msg for msg in dummy.caption_messages)
 
 
 def test_tab_pattern_renders_with_details(monkeypatch) -> None:
@@ -625,7 +653,7 @@ def test_dashboard_page_not_ready_payload_does_not_render_tabs(monkeypatch) -> N
     monkeypatch.setattr(
         dashboard_module,
         "_build_dashboard_payload",
-        lambda symbol: {"symbol": symbol, "ready": False, "error": "尚無本機日線資料"},
+        lambda symbol, market="tw": {"symbol": symbol, "market": market, "ready": False, "error": "尚無本機日線資料"},
     )
 
     render_dashboard_page()
@@ -653,6 +681,7 @@ def test_dashboard_page_refresh_quote_updates_session_payload(monkeypatch) -> No
     )
     payload = {
         "symbol": "2330",
+        "market": "tw",
         "ready": True,
         "error": None,
         "daily_df": pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume", "symbol"]),
@@ -705,7 +734,7 @@ def test_dashboard_page_refresh_quote_updates_session_payload(monkeypatch) -> No
     monkeypatch.setattr(
         dashboard_module,
         "_refresh_realtime_snapshot",
-        lambda symbol: (new_quote, new_bid_ask, None),
+        lambda symbol, market="tw": (new_quote, new_bid_ask, None),
     )
 
     render_dashboard_page()
@@ -723,6 +752,7 @@ def test_dashboard_page_renders_analysis_subject_and_time(monkeypatch) -> None:
 
     payload = {
         "symbol": "2330",
+        "market": "tw",
         "ready": True,
         "error": None,
         "daily_df": pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume", "symbol"]),
@@ -784,11 +814,11 @@ def test_dashboard_payload_builds_multi_timeframe_from_date_column(monkeypatch, 
     monkeypatch.setattr(dashboard_module, "RealtimeFetcher", _Realtime)
     monkeypatch.setattr(dashboard_module, "st", _DummySt())
     monkeypatch.setattr(dashboard_module, "get_config", lambda: {"ai": {"enabled": False}, "ui": {"theme": "midnight_blue"}})
-    monkeypatch.setattr(dashboard_module, "_format_analysis_time", lambda: "2026-05-11 14:35:20")
+    monkeypatch.setattr(dashboard_module, "_format_analysis_time", lambda market="tw": "2026-05-11 14:35:20")
     monkeypatch.setattr(
         dashboard_module,
         "_prepare_daily_data_for_dashboard",
-        lambda symbol, storage: (storage.load_daily(symbol), None),
+        lambda symbol, storage, market="tw": (storage.load_daily(symbol, market=market), None),
     )
     monkeypatch.setattr(
         dashboard_module,
@@ -802,6 +832,51 @@ def test_dashboard_payload_builds_multi_timeframe_from_date_column(monkeypatch, 
     assert isinstance(payload["multi_timeframe"], MultiTimeframeAnalysis)
     assert payload["subject_name"] == "台積電"
     assert payload["analysis_time"] == "2026-05-11 14:35:20"
+
+
+def test_dashboard_payload_us_uses_adjusted_daily_and_disables_realtime_and_chip(monkeypatch, tmp_path) -> None:
+    import src.ui.pages.dashboard as dashboard_module
+
+    storage = ParquetStorage(data_dir=tmp_path)
+    raw_df = _make_daily_df(symbol="AAPL")
+    adjusted_df = raw_df.copy()
+    adjusted_df["close"] = adjusted_df["close"] + 100.0
+    storage.save_daily("AAPL", raw_df, market="us")
+    storage.save_adjusted("AAPL", adjusted_df, market="us")
+
+    calls = {"realtime": 0, "chip": 0}
+
+    class _Realtime:
+        @classmethod
+        def from_config(cls):
+            calls["realtime"] += 1
+            raise AssertionError("RealtimeFetcher should not be called for US dashboard")
+
+    def _chip(*args, **kwargs):  # noqa: ANN002, ANN003
+        calls["chip"] += 1
+        raise AssertionError("_prepare_chip_data_for_dashboard should not be called for US dashboard")
+
+    monkeypatch.setattr(dashboard_module, "ParquetStorage", lambda: storage)
+    monkeypatch.setattr(dashboard_module, "_sync_symbol_daily_data", lambda symbol, storage, market="tw": None)
+    monkeypatch.setattr(dashboard_module, "RealtimeFetcher", _Realtime)
+    monkeypatch.setattr(dashboard_module, "_prepare_chip_data_for_dashboard", _chip)
+    monkeypatch.setattr(dashboard_module, "st", _DummySt())
+    monkeypatch.setattr(
+        dashboard_module,
+        "get_config",
+        lambda: {"ai": {"enabled": False}, "ui": {"theme": "midnight_blue"}},
+    )
+
+    payload = _build_dashboard_payload("AAPL", market="us")
+
+    assert payload["ready"] is True
+    assert payload["market"] == "us"
+    assert payload["quote"] is None
+    assert payload["chip"] is None
+    assert payload["chip_error"] == "US-1 尚未支援美股籌碼資料。"
+    assert float(payload["daily_df"]["close"].iloc[-1]) == float(adjusted_df["close"].iloc[-1])
+    assert calls["realtime"] == 0
+    assert calls["chip"] == 0
 
 
 def test_build_recent_institutional_table_keeps_last_five_days() -> None:
@@ -875,7 +950,7 @@ def test_sync_symbol_daily_data_fallback_when_primary_update_fails(monkeypatch) 
         def __init__(self, *, fetcher, **kwargs):  # noqa: ANN003
             self.fetcher = fetcher
 
-        def update_daily(self, symbol: str) -> None:
+        def update_daily(self, symbol: str, market: str = "tw") -> None:
             calls.append(f"{self.fetcher.source}:{symbol}")
             if self.fetcher.source == "finmind":
                 raise RuntimeError("primary update failed")
@@ -889,7 +964,7 @@ def test_sync_symbol_daily_data_fallback_when_primary_update_fails(monkeypatch) 
     monkeypatch.setattr(
         dashboard_module,
         "_build_fetchers_from_config",
-        lambda: [("finmind", _Fetcher("finmind")), ("yfinance", _Fetcher("yfinance"))],
+        lambda market="tw": [("finmind", _Fetcher("finmind")), ("yfinance", _Fetcher("yfinance"))],
     )
 
     dashboard_module._sync_symbol_daily_data("2330", storage=object())  # type: ignore[arg-type]

@@ -1,9 +1,11 @@
-"""Market friction cost calculator for Taiwan stocks."""
+"""Market friction cost calculators."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
+from src.core.market import normalize_market
 
 @dataclass
 class TradeCost:
@@ -15,8 +17,8 @@ class TradeCost:
     total: float
 
 
-class CostCalculator:
-    """Calculate commission, tax, and slippage for one trade."""
+class TWCostCalculator:
+    """Taiwan market commission, tax, and slippage model."""
 
     def __init__(
         self,
@@ -90,3 +92,70 @@ class CostCalculator:
         if side_normalized == "BUY":
             return float(price + adjust)
         return float(price - adjust)
+
+
+class USCostCalculator:
+    """US market cost model for US-1."""
+
+    def __init__(
+        self,
+        commission_per_trade: float = 0.0,
+        slippage_ticks: int = 1,
+        tick_size: float = 0.01,
+    ) -> None:
+        if tick_size <= 0:
+            raise ValueError("tick_size must be positive.")
+        self.commission_per_trade = float(commission_per_trade)
+        self.slippage_ticks = int(slippage_ticks)
+        self.tick_size = float(tick_size)
+
+    def calculate(
+        self,
+        price: float,
+        quantity: int,
+        side: str,
+        is_etf: bool = False,  # noqa: ARG002 - keep API-compatible signature
+    ) -> TradeCost:
+        side_normalized = side.upper()
+        if side_normalized not in {"BUY", "SELL"}:
+            raise ValueError("side must be 'BUY' or 'SELL'.")
+        if price <= 0:
+            raise ValueError("price must be positive.")
+        if quantity <= 0:
+            raise ValueError("quantity must be positive.")
+
+        commission = self.commission_per_trade
+        tax = 0.0
+        slippage = self.tick_size * self.slippage_ticks * int(quantity)
+        total = commission + tax + slippage
+        return TradeCost(
+            commission=float(commission),
+            tax=float(tax),
+            slippage=float(slippage),
+            total=float(total),
+        )
+
+    def get_tick_size(self, price: float) -> float:  # noqa: ARG002 - stable interface
+        return self.tick_size
+
+    def apply_slippage(self, price: float, side: str) -> float:
+        side_normalized = side.upper()
+        if side_normalized not in {"BUY", "SELL"}:
+            raise ValueError("side must be 'BUY' or 'SELL'.")
+        adjust = self.tick_size * self.slippage_ticks
+        if side_normalized == "BUY":
+            return float(price + adjust)
+        return float(price - adjust)
+
+
+def create_cost_calculator(market: str = "tw", **kwargs: Any) -> TWCostCalculator | USCostCalculator:
+    normalized_market = normalize_market(market)
+    if normalized_market == "tw":
+        return TWCostCalculator(**kwargs)
+    if normalized_market == "us":
+        return USCostCalculator(**kwargs)
+    raise ValueError(f"Unknown market: {market}")
+
+
+# Backward compatibility for modules/tests still importing CostCalculator.
+CostCalculator = TWCostCalculator

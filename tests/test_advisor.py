@@ -20,7 +20,7 @@ from src.analysis.chip_analysis import ChipSummary
 from src.analysis.technical_summary import PriceLevel, TechnicalSummary
 from src.core.constants import STANDARD_COLUMNS, TAIPEI_TZ
 from src.core.config import clear_config_cache, get_config
-from src.core.exceptions import AIDisabledError
+from src.core.exceptions import AICallError, AIDisabledError
 
 
 def _make_daily_df(symbol: str = "2330", periods: int = 120) -> pd.DataFrame:
@@ -299,6 +299,93 @@ def test_dashboard_analysis_returns_correct_structure() -> None:
     assert len(result.company_overview) >= 3
     assert isinstance(result.volume_price_analysis, str) and result.volume_price_analysis
     assert isinstance(result.conclusion, str) and result.conclusion
+
+
+def test_dashboard_analysis_us_prompt_includes_market_currency_and_traditional_chinese_rule() -> None:
+    class RecordingAdapter:
+        provider_name = "stub"
+
+        def __init__(self):
+            self.model = "stub-model"
+            self.last_system_prompt = ""
+            self.last_messages: list[dict[str, Any]] = []
+
+        def complete(
+            self,
+            *,
+            model: str,
+            system_prompt: str,
+            messages: list[dict[str, Any]],
+            tools: list[dict[str, Any]],
+        ) -> dict[str, Any]:
+            self.last_system_prompt = system_prompt
+            self.last_messages = messages
+            payload = {
+                "industry_overview": ["A", "B", "C"],
+                "company_overview": ["D", "E", "F"],
+                "volume_price_analysis": "X",
+                "scenarios": [
+                    {"name": "情境1", "entry_range": "1", "stop_loss": 1.0, "target": "2"},
+                    {"name": "情境2", "entry_range": "2", "stop_loss": 2.0, "target": "3"},
+                    {"name": "情境3", "entry_range": "3", "stop_loss": 3.0, "target": "4"},
+                ],
+                "conclusion": "Y",
+            }
+            return {"text": json.dumps(payload, ensure_ascii=False), "tool_calls": []}
+
+    adapter = RecordingAdapter()
+    advisor = AIAdvisor(
+        enabled=True,
+        provider="anthropic",
+        model="stub",
+        storage=StubStorage(_make_daily_df(symbol="BRK-B")),
+        adapter=adapter,
+    )
+    advisor.generate_stock_dashboard_analysis(
+        symbol="brk.b",
+        technical_summary=_make_technical_summary(),
+        chip_summary=None,
+        company_info=None,
+        recent_prices=_make_daily_df(symbol="BRK-B"),
+        market="us",
+        currency="USD",
+    )
+    user_prompt = adapter.last_messages[0]["content"]
+    assert '"symbol": "BRK-B"' in user_prompt
+    assert '"market": "us"' in user_prompt
+    assert '"currency": "USD"' in user_prompt
+    assert "You must reply entirely in Traditional Chinese (zh-TW)." in user_prompt
+
+
+def test_dashboard_analysis_rejects_invalid_us_symbol() -> None:
+    advisor = AIAdvisor(
+        enabled=True,
+        provider="anthropic",
+        model="stub",
+        storage=StubStorage(_make_daily_df(symbol="AAPL")),
+        adapter=StubAdapter([{"text": "ok", "tool_calls": []}]),
+    )
+    with pytest.raises(AICallError):
+        advisor.generate_stock_dashboard_analysis(
+            symbol="7203.T",
+            technical_summary=_make_technical_summary(),
+            chip_summary=None,
+            company_info=None,
+            recent_prices=_make_daily_df(symbol="AAPL"),
+            market="us",
+        )
+
+
+def test_handle_get_price_data_accepts_us_symbol_with_market_context() -> None:
+    advisor = AIAdvisor(
+        provider="anthropic",
+        model="stub",
+        storage=StubStorage(_make_daily_df(symbol="AAPL")),
+        adapter=StubAdapter([{"text": "ok", "tool_calls": []}]),
+    )
+    result = advisor._handle_get_price_data(symbol="aapl", period="3mo", market="us")
+    assert result["symbol"] == "AAPL"
+    assert result["data_count"] > 0
 
 
 def test_dashboard_analysis_scenarios_count() -> None:

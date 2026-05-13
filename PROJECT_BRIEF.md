@@ -2,7 +2,7 @@
 
 本文件供新 session 快速了解專案全貌，取代逐份閱讀全部規格文件。需要深入某區段時，按行號索引讀取對應文件。
 
-最後更新：2026-05-12
+最後更新：2026-05-13
 
 ---
 
@@ -10,7 +10,7 @@
 
 台股量化交易研究工具（個人版），運行於 Windows 11 本機。聚焦研究與回測，不接實盤。三大核心功能：自動化台股資料管道、回測引擎（向量化 + 事件驅動）、AI 技術分析問答。
 
-2026-05-12 Phase 9-A/9-B 已完成：多市場基礎架構與美股日 K 資料管線。9-C~9-F 尚未實作。
+2026-05-13 Phase 9-A~9-E 已完成：多市場基礎架構、美股日 K 資料管線、美股回測支援、美股技術分析儀表板與資料管理頁美股支援。9-F 自動驗證完成，手動驗收待做。
 
 ## 技術棧
 
@@ -184,16 +184,36 @@ risk:
 | 8-G | ✅ 完成 | 新手友善說明文字：技術分析總覽 tooltip、K 棒型態詳細說明、量價結構 caption、籌碼術語解釋、壓力支撐概念、短線分數組成，已完成人工驗收 |
 | 9-A | ✅ 完成 | 多市場基礎架構：`MarketSpec`、`market` context、storage/meta/maintenance market-aware、DuckDB meta migration、`assert_single_market`、symbol 正規化與路徑穿越防護 |
 | 9-B | ✅ 完成 | 美股日 K 資料管線：yfinance daily、`BRK.B`→`BRK-B`、`America/New_York`、adjusted OHLC（price ratio）、split-adjusted volume（split-only factor）、`fetch_daily_with_adjusted`、US minute 拒絕、批次節流 |
-| 9-C | 📋 規格已確認，尚未實作 | 美股回測支援：回測頁市場切換、USD、1 股單位、`USCostCalculator`、DCA 不支援碎股 warning |
-| 9-D | 📋 規格已確認，尚未實作 | 美股技術分析儀表板：技術面/K線/型態/AI 劇本；停用即時、籌碼；AI 強制繁中輸出 |
-| 9-E | 📋 規格已確認，尚未實作 | 資料管理頁美股支援：市場切換，美股只做日 K 更新/重建，停用分 K 與籌碼 |
-| 9-F | 📋 規格已確認，尚未實作 | Phase 9 整合回歸與文件收束：Phase 9 測試、手動驗收、Phase 完成後更新 brief/已知問題 |
+| 9-C | ✅ 完成 | 美股回測支援：回測頁市場切換（單次/批次/參數掃描/WFA）、USD、1 股單位、`USCostCalculator`、DCA 不支援碎股 warning、台美 K 線顏色慣例 |
+| 9-D | ✅ 完成 | 美股技術分析儀表板：市場切換、adjusted daily、技術面/K線/型態/AI 劇本；停用即時與籌碼；shares 顯示、紐約日期、AI 強制繁中輸出 |
+| 9-E | ✅ 完成 | 資料管理頁美股支援：市場切換、yfinance 日 K 更新/重建、BRK.B 正規化、raw/adjusted 狀態、停用分 K 與籌碼 |
+| 9-F | ✅ 自動驗證完成，手動驗收待做 | Phase 9 整合回歸與文件收束：Phase 9 自動測試已完成；手動驗收 9-F-1~9-F-12 待做 |
 
 ## 當前待辦
 
 見 `驗證後已知問題.md`（每次必讀）。
 
-主線：Phase 9-A/9-B 已完成實作與驗證。9-C~9-F 規格已確認，尚未實作。
+主線：Phase 9-A~9-E 已完成實作與驗證。9-F 自動驗證完成，手動驗收待做。
+
+2026-05-13 狀態：
+- Phase 9-C/9-D/9-E 已驗證完成；Phase 9-F 手動驗收以外的自動化驗證已完成。
+- Phase 9-C 驗證結果：`tests/test_cost.py tests/test_engine_vec.py tests/test_dca_backtest.py tests/test_backtest_page.py -m "not integration"` 為 42 passed；py_compile `src/backtest/cost.py src/backtest/_helpers.py src/backtest/dca.py src/backtest/batch.py src/backtest/sweep.py src/backtest/walk_forward.py src/ui/pages/backtest.py tests/test_cost.py tests/test_dca_backtest.py tests/test_backtest_page.py` 通過。
+- Phase 9-C research tabs 回歸：`tests/test_batch.py tests/test_sweep.py tests/test_walk_forward.py tests/test_strategy_config.py tests/test_strategies.py -m "not integration"` 為 120 passed。
+- Phase 9-C broader context 回歸：`tests/test_market.py tests/test_fetcher.py tests/test_storage.py tests/test_maintenance.py tests/test_cost.py tests/test_engine_vec.py tests/test_engine_event.py tests/test_consistency.py tests/test_dca_backtest.py tests/test_backtest_page.py tests/test_batch.py tests/test_sweep.py tests/test_walk_forward.py -m "not integration"` 為 194 passed, 6 deselected。
+- 9-C 修改模組：`src/backtest/cost.py`（`TWCostCalculator` / `USCostCalculator` / `create_cost_calculator`）、`src/backtest/_helpers.py`（market-aware ETF/cost helper）、`src/backtest/dca.py`（美股 1 股 DCA、New York timezone）、`src/backtest/batch.py`、`src/backtest/sweep.py`、`src/backtest/walk_forward.py`（可注入 US cost calculator）、`src/ui/pages/backtest.py`（市場切換、US adjusted data、USD 顯示、DCA warning、台美 K 線顏色）。
+- 9-C 新增/擴充測試：`tests/test_cost.py`（US cost model）、`tests/test_dca_backtest.py`（美股 DCA 1 股與月投入不足）、`tests/test_backtest_page.py`（US adjusted load、auto sync market、USD caption、DCA warning、不顯示「張」、caption 與 K 線顏色 market-aware）。
+- Phase 9-D 驗證結果：`tests/test_technical_summary.py tests/test_pattern.py tests/test_advisor.py tests/test_dashboard_page.py -m "not integration"` 為 79 passed, 1 deselected；py_compile `src/ui/pages/dashboard.py src/ai/advisor.py src/analysis/technical_summary.py src/analysis/pattern.py tests/test_dashboard_page.py tests/test_advisor.py` 通過。
+- Phase 9-D broader context 回歸：`tests/test_market.py tests/test_fetcher.py tests/test_storage.py tests/test_maintenance.py tests/test_cost.py tests/test_engine_vec.py tests/test_engine_event.py tests/test_consistency.py tests/test_dca_backtest.py tests/test_backtest_page.py tests/test_batch.py tests/test_sweep.py tests/test_walk_forward.py tests/test_technical_summary.py tests/test_pattern.py tests/test_advisor.py tests/test_dashboard_page.py -m "not integration"` 為 273 passed, 7 deselected。
+- 9-D 修改模組：`src/ui/pages/dashboard.py`（dashboard 市場切換、美股 adjusted daily payload、停用 realtime/chip、shares 成交量、紐約日期 caption、美股即時刷新不支援提示）、`src/ai/advisor.py`（market-aware symbol 驗證、payload 帶 market/currency、prompt 強制繁中、AI tools 支援 market）。
+- 9-D 新增/擴充測試：`tests/test_dashboard_page.py`（美股 adjusted daily、停用 realtime/chip、籌碼不支援提示、shares label、紐約日期 caption）、`tests/test_advisor.py`（美股 prompt 帶 market/currency/繁中硬約束、拒絕非 US-1 ticker、AI tool 接受美股 market context）。
+- Phase 9-E 驗證結果：`tests/test_data_management_page.py tests/test_stock_selector.py tests/test_maintenance.py -m "not integration"` 為 23 passed；py_compile `src/ui/pages/data_management.py src/ui/stock_selector.py tests/test_data_management_page.py tests/test_stock_selector.py tests/test_maintenance.py` 通過。
+- Phase 9-E broader context 回歸：`tests/test_market.py tests/test_fetcher.py tests/test_storage.py tests/test_maintenance.py tests/test_cost.py tests/test_engine_vec.py tests/test_engine_event.py tests/test_consistency.py tests/test_dca_backtest.py tests/test_backtest_page.py tests/test_batch.py tests/test_sweep.py tests/test_walk_forward.py tests/test_technical_summary.py tests/test_pattern.py tests/test_advisor.py tests/test_dashboard_page.py tests/test_data_management_page.py tests/test_stock_selector.py -m "not integration"` 為 284 passed, 7 deselected。
+- 9-E 修改模組：`src/ui/pages/data_management.py`（資料管理頁市場切換、美股 yfinance-only fetcher、日 K 更新/重建 market 傳遞、分 K/籌碼不支援提示、raw daily / adjusted daily 本機狀態表、metadata market filter）、`src/ui/stock_selector.py`（market-aware stock selector，美股 ticker 輸入與 `BRK.B`→`BRK-B` 正規化）。
+- 9-E 新增/擴充測試：`tests/test_data_management_page.py`（美股不支援訊息、update_daily market=us、yfinance-only、metadata market filter、raw/adjusted 狀態表、缺 adjusted 顯示、台股不顯示美股狀態表）、`tests/test_stock_selector.py`（美股 ticker 正規化與 invalid suffix uppercase fallback）。
+- Phase 9-F 自動驗證結果：Phase 9 指定回歸 `tests/test_market.py tests/test_fetcher.py tests/test_storage.py tests/test_maintenance.py tests/test_cost.py tests/test_engine_vec.py tests/test_dca_backtest.py tests/test_backtest_page.py tests/test_technical_summary.py tests/test_pattern.py tests/test_advisor.py tests/test_dashboard_page.py -m "not integration"` 為 181 passed, 7 deselected。
+- Phase 9-F data management / selector 回歸：`tests/test_data_management_page.py tests/test_stock_selector.py -m "not integration"` 為 11 passed。
+- Phase 9-F 全專案非整合回歸：`tests/ -m "not integration"` 為 428 passed, 10 deselected。
+- Phase 9-F 驗證備註：一般權限第一次跑 Phase 9 指定回歸與全專案回歸時，Windows/OneDrive `.pytest_tmp_*` 清理出現 `PermissionError: [WinError 5]`；依專案規則使用同一 venv、同一範圍 elevated 重跑後全部通過，判定為環境暫存目錄權限問題。
 
 2026-05-12 狀態：
 - 最新基準 commit：`75fee58 Add one-click install script and market core module`
