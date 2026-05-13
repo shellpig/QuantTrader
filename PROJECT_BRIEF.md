@@ -10,7 +10,7 @@
 
 台股量化交易研究工具（個人版），運行於 Windows 11 本機。聚焦研究與回測，不接實盤。三大核心功能：自動化台股資料管道、回測引擎（向量化 + 事件驅動）、AI 技術分析問答。
 
-2026-05-13 Phase 9-A~9-F 自動化驗證全部完成（`89a4071` 已 push）：多市場基礎架構、美股日 K 資料管線、美股回測支援、美股技術分析儀表板、資料管理頁美股支援、Phase 9 整合回歸（428 passed）。9-F 手動驗收 12 項（9-F-1~9-F-12）待使用者執行。9-G 規格已追加：美股 yfinance 1m intraday 盤中快照與分 K 圖，使用最新 1 分 K close 作為近似盤中價，不做 WebSocket / 買一賣一 / 五檔 / tick。
+2026-05-13 Phase 9-A~9-F 自動化驗證全部完成（`89a4071` 已 push）：多市場基礎架構、美股日 K 資料管線、美股回測支援、美股技術分析儀表板、資料管理頁美股支援、Phase 9 整合回歸（428 passed）。9-F 手動驗收 12 項（9-F-1~9-F-12）待使用者執行。9-G 規格已追加：美股 yfinance 1m intraday 盤中快照與分 K 圖，使用最新 1 分 K raw close 作為近似盤中價，漲跌對前一紐約交易日 raw close，不做 WebSocket / 買一賣一 / 五檔 / tick。
 
 ## 技術棧
 
@@ -188,7 +188,7 @@ risk:
 | 9-D | ✅ 完成 | 美股技術分析儀表板：市場切換、adjusted daily、技術面/K線/型態/AI 劇本；停用即時與籌碼；shares 顯示、紐約日期、AI 強制繁中輸出 |
 | 9-E | ✅ 完成 | 資料管理頁美股支援：市場切換、yfinance 日 K 更新/重建、BRK.B 正規化、raw/adjusted 狀態、停用分 K 與籌碼 |
 | 9-F | ⚠️ 自動驗證完成，手動驗收待做 | Phase 9 整合回歸與文件收束：全專案自動測試 428 passed；手動驗收 9-F-1~9-F-12 待使用者執行 |
-| 9-G | 📋 規格已定，待實作 | 美股 yfinance 1m intraday 盤中快照與分 K 圖：最新 1 分 K close 作為近似盤中價、漲跌對前一紐約交易日 close、成交量為今日 1m volume 加總；不做 WebSocket、買一/賣一、五檔、tick、intraday 回測 |
+| 9-G | 📋 規格已定，待實作 | 美股 yfinance 1m intraday 盤中快照與分 K 圖：新增專用 `fetch_us_intraday` 類 API、保留 `fetch_minute(market="us")` 拒絕；最新 1 分 K raw close 作為近似盤中價、漲跌對前一紐約交易日 raw close、今日判斷以紐約日期為準、成交量為今日 1m volume 加總並 cast 成 Python int、分 K 圖放日 K 圖前；不做 WebSocket、買一/賣一、五檔、tick、intraday 回測 |
 
 ## 當前待辦
 
@@ -196,9 +196,9 @@ risk:
 
 主線：Phase 9-A~9-F 自動化部分全部完成，已 push（`89a4071`）。9-F 手動驗收 12 項（9-F-1~9-F-12）待使用者執行。9-G 已完成規格文件追加，待後續實作。
 
-2026-05-13 狀態：
-- 最新 commit：`662507e docs: complete Phase 9-F document closure and brief update`（已 push 至 `origin/main`）。
-- Phase 9-G 規格已寫入 `量化交易系統規格書_shellpig版.md`、`開發設計方針.md`、`測試指南.md` 並更新本 brief：使用 yfinance 1m intraday 補美股盤中快照與分 K 圖；總覽現價採最新 1 分 K close，漲跌 / 漲跌幅對前一紐約交易日 close，成交量採今日 regular session 1m volume 加總；若 intraday 不可用則降級 adjusted daily；不做 WebSocket、買一/賣一、五檔、tick、盤前盤後或 intraday 回測。
+2026-05-14 狀態：
+- 最新 commit 請以 `git log --oneline -1` 為準；本 brief 已改為不硬寫最新 hash，避免文件在 commit 後立即失真。
+- Phase 9-G 規格已寫入 `量化交易系統規格書_shellpig版.md`、`開發設計方針.md`、`測試指南.md` 並更新本 brief：使用 yfinance 1m intraday 補美股盤中快照與分 K 圖；新增專用 intraday API、不改 `fetch_minute(market="us")` 拒絕；總覽現價採最新 1 分 K raw close，漲跌 / 漲跌幅對前一紐約交易日 raw close；判斷最新 bar 是否為今日時以 `America/New_York` 當前日期為準；成交量採今日 regular session 1m volume 加總並 cast 成 Python int；分 K 圖放在日 K 圖之前；若 intraday 不可用則降級 adjusted daily；不做 WebSocket、買一/賣一、五檔、tick、盤前盤後或 intraday 回測。
 - Phase 9-C/9-D/9-E 已驗證完成；Phase 9-F 全專案自動回歸 428 passed，文件收束完成。
 - Phase 9-C 驗證結果：`tests/test_cost.py tests/test_engine_vec.py tests/test_dca_backtest.py tests/test_backtest_page.py -m "not integration"` 為 42 passed；py_compile `src/backtest/cost.py src/backtest/_helpers.py src/backtest/dca.py src/backtest/batch.py src/backtest/sweep.py src/backtest/walk_forward.py src/ui/pages/backtest.py tests/test_cost.py tests/test_dca_backtest.py tests/test_backtest_page.py` 通過。
 - Phase 9-C research tabs 回歸：`tests/test_batch.py tests/test_sweep.py tests/test_walk_forward.py tests/test_strategy_config.py tests/test_strategies.py -m "not integration"` 為 120 passed。

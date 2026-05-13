@@ -18,7 +18,7 @@
 | **V1.11** | 2026/05/10 | 新增 Phase 6-B：設定頁與側邊欄 UI 小修。包含隱藏 Streamlit 自動頁面入口、預設外觀改為 `midnight_blue`、一般設定與策略設定儲存/恢復流程分離、策略類型選項補齊 8 種並顯示中文說明、每種策略提供一組預設 preset、已儲存 preset 可單獨清除。 |
 | **V2.0** | 2026/05/10 | 新增 Phase 8（個股綜合分析儀表板）：8-A 技術面自動判讀引擎、8-B K 線型態辨識、8-C 籌碼分析管線、8-D 即時行情接入、8-E AI 綜合分析與操作劇本、8-F 儀表板 UI。新增 TWSE MIS 即時報價、FinMind 法人/融資融券管線、`src/analysis/` 模組群。 |
 | **V2.1** | 2026/05/11 | 確認 Phase 9（美股 US-1 支援）規格：第一版只做美股日 K、調整後價格、回測與技術分析；不做即時行情、籌碼、分 K、匯率換算、財報與期權。新增多市場基礎、`market=us` 資料管線、USD 回測與既有 UI 市場切換規格。 |
-| **V2.2** | 2026/05/13 | 新增 Phase 9-G：美股 yfinance 1m intraday 盤中快照與分 K 圖。使用最新 1 分 K close 作為近似盤中價，漲跌以該價格對前一紐約交易日收盤價計算；不做 WebSocket、買一 / 賣一、五檔、逐筆或實盤級即時報價。 |
+| **V2.2** | 2026/05/13 | 新增 Phase 9-G：美股 yfinance 1m intraday 盤中快照與分 K 圖。使用最新 1 分 K close 作為近似盤中價，漲跌以該 raw 價格對前一紐約交易日 raw close 計算；新增專用 intraday API，不改 `fetch_minute(market="us")` 的 US-1 拒絕行為；不做 WebSocket、買一 / 賣一、五檔、逐筆或實盤級即時報價。 |
 
 ---
 
@@ -2612,24 +2612,34 @@ You must reply entirely in Traditional Chinese (zh-TW).
 - 支援 interval：第一版 UI 顯示 `1m`，可預留 `5m / 15m / 60m` 圖表切換，但不得把長期 intraday 回測納入 9-G。
 - yfinance intraday 資料歷史深度受限，僅供近期盤中分析。
 - timestamp 必須轉為 `America/New_York`，並保留 timezone-aware。
+- 判斷 intraday 最新 bar 是否屬於「今日」時，一律以 `America/New_York` 當前日期為準，不得使用 UTC 日期或台北日期。
 - UI 必須標示「美股盤中價使用 yfinance 最新 1 分 K 收盤價，可能延遲，僅供研究分析」或等價文案。
+
+**API 決策：**
+
+- 9-G 必須新增專用 intraday API，例如 `fetch_us_intraday(...)`。
+- `fetch_minute(..., market="us")` 維持 US-1 拒絕行為，不因 9-G 改成允許。
+- 原因：台股分 K 與美股 yfinance intraday 的資料來源、限制、cache 策略與語意不同，不應混用同一 public API。
 
 **盤中行情顯示規則：**
 
 | 欄位 | 9-G 顯示規則 |
 |:---|:---|
-| 現價 | 今日 regular session 最新一根 1m bar 的 `close` |
-| 漲跌 | `現價 - 前一紐約交易日 adjusted daily close` |
-| 漲跌幅 | `漲跌 / 前一紐約交易日 adjusted daily close` |
-| 成交量 | 今日 regular session 1m volume 加總，單位 shares |
+| 現價 | 今日 regular session 最新一根 1m bar 的 raw `close` |
+| 昨收 | 前一紐約交易日 raw daily `close` |
+| 漲跌 | `intraday_raw_close - previous_raw_daily_close` |
+| 漲跌幅 | `漲跌 / previous_raw_daily_close` |
+| 成交量 | 今日 regular session 1m volume 加總，單位 shares；從 pandas 加總後明確 cast 成 Python `int` |
 | 狀態 | `盤中分K資料` 或 `近似盤中價` |
 | 時間 | 顯示最新 1m bar timestamp，標註紐約時間 |
+
+盤中行情 metrics 必須使用 raw 尺度，因為 yfinance 1m intraday close 是 raw market price。不得用 raw intraday close 去對 adjusted daily close 計算漲跌，避免除息或調整因子造成漲跌幅失真。既有技術分析、日 K 圖與 AI 劇本預設仍可使用 adjusted daily。
 
 若 1m intraday 抓取失敗、回傳空資料、非美股交易時間或最新 bar 非今日紐約交易日，dashboard 必須自動降級回 9-D 的 adjusted daily 顯示，並提示資料來源限制。
 
 **分 K 圖：**
 
-- 個股分析總覽 tab 可新增日內分 K 圖，與既有日 K 圖分開。
+- 個股分析總覽 tab 新增日內分 K 圖，位置放在既有日 K 圖之前。
 - 預設顯示今日 regular session 1m K。
 - K 線圖 x 軸使用紐約時間，不轉台北時間。
 - 盤中圖表只影響 dashboard 顯示；技術面 summary、型態辨識、多週期趨勢與 AI 劇本預設仍使用 adjusted daily。若 AI 要納入 intraday snapshot，需在 prompt payload 明確標示資料是 `intraday_snapshot`，不得與日 K close 混用。
