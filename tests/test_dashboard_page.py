@@ -970,3 +970,360 @@ def test_sync_symbol_daily_data_fallback_when_primary_update_fails(monkeypatch) 
     dashboard_module._sync_symbol_daily_data("2330", storage=object())  # type: ignore[arg-type]
 
     assert calls == ["finmind:2330", "yfinance:2330"]
+
+
+# ---------------------------------------------------------------------------
+# Phase 9-G: dashboard intraday snapshot tests
+# ---------------------------------------------------------------------------
+
+from src.data.fetcher import USIntradaySnapshot  # noqa: E402
+
+
+def _make_intraday_snapshot(
+    price: float = 155.0,
+    previous_raw_close: float = 150.0,
+    volume: int = 800000,
+    ts: str = "2026-05-14 14:35:00",
+    tz: str = "America/New_York",
+) -> USIntradaySnapshot:
+    change = price - previous_raw_close
+    change_pct = change / previous_raw_close * 100.0
+    timestamp = pd.Timestamp(ts).tz_localize(tz)
+    return USIntradaySnapshot(
+        symbol="AAPL",
+        price=price,
+        previous_raw_close=previous_raw_close,
+        change=change,
+        change_pct=change_pct,
+        volume=volume,
+        timestamp=timestamp,
+    )
+
+
+def _make_intraday_df(n: int = 5) -> pd.DataFrame:
+    tz = "America/New_York"
+    today = pd.Timestamp.now(tz=tz).date()
+    timestamps = pd.date_range(f"{today} 09:30", periods=n, freq="1min", tz=tz)
+    return pd.DataFrame({
+        "date": timestamps,
+        "open": [150.0 + i for i in range(n)],
+        "high": [151.0 + i for i in range(n)],
+        "low": [149.0 + i for i in range(n)],
+        "close": [150.5 + i for i in range(n)],
+        "volume": [100000 + i * 10000 for i in range(n)],
+        "symbol": ["AAPL"] * n,
+    })
+
+
+def test_dashboard_us_intraday_snapshot_uses_latest_1m_close(monkeypatch) -> None:
+    import src.ui.pages.dashboard as dashboard_module
+
+    dummy = _MetricCaptureSt()
+    monkeypatch.setattr(dashboard_module, "st", dummy)
+    monkeypatch.setattr(dashboard_module, "get_config", lambda: {"ui": {"theme": "midnight_blue"}})
+
+    snapshot = _make_intraday_snapshot(price=155.5, previous_raw_close=150.0)
+    _render_tab_overview(
+        quote=None,
+        technical=_make_technical_summary(),
+        df=_make_daily_df(symbol="AAPL", periods=80),
+        market="us",
+        intraday_snapshot=snapshot,
+        intraday_df=_make_intraday_df(),
+    )
+
+    metric_map = dict(dummy.metrics)
+    assert metric_map.get("近似盤中價") == "155.50"
+    assert metric_map.get("狀態") == "盤中分K資料"
+
+
+def test_dashboard_us_intraday_change_uses_previous_raw_close(monkeypatch) -> None:
+    import src.ui.pages.dashboard as dashboard_module
+
+    dummy = _MetricCaptureSt()
+    monkeypatch.setattr(dashboard_module, "st", dummy)
+    monkeypatch.setattr(dashboard_module, "get_config", lambda: {"ui": {"theme": "midnight_blue"}})
+
+    # price=155.5, previous_raw_close=150.0 → change=+5.5, change_pct=+3.67%
+    snapshot = _make_intraday_snapshot(price=155.5, previous_raw_close=150.0)
+    _render_tab_overview(
+        quote=None,
+        technical=_make_technical_summary(),
+        df=_make_daily_df(symbol="AAPL", periods=80),
+        market="us",
+        intraday_snapshot=snapshot,
+    )
+
+    metric_map = dict(dummy.metrics)
+    assert metric_map.get("漲跌") == "+5.50"
+    assert "3.67" in (metric_map.get("漲跌幅") or "")
+
+
+def test_dashboard_us_intraday_volume_sums_today_1m_volume(monkeypatch) -> None:
+    import src.ui.pages.dashboard as dashboard_module
+
+    dummy = _MetricCaptureSt()
+    monkeypatch.setattr(dashboard_module, "st", dummy)
+    monkeypatch.setattr(dashboard_module, "get_config", lambda: {"ui": {"theme": "midnight_blue"}})
+
+    snapshot = _make_intraday_snapshot(volume=1_234_567)
+    _render_tab_overview(
+        quote=None,
+        technical=_make_technical_summary(),
+        df=_make_daily_df(symbol="AAPL", periods=80),
+        market="us",
+        intraday_snapshot=snapshot,
+    )
+
+    metric_map = dict(dummy.metrics)
+    assert "1,234,567" in (metric_map.get("成交量(shares)") or "")
+
+
+def test_dashboard_us_intraday_shows_new_york_timestamp_and_research_caption(monkeypatch) -> None:
+    import src.ui.pages.dashboard as dashboard_module
+
+    dummy = _MetricCaptureSt()
+    monkeypatch.setattr(dashboard_module, "st", dummy)
+    monkeypatch.setattr(dashboard_module, "get_config", lambda: {"ui": {"theme": "midnight_blue"}})
+
+    snapshot = _make_intraday_snapshot()
+    _render_tab_overview(
+        quote=None,
+        technical=_make_technical_summary(),
+        df=_make_daily_df(symbol="AAPL", periods=80),
+        market="us",
+        intraday_snapshot=snapshot,
+    )
+
+    # Must show NY timestamp info and research disclaimer caption
+    captions = dummy.caption_messages
+    assert any("紐約時間" in c for c in captions)
+    assert any("可能延遲" in c and "研究分析" in c for c in captions)
+
+
+def test_dashboard_us_intraday_falls_back_to_adjusted_daily_when_unavailable(monkeypatch) -> None:
+    import src.ui.pages.dashboard as dashboard_module
+
+    dummy = _MetricCaptureSt()
+    monkeypatch.setattr(dashboard_module, "st", dummy)
+    monkeypatch.setattr(dashboard_module, "get_config", lambda: {"ui": {"theme": "midnight_blue"}})
+
+    # No intraday snapshot (None) — should show daily fallback
+    _render_tab_overview(
+        quote=None,
+        technical=_make_technical_summary(),
+        df=_make_daily_df(symbol="AAPL", periods=80),
+        market="us",
+        intraday_snapshot=None,
+        intraday_error="非今日紐約交易日，已改用最新日線資料。",
+    )
+
+    metric_map = dict(dummy.metrics)
+    # Must show daily fallback (收盤價) not intraday (近似盤中價)
+    assert "收盤價" in metric_map
+    assert "近似盤中價" not in metric_map
+    assert metric_map.get("狀態") == "日線資料"
+    assert any("目前無法取得美股盤中分 K" in m for m in dummy.info_messages)
+
+
+def test_dashboard_us_intraday_does_not_show_bid_ask(monkeypatch) -> None:
+    import src.ui.pages.dashboard as dashboard_module
+
+    dummy = _MetricCaptureSt()
+    monkeypatch.setattr(dashboard_module, "st", dummy)
+    monkeypatch.setattr(dashboard_module, "get_config", lambda: {"ui": {"theme": "midnight_blue"}})
+
+    snapshot = _make_intraday_snapshot()
+    _render_tab_overview(
+        quote=None,
+        technical=_make_technical_summary(),
+        df=_make_daily_df(symbol="AAPL", periods=80),
+        market="us",
+        intraday_snapshot=snapshot,
+    )
+
+    metric_labels = [label for label, _ in dummy.metrics]
+    assert "買一" not in metric_labels
+    assert "賣一" not in metric_labels
+
+
+def test_dashboard_us_intraday_does_not_call_tw_realtime_fetcher(monkeypatch, tmp_path) -> None:
+    import src.ui.pages.dashboard as dashboard_module
+
+    storage = ParquetStorage(data_dir=tmp_path)
+    raw_df = _make_daily_df(symbol="AAPL")
+    adjusted_df = raw_df.copy()
+    storage.save_daily("AAPL", raw_df, market="us")
+    storage.save_adjusted("AAPL", adjusted_df, market="us")
+
+    realtime_called = []
+
+    class _Realtime:
+        @classmethod
+        def from_config(cls):
+            realtime_called.append(True)
+            raise AssertionError("RealtimeFetcher must not be called for US market (9-G)")
+
+    monkeypatch.setattr(dashboard_module, "RealtimeFetcher", _Realtime)
+    monkeypatch.setattr(dashboard_module, "ParquetStorage", lambda: storage)
+    monkeypatch.setattr(dashboard_module, "_sync_symbol_daily_data", lambda symbol, storage, market="tw": None)
+    monkeypatch.setattr(dashboard_module, "st", _DummySt())
+    monkeypatch.setattr(dashboard_module, "get_config", lambda: {"ai": {"enabled": False}, "ui": {"theme": "midnight_blue"}})
+    # Stub out intraday fetch to avoid real network call
+    monkeypatch.setattr(
+        dashboard_module,
+        "_fetch_us_intraday_snapshot",
+        lambda symbol, raw_daily: (pd.DataFrame(), None, "test stub"),
+    )
+
+    payload = _build_dashboard_payload("AAPL", market="us")
+
+    assert not realtime_called
+    assert payload["market"] == "us"
+
+
+def test_dashboard_us_intraday_chart_uses_intraday_df_not_daily_patterns(monkeypatch) -> None:
+    """9-G: intraday_df is rendered as a separate chart; daily pattern detection uses only daily df."""
+    import src.ui.pages.dashboard as dashboard_module
+
+    captured_figs = []
+
+    class _CaptureSt(_DummySt):
+        def plotly_chart(self, fig, **kwargs):  # noqa: ANN001
+            captured_figs.append(fig)
+
+    dummy = _CaptureSt()
+    monkeypatch.setattr(dashboard_module, "st", dummy)
+    monkeypatch.setattr(dashboard_module, "get_config", lambda: {"ui": {"theme": "midnight_blue"}})
+
+    snapshot = _make_intraday_snapshot()
+    intraday_df = _make_intraday_df(n=10)
+    _render_tab_overview(
+        quote=None,
+        technical=_make_technical_summary(),
+        df=_make_daily_df(symbol="AAPL", periods=80),
+        market="us",
+        intraday_snapshot=snapshot,
+        intraday_df=intraday_df,
+    )
+
+    # There should be at least 2 charts: intraday and daily K
+    assert len(captured_figs) >= 2
+    # First chart should be intraday (title contains 1m or 分K)
+    first_title = captured_figs[0].layout.title.text or ""
+    assert "1m" in first_title or "分K" in first_title
+
+
+# ---------------------------------------------------------------------------
+# Regression: Bug 1 — DataFrame ambiguity in render_dashboard_page payload path
+# ---------------------------------------------------------------------------
+
+def test_render_dashboard_page_us_with_nonempty_intraday_df_does_not_crash(monkeypatch) -> None:
+    """Regression: payload.get('intraday_df') or pd.DataFrame() raises ValueError
+    when intraday_df is a non-empty DataFrame. Must use explicit is None check."""
+    import src.ui.pages.dashboard as dashboard_module
+
+    technical = _make_technical_summary()
+    intraday_df = _make_intraday_df(n=5)   # non-empty — triggers the ambiguity bug
+    snapshot = _make_intraday_snapshot()
+
+    payload = {
+        "symbol": "AAPL",
+        "market": "us",
+        "ready": True,
+        "error": None,
+        "daily_df": _make_daily_df(symbol="AAPL", periods=80),
+        "technical": technical,
+        "quote": None,
+        "subject_name": "AAPL",
+        "analysis_time": "2026-05-14 00:20:00",
+        "bid_ask": None,
+        "chip": None,
+        "chip_recent_df": pd.DataFrame(),
+        "chip_error": "US-1 尚未支援美股籌碼資料。",
+        "candle_patterns": [],
+        "chart_patterns": [],
+        "multi_timeframe": MultiTimeframeAnalysis(
+            daily=TimeframeTrend(timeframe="daily", trend_direction="多頭", strength="中強"),
+            weekly=TimeframeTrend(timeframe="weekly", trend_direction="多頭", strength="中"),
+            monthly=TimeframeTrend(timeframe="monthly", trend_direction="盤整", strength="中"),
+        ),
+        "analysis": None,
+        "ai_enabled": False,
+        "intraday_df": intraday_df,        # non-empty DataFrame
+        "intraday_snapshot": snapshot,
+        "intraday_error": None,
+    }
+
+    dummy = _DummySt(symbol="AAPL", analyze_clicked=False)
+    dummy.session_state["dashboard_payload"] = payload
+    monkeypatch.setattr(dashboard_module, "st", dummy)
+    monkeypatch.setattr(dashboard_module, "get_config", lambda: {"ui": {"theme": "midnight_blue"}})
+    monkeypatch.setattr(dashboard_module, "render_stock_selector", lambda *args, **kwargs: "AAPL", raising=False)
+    monkeypatch.setattr(dashboard_module, "_render_market_selector", lambda key_prefix: "us")
+    monkeypatch.setattr(dashboard_module, "_input_dashboard_symbol", lambda *, market: "AAPL")
+
+    # Must not raise ValueError: The truth value of a DataFrame is ambiguous
+    render_dashboard_page()
+
+
+# ---------------------------------------------------------------------------
+# Regression: Bug 2 — previous_raw_close must exclude today's NY raw daily row
+# ---------------------------------------------------------------------------
+
+def test_fetch_us_intraday_snapshot_excludes_today_raw_daily(monkeypatch) -> None:
+    """Regression: if raw daily contains today's NY date, previous_raw_close must be
+    the last row strictly before today, not today's close.
+
+    Scenario: raw daily close = [100, 104] where 104 is today's close.
+    Intraday price = 105.
+    Expected: previous_raw_close=100, change=5, change_pct=5%.
+    Bug (before fix): previous_raw_close=104, change=1.
+    """
+    import src.ui.pages.dashboard as dashboard_module
+
+    us_tz = "America/New_York"
+    today = pd.Timestamp.now(tz=us_tz).date()
+    yesterday = today - pd.Timedelta(days=1)
+
+    raw_daily = pd.DataFrame({
+        "date": pd.to_datetime([str(yesterday), str(today)]).tz_localize(us_tz),
+        "open": [99.0, 103.0],
+        "high": [101.0, 105.0],
+        "low": [98.0, 102.0],
+        "close": [100.0, 104.0],   # today's close = 104
+        "volume": [1000, 2000],
+        "symbol": ["AAPL", "AAPL"],
+    })
+
+    # Build a snapshot with latest_bar_date = today
+    today_ts = pd.Timestamp(f"{today} 14:35:00", tz=us_tz)
+    snapshot_raw = USIntradaySnapshot(
+        symbol="AAPL",
+        price=105.0,
+        previous_raw_close=float("nan"),
+        change=float("nan"),
+        change_pct=float("nan"),
+        volume=500000,
+        timestamp=today_ts,
+    )
+
+    def _stub_fetch(symbol):  # noqa: ANN001
+        return pd.DataFrame(), snapshot_raw, None
+
+    monkeypatch.setattr(
+        "src.ui.pages.dashboard.YFinanceFetcher",
+        type("_FetcherStub", (), {
+            "__init__": lambda self, market="us": None,
+            "fetch_us_intraday": lambda self, symbol: _stub_fetch(symbol),
+        }),
+    )
+
+    _, full_snapshot, error = dashboard_module._fetch_us_intraday_snapshot("AAPL", raw_daily)
+
+    assert error is None
+    assert full_snapshot is not None
+    # previous_raw_close must be yesterday's close (100), NOT today's (104)
+    assert full_snapshot.previous_raw_close == pytest.approx(100.0)
+    assert full_snapshot.change == pytest.approx(5.0)
+    assert full_snapshot.change_pct == pytest.approx(5.0)

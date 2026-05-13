@@ -1,15 +1,15 @@
-"""Data fetchers for external market data providers."""
-
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable
+from dataclasses import dataclass
 import time
 from typing import Any
 
 import pandas as pd
 import requests
 import yfinance as yf
+
 
 from src.core.config import get_config
 from src.core.constants import (
@@ -104,6 +104,21 @@ def _empty_margin_dataframe() -> pd.DataFrame:
     )[MARGIN_COLUMNS]
 
 
+@dataclass(frozen=True)
+class USIntradaySnapshot:
+    """Minimal intraday snapshot for US market (9-G)."""
+
+    symbol: str
+    price: float
+    previous_raw_close: float
+    change: float
+    change_pct: float
+    volume: int
+    timestamp: pd.Timestamp  # America/New_York, timezone-aware
+    source: str = "yfinance"
+    interval: str = "1m"
+
+
 def _localize_to_timezone(df: pd.DataFrame, timezone: str, col: str = "date") -> pd.DataFrame:
     target_dtype = f"datetime64[ns, {timezone}]"
 
@@ -168,6 +183,35 @@ def _finalize_schema(df: pd.DataFrame, symbol: str, timezone: str = TAIPEI_TZ) -
 
     out = out[STANDARD_COLUMNS].sort_values("date").reset_index(drop=True)
     return out
+
+
+def _finalize_intraday_schema(raw: pd.DataFrame, symbol: str, timezone: str) -> pd.DataFrame:
+    """Normalize yfinance intraday raw DataFrame to STANDARD_COLUMNS with bar timestamps.
+
+    Used by YFinanceFetcher.fetch_us_intraday() (9-G).
+    Timestamps are timezone-aware in the given timezone (America/New_York for US).
+    """
+    if raw is None or (hasattr(raw, "empty") and raw.empty):
+        return _empty_standard_dataframe(timezone)
+
+    normalized = raw.copy()
+    if isinstance(normalized.columns, pd.MultiIndex):
+        normalized.columns = normalized.columns.get_level_values(0)
+
+    normalized = normalized.reset_index()
+    date_col = normalized.columns[0]
+    mapped = normalized.rename(
+        columns={
+            date_col: "date",
+            "Open": "open",
+            "High": "high",
+            "Low": "low",
+            "Close": "close",
+            "Volume": "volume",
+        }
+    )
+    mapped["symbol"] = symbol
+    return _finalize_schema(mapped, symbol=symbol, timezone=timezone)
 
 
 class IDataFetcher(ABC):
@@ -955,3 +999,77 @@ class YFinanceFetcher(IDataFetcher):
         out = out[["date", "before_price", "after_price", "symbol"]]
         out = out.sort_values("date").drop_duplicates(subset=["date", "symbol"], keep="last").reset_index(drop=True)
         return out
+
+    def fetch_us_intraday(
+        self,
+        symbol: str,
+        period: str = "1d",
+        interval: str = "1m",
+        prepost: bool = False,
+    ) -> tuple[pd.DataFrame, USIntradaySnapshot | None, str | None]:
+        """Fetch US intraday bars from yfinance (9-G).
+
+        Returns:
+            (intraday_df, snapshot, error_msg)
+            - intraday_df: OHLCV bars with America/New_York timestamps
+            - snapshot: USIntradaySnapshot if today's data is available, else None
+            - error_msg: human-readable provider limitation message, or None
+
+        This method is US-market-only and must not be used for TW symbols.
+        fetch_minute(market="us") continues to raise FetcherError (US-1 restriction).
+        """
+        if self._market != "us":
+            return _empty_standard_dataframe(self._timezone), None, "fetch_us_intraday is only for US market."
+
+        us_tz = "America/New_York"
+        normalized_symbol = normalize_symbol(symbol, market="us")
+        ticker = self._ticker_from_symbol(normalized_symbol)
+
+        try:
+            raw = self._downloader(
+                ticker,
+                period=period,
+                interval=interval,
+                prepost=prepost,
+                auto_adjust=False,
+                progress=False,
+                group_by="column",
+                threads=False,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return _empty_standard_dataframe(us_tz), None, f"yfinance intraday 外部資料源限制：{exc}"
+
+        if raw is None or (hasattr(raw, "empty") and raw.empty):
+            return _empty_standard_dataframe(us_tz), None, "yfinance 無可用的盤中資料，已改用最新日線資料。"
+
+        # Normalize to STANDARD_COLUMNS schema with US timezone
+        intraday_df = _finalize_intraday_schema(raw, symbol=normalized_symbol, timezone=us_tz)
+        if intraday_df.empty:
+            return _empty_standard_dataframe(us_tz), None, "yfinance 無可用的盤中資料，已改用最新日線資料。"
+
+        # Determine "today" in New York
+        today_ny = pd.Timestamp.now(tz=us_tz).date()
+        latest_bar = intraday_df.tail(1).iloc[0]
+        latest_ts = pd.to_datetime(latest_bar["date"])
+        if latest_ts.tz is None:
+            latest_ts = latest_ts.tz_localize(us_tz)
+        else:
+            latest_ts = latest_ts.tz_convert(us_tz)
+
+        if latest_ts.date() != today_ny:
+            return intraday_df, None, "目前無法取得美股盤中分 K（非今日紐約交易日），已改用最新日線資料。"
+
+        latest_price = float(latest_bar["close"])
+        volume_total = int(intraday_df["volume"].fillna(0).sum())
+
+        # Snapshot has no prev_close yet; caller must inject previous_raw_close from raw daily
+        snapshot = USIntradaySnapshot(
+            symbol=normalized_symbol,
+            price=latest_price,
+            previous_raw_close=float("nan"),  # caller fills this from raw daily
+            change=float("nan"),
+            change_pct=float("nan"),
+            volume=volume_total,
+            timestamp=latest_ts,
+        )
+        return intraday_df, snapshot, None

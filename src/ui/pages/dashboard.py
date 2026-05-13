@@ -32,7 +32,7 @@ from src.core.config import get_config
 from src.core.exceptions import AICallError, AIDisabledError
 from src.core.market import get_market_spec, normalize_market, normalize_symbol
 from src.data.cleaner import DataCleaner
-from src.data.fetcher import FinMindFetcher, IDataFetcher, YFinanceFetcher
+from src.data.fetcher import FinMindFetcher, IDataFetcher, USIntradaySnapshot, YFinanceFetcher
 from src.data.maintenance import DataMaintenance
 from src.data.realtime import BidAskStructure, RealtimeFetcher, RealtimeQuote
 from src.data.storage import DuckDBMeta, ParquetStorage
@@ -209,6 +209,9 @@ def render_dashboard_page() -> None:
             technical=payload["technical"],
             df=payload["daily_df"],
             market=market,
+            intraday_snapshot=payload.get("intraday_snapshot"),
+            intraday_df=payload.get("intraday_df") if payload.get("intraday_df") is not None else pd.DataFrame(),
+            intraday_error=payload.get("intraday_error"),
         )
     with tabs[1]:
         _render_tab_chip(
@@ -303,6 +306,10 @@ def _build_dashboard_payload(symbol: str, market: str = "tw") -> dict[str, Any]:
     chip: ChipSummary | None = None
     chip_recent_df = pd.DataFrame()
     chip_error: str | None = None
+    intraday_df: pd.DataFrame = pd.DataFrame()
+    intraday_snapshot: USIntradaySnapshot | None = None
+    intraday_error: str | None = None
+
     if normalized_market == "tw":
         try:
             realtime = RealtimeFetcher.from_config()
@@ -313,6 +320,11 @@ def _build_dashboard_payload(symbol: str, market: str = "tw") -> dict[str, Any]:
         chip, chip_recent_df, chip_error = _prepare_chip_data_for_dashboard(symbol, storage)
     else:
         chip_error = "US-1 尚未支援美股籌碼資料。"
+        # 9-G: fetch raw daily for previous_raw_close, then try intraday
+        raw_daily = storage.load_daily(symbol, market=normalized_market)
+        intraday_df, intraday_snapshot, intraday_error = _fetch_us_intraday_snapshot(
+            symbol=symbol, raw_daily=raw_daily
+        )
 
     candle_patterns = detect_candle_patterns(daily)
     chart_patterns = detect_chart_pattern(daily)
@@ -360,6 +372,9 @@ def _build_dashboard_payload(symbol: str, market: str = "tw") -> dict[str, Any]:
         "multi_timeframe": multi_timeframe,
         "analysis": analysis,
         "ai_enabled": ai_enabled,
+        "intraday_df": intraday_df,
+        "intraday_snapshot": intraday_snapshot,
+        "intraday_error": intraday_error,
     }
 
 
@@ -563,6 +578,9 @@ def _render_tab_overview(
     technical: TechnicalSummary,
     df: pd.DataFrame,
     market: str = "tw",
+    intraday_snapshot: USIntradaySnapshot | None = None,
+    intraday_df: pd.DataFrame | None = None,
+    intraday_error: str | None = None,
 ) -> bool:
     normalized_market = normalize_market(market)
     st.subheader("行情總覽")
@@ -570,18 +588,41 @@ def _render_tab_overview(
     latest_volume = _safe_latest_daily_int(df, "volume")
     latest_date = _safe_latest_daily_date(df)
     if normalized_market == "us":
-        prev_close, curr_close = _last_two_numeric(_numeric_series(df, "close"))
-        close_for_display = latest_close if latest_close is not None else (curr_close if curr_close is not None else 0.0)
-        change = float(curr_close - prev_close) if prev_close is not None and curr_close is not None else 0.0
-        change_pct = float((change / prev_close * 100.0) if prev_close else 0.0)
-        daily_volume_for_display = max(0, int(latest_volume)) if latest_volume is not None else 0
-        cols = st.columns(5)
-        cols[0].metric("收盤價", f"{close_for_display:.2f}")
-        cols[1].metric("漲跌", f"{change:+.2f}")
-        cols[2].metric("漲跌幅", f"{change_pct:+.2f}%")
-        cols[3].metric("成交量(shares)", f"{daily_volume_for_display:,}")
-        cols[4].metric("狀態", "日線資料")
+        if intraday_snapshot is not None:
+            # 9-G: use intraday snapshot metrics (raw scale)
+            curr_price = intraday_snapshot.price
+            prev_close = intraday_snapshot.previous_raw_close
+            change = intraday_snapshot.change
+            change_pct = intraday_snapshot.change_pct
+            intraday_vol = intraday_snapshot.volume
+            ts_str = intraday_snapshot.timestamp.strftime("%H:%M %Z")
+            cols = st.columns(5)
+            cols[0].metric("近似盤中價", f"{curr_price:.2f}")
+            cols[1].metric("漲跌", f"{change:+.2f}" if not _is_nan(change) else "—")
+            cols[2].metric("漲跌幅", f"{change_pct:+.2f}%" if not _is_nan(change_pct) else "—")
+            cols[3].metric("成交量(shares)", f"{intraday_vol:,}")
+            cols[4].metric("狀態", "盤中分K資料")
+            st.caption(f"最新 1m bar：{ts_str}（紐約時間）")
+            st.caption("美股盤中價使用 yfinance 最新 1 分 K 收盤價，可能延遲，僅供研究分析。")
+        else:
+            # fallback to adjusted daily
+            prev_close_val, curr_close_val = _last_two_numeric(_numeric_series(df, "close"))
+            close_for_display = latest_close if latest_close is not None else (curr_close_val if curr_close_val is not None else 0.0)
+            change = float(curr_close_val - prev_close_val) if prev_close_val is not None and curr_close_val is not None else 0.0
+            change_pct = float((change / prev_close_val * 100.0) if prev_close_val else 0.0)
+            daily_volume_for_display = max(0, int(latest_volume)) if latest_volume is not None else 0
+            cols = st.columns(5)
+            cols[0].metric("收盤價", f"{close_for_display:.2f}")
+            cols[1].metric("漲跌", f"{change:+.2f}")
+            cols[2].metric("漲跌幅", f"{change_pct:+.2f}%")
+            cols[3].metric("成交量(shares)", f"{daily_volume_for_display:,}")
+            cols[4].metric("狀態", "日線資料")
+            if intraday_error:
+                st.info(f"目前無法取得美股盤中分 K，已改用最新日線資料。")
         st.caption("美股日期以紐約交易日為準。")
+        # 9-G: show intraday chart BEFORE daily chart
+        if intraday_df is not None and not intraday_df.empty:
+            _render_intraday_chart(intraday_df)
     elif quote is not None and quote.is_market_open:
         bid1 = quote.best_bid[0] if quote.best_bid else None
         ask1 = quote.best_ask[0] if quote.best_ask else None
@@ -842,6 +883,122 @@ def _refresh_realtime_snapshot(
         return quote, bid_ask, None
     except Exception as exc:  # noqa: BLE001
         return None, None, f"即時報價更新失敗：{exc}"
+
+
+def _is_nan(value: float | None) -> bool:
+    """Return True if value is None or NaN."""
+    if value is None:
+        return True
+    try:
+        import math
+        return math.isnan(value)
+    except (TypeError, ValueError):
+        return True
+
+
+def _fetch_us_intraday_snapshot(
+    symbol: str,
+    raw_daily: pd.DataFrame,
+) -> tuple[pd.DataFrame, USIntradaySnapshot | None, str | None]:
+    """Fetch US intraday snapshot and inject previous_raw_close from raw daily (9-G).
+
+    Returns (intraday_df, snapshot_with_change, error_msg).
+    """
+    try:
+        fetcher = YFinanceFetcher(market="us")
+        intraday_df, snapshot, error = fetcher.fetch_us_intraday(symbol)
+    except Exception as exc:  # noqa: BLE001
+        return pd.DataFrame(), None, f"yfinance intraday 外部資料源限制：{exc}"
+
+    if snapshot is None or error:
+        return intraday_df, None, error
+
+    # Inject previous_raw_close from raw daily (raw scale, not adjusted).
+    # Must exclude the latest bar's NY date from raw daily to avoid using today's close.
+    # Only take the last row where date < intraday latest_bar_date.
+    prev_raw_close: float | None = None
+    if not raw_daily.empty and "close" in raw_daily.columns and "date" in raw_daily.columns:
+        us_tz = "America/New_York"
+        latest_bar_date = snapshot.timestamp.date()  # New York date of latest intraday bar
+
+        daily_dates = pd.to_datetime(raw_daily["date"], errors="coerce")
+        if daily_dates.dt.tz is None:
+            daily_dates = daily_dates.dt.tz_localize(us_tz)
+        else:
+            daily_dates = daily_dates.dt.tz_convert(us_tz)
+        # Filter to only rows strictly before the latest intraday bar's NY date
+        mask = daily_dates.dt.date < latest_bar_date
+        prev_daily = raw_daily.loc[mask.values]
+
+        if not prev_daily.empty:
+            close_series = pd.to_numeric(prev_daily["close"], errors="coerce").dropna()
+            if not close_series.empty:
+                prev_raw_close = float(close_series.iloc[-1])
+
+    if prev_raw_close is None or prev_raw_close <= 0:
+        return intraday_df, None, "目前無法取得前一紐約交易日收盤價，已改用最新日線資料。"
+
+    change = snapshot.price - prev_raw_close
+    change_pct = change / prev_raw_close * 100.0
+
+    from dataclasses import replace as dc_replace
+    full_snapshot = dc_replace(
+        snapshot,
+        previous_raw_close=prev_raw_close,
+        change=change,
+        change_pct=change_pct,
+    )
+    return intraday_df, full_snapshot, None
+
+
+def _render_intraday_chart(intraday_df: pd.DataFrame) -> None:
+    """Render US intraday 1m candlestick chart (9-G).
+
+    Placed BEFORE the daily K chart in the overview tab.
+    X-axis uses New York timestamps; daily pattern detection is NOT fed this data.
+    """
+    if go is None or intraday_df.empty:
+        return
+
+    config = get_config()
+    ui = config.get("ui", {}) if isinstance(config, dict) else {}
+    theme_name = str(ui.get("theme", "midnight_blue"))
+    _, palette = get_theme(theme_name)
+
+    chart_df = intraday_df.copy()
+    for col in ("open", "high", "low", "close", "volume"):
+        chart_df[col] = pd.to_numeric(chart_df[col], errors="coerce")
+    chart_df = chart_df.dropna(subset=["open", "high", "low", "close"]).reset_index(drop=True)
+    if chart_df.empty:
+        return
+
+    dates = chart_df["date"]
+    fig = go.Figure()
+    fig.add_trace(
+        go.Candlestick(
+            x=dates,
+            open=chart_df["open"],
+            high=chart_df["high"],
+            low=chart_df["low"],
+            close=chart_df["close"],
+            name="1m K",
+            increasing_line_color="#ef4444",
+            increasing_fillcolor="#ef4444",
+            decreasing_line_color="#22c55e",
+            decreasing_fillcolor="#22c55e",
+        )
+    )
+    fig.update_layout(
+        template=palette["plotly_template"],
+        title="今日 1m 分K（紐約時間）",
+        xaxis_title="時間（紐約）",
+        yaxis_title="價格（USD）",
+        xaxis_rangeslider={"visible": False},
+        font={"color": palette["text"]},
+        height=400,
+        dragmode="pan",
+    )
+    st.plotly_chart(fig, width="stretch")
 
 
 def _render_price_chart(df: pd.DataFrame, technical: TechnicalSummary, kline_count: int) -> None:

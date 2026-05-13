@@ -514,3 +514,186 @@ def test_finmind_fetch_dividends_2330() -> None:
     assert str(df["date"].dtype) == f"datetime64[ns, {TAIPEI_TZ}]"
     assert pd.api.types.is_float_dtype(df["cash_dividend"].dtype)
     assert pd.api.types.is_float_dtype(df["stock_dividend"].dtype)
+
+
+# ---------------------------------------------------------------------------
+# Phase 9-G: fetch_us_intraday tests
+# ---------------------------------------------------------------------------
+
+US_TZ = "America/New_York"
+
+
+def _build_intraday_df(
+    timestamps: list[str],
+    *,
+    open_: list[float],
+    high: list[float],
+    low: list[float],
+    close: list[float],
+    volume: list[int],
+    tz: str = US_TZ,
+) -> pd.DataFrame:
+    idx = pd.to_datetime(timestamps).tz_localize(tz)
+    return pd.DataFrame(
+        {"Open": open_, "High": high, "Low": low, "Close": close, "Volume": volume},
+        index=idx,
+    )
+
+
+def _today_ny_ts(hour: int = 14, minute: int = 30) -> str:
+    """Return a New York timestamp string for today."""
+    today = pd.Timestamp.now(tz=US_TZ).date()
+    return f"{today} {hour:02d}:{minute:02d}:00"
+
+
+def test_yfinance_us_intraday_uses_raw_ticker_without_tw_suffix() -> None:
+    calls: list[str] = []
+
+    def downloader(ticker: str, **kwargs) -> pd.DataFrame:  # noqa: ANN003
+        calls.append(ticker)
+        return _build_intraday_df(
+            [_today_ny_ts(14, 30), _today_ny_ts(14, 31)],
+            open_=[150.0, 151.0],
+            high=[151.0, 152.0],
+            low=[149.0, 150.0],
+            close=[150.5, 151.5],
+            volume=[10000, 11000],
+        )
+
+    fetcher = YFinanceFetcher(downloader=downloader, market="us")
+    fetcher.fetch_us_intraday("TSLA")
+    assert calls == ["TSLA"]
+
+
+def test_yfinance_us_intraday_uses_period_1d_interval_1m_prepost_false() -> None:
+    kwargs_captured: dict = {}
+
+    def downloader(ticker: str, **kwargs) -> pd.DataFrame:  # noqa: ANN003
+        kwargs_captured.update(kwargs)
+        return _build_intraday_df(
+            [_today_ny_ts(14, 30)],
+            open_=[150.0], high=[151.0], low=[149.0], close=[150.5], volume=[10000],
+        )
+
+    fetcher = YFinanceFetcher(downloader=downloader, market="us")
+    fetcher.fetch_us_intraday("AAPL")
+    assert kwargs_captured.get("period") == "1d"
+    assert kwargs_captured.get("interval") == "1m"
+    assert kwargs_captured.get("prepost") is False
+    assert kwargs_captured.get("auto_adjust") is False
+
+
+def test_yfinance_us_intraday_normalizes_timezone_to_new_york() -> None:
+    fetcher = YFinanceFetcher(
+        downloader=lambda *a, **kw: _build_intraday_df(
+            [_today_ny_ts(14, 30)],
+            open_=[150.0], high=[151.0], low=[149.0], close=[150.5], volume=[10000],
+        ),
+        market="us",
+    )
+    intraday_df, snapshot, error = fetcher.fetch_us_intraday("AAPL")
+    assert not intraday_df.empty
+    assert str(intraday_df["date"].dtype) == f"datetime64[ns, {US_TZ}]"
+    if snapshot is not None:
+        assert snapshot.timestamp.tzinfo is not None
+        assert "America/New_York" in str(snapshot.timestamp.tzinfo)
+
+
+def test_yfinance_us_intraday_keeps_volume_as_shares() -> None:
+    fetcher = YFinanceFetcher(
+        downloader=lambda *a, **kw: _build_intraday_df(
+            [_today_ny_ts(14, 30), _today_ny_ts(14, 31)],
+            open_=[150.0, 151.0], high=[151.0, 152.0], low=[149.0, 150.0],
+            close=[150.5, 151.5], volume=[500000, 600000],
+        ),
+        market="us",
+    )
+    intraday_df, snapshot, _ = fetcher.fetch_us_intraday("AAPL")
+    assert not intraday_df.empty
+    # volume must be int shares, not lots
+    total = int(intraday_df["volume"].sum())
+    assert total == 1100000
+    if snapshot is not None:
+        assert snapshot.volume == 1100000
+        assert isinstance(snapshot.volume, int)
+
+
+def test_yfinance_us_intraday_empty_returns_provider_limitation() -> None:
+    fetcher = YFinanceFetcher(
+        downloader=lambda *a, **kw: pd.DataFrame(),
+        market="us",
+    )
+    intraday_df, snapshot, error = fetcher.fetch_us_intraday("AAPL")
+    assert snapshot is None
+    assert error is not None and len(error) > 0
+    # Must not raise, just return provider limitation message
+
+
+def test_yfinance_us_intraday_not_today_returns_provider_limitation() -> None:
+    """If the latest bar is not today's NY date, snapshot must be None."""
+    fetcher = YFinanceFetcher(
+        downloader=lambda *a, **kw: _build_intraday_df(
+            ["2020-01-02 14:30:00"],  # old date, never today
+            open_=[100.0], high=[101.0], low=[99.0], close=[100.5], volume=[10000],
+        ),
+        market="us",
+    )
+    intraday_df, snapshot, error = fetcher.fetch_us_intraday("AAPL")
+    assert snapshot is None
+    assert error is not None
+
+
+def test_yfinance_us_intraday_raises_for_tw_market() -> None:
+    fetcher = YFinanceFetcher(market="tw")
+    intraday_df, snapshot, error = fetcher.fetch_us_intraday("2330")
+    assert snapshot is None
+    assert error is not None
+
+
+def test_fetch_minute_us_still_raises_fetcher_error_after_9g() -> None:
+    """9-B restriction must remain: fetch_minute(market='us') still raises FetcherError."""
+    from src.core.exceptions import FetcherError
+    fetcher = YFinanceFetcher(downloader=lambda *a, **kw: pd.DataFrame(), market="us")
+    with pytest.raises(FetcherError, match="US-1 does not support US minute data"):
+        fetcher.fetch_minute("AAPL", "2025-01-01", "2025-01-02", freq="1")
+
+
+def test_yfinance_us_intraday_brk_b_normalizes_ticker() -> None:
+    calls: list[str] = []
+
+    def downloader(ticker: str, **kwargs) -> pd.DataFrame:  # noqa: ANN003
+        calls.append(ticker)
+        return _build_intraday_df(
+            [_today_ny_ts(14, 30)],
+            open_=[400.0], high=[401.0], low=[399.0], close=[400.5], volume=[50000],
+        )
+
+    fetcher = YFinanceFetcher(downloader=downloader, market="us")
+    fetcher.fetch_us_intraday("BRK.B")
+    assert calls == ["BRK-B"]
+
+
+@pytest.mark.integration
+def test_yfinance_us_intraday_tsla_integration() -> None:
+    from src.data.fetcher import YFinanceFetcher
+    fetcher = YFinanceFetcher(market="us")
+    try:
+        intraday_df, snapshot, error = fetcher.fetch_us_intraday("TSLA")
+    except Exception as exc:  # noqa: BLE001
+        pytest.skip(f"yfinance intraday unavailable (external source): {exc}")
+    assert intraday_df.columns.tolist() == STANDARD_COLUMNS or intraday_df.empty
+    if not intraday_df.empty:
+        assert str(intraday_df["date"].dtype) == f"datetime64[ns, {US_TZ}]"
+
+
+@pytest.mark.integration
+def test_yfinance_us_intraday_spy_integration() -> None:
+    from src.data.fetcher import YFinanceFetcher
+    fetcher = YFinanceFetcher(market="us")
+    try:
+        intraday_df, snapshot, error = fetcher.fetch_us_intraday("SPY")
+    except Exception as exc:  # noqa: BLE001
+        pytest.skip(f"yfinance intraday unavailable (external source): {exc}")
+    assert intraday_df.columns.tolist() == STANDARD_COLUMNS or intraday_df.empty
+    if not intraday_df.empty:
+        assert str(intraday_df["date"].dtype) == f"datetime64[ns, {US_TZ}]"
