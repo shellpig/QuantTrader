@@ -2855,7 +2855,7 @@ Phase 10 拆為 **10-A ~ 10-H** 八個子階段，每個可獨立驗證。
 - 切到美股顯示 callout：「美股僅支援日 K（資料來源：yfinance）；US-1 範圍不含分 K 與籌碼資料」
 
 **驗收條件：**
-1. 市場切換正確、列表完整顯示 7 欄
+1. 市場切換正確、列表完整顯示 **6 欄**（代碼 / 名稱 / 區間 / K 棒數 / 狀態 / 動作）。**「大小」(MB) 欄已從規格移除**：本機 parquet 檔案大小不影響使用者決策，徒增後端 `os.path.getsize` 與 race condition 風險，移除以縮 scope。**「名稱」欄目前以 symbol code 作 fallback**（後端 `list_symbols` 暫不補 name 欄；如需中文名稱呈現，後續另議）
 2. 狀態 badge 三態正確著色
 3. 美股 callout 與 `raw+adj` 標記到位
 4. DELETE 流程：列按鈕 → 確認 Dialog（警示文案完整）→ 確認 → 列表 refresh + 成功 toast
