@@ -2828,9 +2828,85 @@ Phase 10 拆為 **10-A ~ 10-H** 八個子階段，每個可獨立驗證。
 
 #### 10-C：資料管理頁
 
-**新增功能：** `DELETE /api/data/{market}/{symbol}` — 刪除標的的所有本機 Parquet + DuckDB metadata。前端必須彈出確認 Dialog，DELETE 必須取得 write lock。刪除的是本機快取，可透過重新下載恢復。不刪除 `data/backtest/` 下已保存的回測結果。
+10-C **拆為兩階段交付**：10-C-1 先做列表 + DELETE（不需擴充後端，全部 API 已實作），10-C-2 再補後端 Job dispatcher + 進度 SSE，落地更新 / 重建 / 新增。此拆分避免後端 `api/routers/jobs.py` 目前的 `NOT_IMPLEMENTED` gap 阻擋整體 UI 交付。
 
-**其餘功能對齊現有 Streamlit 資料管理頁：** 市場切換、資料狀態 DataTable、新增標的、更新/重建操作（走 Job）、美股停用分K/籌碼提示。
+##### 10-C-1：列表 + DELETE（不需擴充後端）
+
+**範圍：**
+- 前端 [web/src/app/data/page.tsx](web/src/app/data/page.tsx) 對齊 [web/_design/data-mockup.tsx](web/_design/data-mockup.tsx) 視覺稿完整實作（含 Dark/Light）
+- DELETE 確認 Dialog（**單步確認**：警示文案 + 取消／確認刪除兩顆按鈕；不需輸入代碼解鎖）
+
+**對應後端 API（均已實作，10-C-1 不動）：**
+- `GET /api/data/symbols?market={tw|us}` — 列表
+- `GET /api/data/status/{market}/{symbol}` — 單一 symbol 的 raw + adjusted 狀態
+- `DELETE /api/data/{market}/{symbol}` — 刪除本機 Parquet + DuckDB metadata（含 write lock 處理；被佔回 `409`；不存在回 `404`；不刪 `data/backtest/`）
+
+**stage-2 功能的 UI 預留（10-C-1 須做）：**
+- 「全部更新」「全部重建」「動作欄·更新」「+ 新增標的」四類按鈕：**顯示但 disabled + tooltip「Phase 10-C-2 開發中」**
+- 視覺與 mockup 一致，使用者看得到完整 UI 也理解暫不能點
+
+**狀態 badge 三態判定（前端依 `end_date` 計算）：**
+- **最新**：`end_date == 最近交易日`
+- **需更新**：`end_date 落後 1~5 交易日`
+- **缺資料**：`end_date 落後 > 5 日` 或區間中有缺口（`row_count < expected`）
+
+**美股顯示規則：**
+- 單列顯示，名稱旁加 `raw+adj` 小型標記（不展開兩列）
+- 切到美股顯示 callout：「美股僅支援日 K（資料來源：yfinance）；US-1 範圍不含分 K 與籌碼資料」
+
+**驗收條件：**
+1. 市場切換正確、列表完整顯示 7 欄
+2. 狀態 badge 三態正確著色
+3. 美股 callout 與 `raw+adj` 標記到位
+4. DELETE 流程：列按鈕 → 確認 Dialog（警示文案完整）→ 確認 → 列表 refresh + 成功 toast
+5. stage-2 四類按鈕全 disabled，hover 顯示 tooltip
+6. 對應前端 vitest 元件測試與後端 `test_data_api.py` 全綠
+
+##### 10-C-2：更新 / 重建 / 新增（需擴充後端 Job dispatcher）
+
+**新增 / 修改後端：**
+- `api/job_manager.py`（或 `api/routers/jobs.py` 的 dispatcher 區塊）擴充支援：
+  - `job.type == "data_update"` → 呼叫 `src.data.maintenance.update_daily`
+  - `job.type == "data_rebuild"` → 呼叫 `src.data.maintenance.rebuild_symbol`
+  - 批次模式：`params` 支援 `{ market: str, symbols?: list[str], all?: bool }`；給 `symbols` 跑指定清單、`all=true` 跑該市場全部
+- 進度 SSE：每完成一個 symbol 推一筆 `event: progress`，全部結束推一筆 `event: result`
+
+**SSE 訊息格式：**
+```
+event: progress
+data: { "current": 3, "total": 10, "current_symbol": "2330", "status": "updating" }
+
+event: progress
+data: { "current": 3, "total": 10, "current_symbol": "2330", "status": "done" }
+
+event: progress
+data: { "current": 4, "total": 10, "current_symbol": "2317", "status": "failed", "error": "Network timeout" }
+
+event: result
+data: { "succeeded": ["2330", ...], "failed": [{ "symbol": "2317", "error": "..." }] }
+```
+
+**新增前端元件：**
+- `web/src/components/data/AddSymbolDialog.tsx` — 「+ 新增標的」彈窗，**複用既有 `StockSelector` 元件**（代碼或名稱皆可輸入），送出後觸發 `data_update` job
+- `web/src/components/data/RebuildConfirmDialog.tsx` — 「全部重建」二次確認 Dialog（破壞性操作，比照 DELETE 風格）
+- `web/src/hooks/useDataJob.ts` — 接 SSE，回傳 `{ status, current, total, current_symbol, succeeded, failed }`
+
+**失敗處理策略：**
+- 批次中**單檔失敗**：跳過繼續其他 symbol、**不中斷整批**
+- 全部完成後 toast 顯示：「成功 X 檔／失敗 N 檔：[2317, 0050]」
+
+**動作欄·更新（單檔）：**
+- 走相同的 `data_update` job、batch_size=1（`symbols=[該檔]`、`all` 不設）
+- UI 進度條同樣顯示，但 current/total 都是 1，視覺更簡潔
+
+**驗收條件：**
+1. `POST /api/jobs` 帶 `type: "data_update"` / `"data_rebuild"` 不再回 `NOT_IMPLEMENTED`
+2. 「全部更新」→ 單一全局進度條（顯示 X／Y）→ 結束 toast
+3. 「全部重建」→ 二次確認 Dialog → 確認後執行
+4. 「動作欄·更新」→ 單檔 SSE 流程（current=1, total=1）→ 完成 toast
+5. 「+ 新增標的」→ 彈窗 → 輸入代碼或名稱（StockSelector）→ 送出 → 觸發 download → 完成後新代碼出現在列表
+6. 批次中單檔失敗：其他 symbol 繼續處理，最終 toast 列出失敗代碼清單
+7. 對應後端測試 `test_data_jobs_api.py` 全綠
 
 #### 10-D：個股分析儀表板
 

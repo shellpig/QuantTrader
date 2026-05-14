@@ -218,13 +218,16 @@ risk:
 | 9-G | ✅ 完成 | 美股 yfinance 1m intraday 盤中快照與分 K 圖：專用 `fetch_us_intraday` API、最新 1 分 K raw close 作為近似盤中價、漲跌對前一紐約交易日 raw close、今日判斷以紐約日期為準、成交量為今日 1m volume 加總、分 K 圖放日 K 圖前 |
 | 10-A | ✅ 完成 | 服務層抽離 + FastAPI 後端骨架：`src/services/` 4 個 service、`api/` FastAPI app + CORS + health + config + data/symbols + Job manager（write lock、TTL）；舊 Streamlit UI 改呼叫 services 行為不變；服務層 44 passed + API 17 passed + 全專案 508 passed |
 | 10-B | ✅ 完成 | Next.js 前端骨架：`web/` Next.js 15.3 + React 19 + TS 5 + Tailwind v4 + SWR + Lightweight Charts；Sidebar 5 頁導航（PC 左側 240px / Mobile 底部 Tab Bar）、Dark/Light 主題、api-client、市場切換、股票選擇器、4 型別檔、formatters；Vitest 33 passed + 全專案 508 passed；手動驗收 10-B-1~6 全數通過 |
-| 10-C~H | 📋 規格已定，待實作 | 10-C 資料管理頁（含 DELETE）、10-D 個股分析儀表板（Lightweight Charts）、10-E 回測工作台（Job + SSE）、10-F AI 問答（SSE 串流）、10-G 設定 + 全局整合、10-H 舊 UI 移除（測試遷移檢查表不可跳過） |
+| 10-C-1 | 📋 規格已定，待實作 | 資料管理頁 stage-1（列表 + DELETE）：完整 UI 移植 [web/_design/data-mockup.tsx](web/_design/data-mockup.tsx)、單步確認 Dialog、三態 badge、美股 raw+adj 標記。stage-2 按鈕（全部更新/全部重建/動作欄·更新/+ 新增標的）以 disabled + tooltip「Phase 10-C-2 開發中」呈現。後端 API 已全部就緒（`GET /symbols`, `GET /status`, `DELETE`），10-C-1 不需動後端 |
+| 10-C-2 | 📋 規格已定，待實作 | 資料管理頁 stage-2（更新/重建/新增）：擴充 `api/job_manager.py` dispatcher 支援 `data_update` / `data_rebuild` job type、單檔 + 批次模式、SSE 進度推送（progress + result event）、單檔失敗不中斷整批；前端「全部更新」單一進度條、「全部重建」二次確認 Dialog、「+ 新增標的」彈窗（複用 StockSelector）、批次失敗 toast 報告 |
+| 10-D | ✅ 完成 | 個股分析儀表板（Lightweight Charts）：3 輪驗收完成（round-3 13 項基本修正 + round-4 6 項緊湊化 + round-5 三欄佈局 50:25:25）；K 線 + MA + KD/RSI/MACD 副圖、crosshair tooltip、S/R 壓力支撐線、Pattern 長描述 tooltip、Radix Tooltip；tsc 0 errors + vitest 34 pass + pytest 25 pass |
+| 10-E~H | 📋 規格已定，待實作 | 10-E 回測工作台（Job + SSE）、10-F AI 問答（SSE 串流）、10-G 設定 + 全局整合、10-H 舊 UI 移除（測試遷移檢查表不可跳過） |
 
 ## 當前待辦
 
 見 `驗證後已知問題.md`（每次必讀）。
 
-主線：Phase 9 全部完成。Phase 10-A 服務層 + FastAPI 骨架、10-B Next.js 前端骨架均已完成驗證（508 Python + 33 Vitest = 541 total）。10-C~H 規格已定，待實作。
+主線：Phase 9 全部完成。Phase 10-A 服務層 + FastAPI 骨架、10-B Next.js 前端骨架、**10-D 個股分析儀表板（3 輪驗收完成）** 均已完成。10-C 拆為 **10-C-1（列表 + DELETE，後端已就緒）** 與 **10-C-2（更新/重建/新增，需擴充 Job dispatcher）** 兩階段交付；10-E~H 規格已定，待實作。
 
 2026-05-14 狀態：
 - 最新 commit 請以 `git log --oneline -1` 為準；本 brief 已改為不硬寫最新 hash，避免文件在 commit 後立即失真。
@@ -300,7 +303,7 @@ risk:
 
 ## 規格文件索引
 
-### 量化交易系統規格書_shellpig版.md（~2989 行）
+### 量化交易系統規格書_shellpig版.md（~3065 行）
 
 | 區段 | 行範圍 | 何時讀 |
 |:---|:---|:---|
@@ -321,13 +324,13 @@ risk:
 | Phase 7 策略擴充（7-A~7-D） | 1224-1933 | 策略、研究工作台、參數掃描、WFA |
 | Phase 8 個股綜合分析儀表板（8-A~8-G） | 1935-2366 | 實作 analysis/ / realtime / dashboard / 說明文字時必讀 |
 | Phase 9 美股 US-1 / 9-G 支援 | 2369-2693 | 美股日 K、調整後價格、回測、技術分析、多市場架構、yfinance 1m intraday 時必讀 |
-| **Phase 10 前端架構重構（10-A~10-H）** | **2696-2909** | **Streamlit → Next.js + FastAPI 遷移、服務層抽離、API 設計、圖表、Responsive、主題系統時必讀** |
+| **Phase 10 前端架構重構（10-A~10-H）** | **2696-2985** | **Streamlit → Next.js + FastAPI 遷移、服務層抽離、API 設計、圖表、Responsive、主題系統時必讀。10-C 已拆為 10-C-1 / 10-C-2 兩階段（規格詳於此區段）** |
 | 子階段總覽 | 2663-2675 | Phase 總覽（含 Phase 10） |
 | 費用估算 | 2677-2695 | API / yfinance / Next.js / US-2 資料源成本 |
 | 附錄 A：免責聲明全文 | 2912-2931 | 免責聲明文案 |
 | 附錄 B：架構決策補充 | 2933-2989 | 美股邊界與 AI provider 抽象 |
 
-### 開發設計方針.md（~6844 行）
+### 開發設計方針.md（~7049 行）
 
 | 區段 | 行範圍 | 何時讀 |
 |:---|:---|:---|
@@ -346,9 +349,9 @@ risk:
 | Phase 8-A~8-F 個股綜合分析儀表板 | 4171-5258 | 實作 analysis/ / realtime / dashboard 時必讀 |
 | Phase 8-G 新手友善說明文字 | 5260-5683 | 實作儀表板說明文字時必讀 |
 | Phase 9 美股 US-1 / 9-G 支援 | 5685-6290 | 實作多市場基礎、美股資料管線、回測、dashboard、資料管理頁、美股 intraday snapshot 前必讀 |
-| **Phase 10 前端架構重構（10-A~10-H）** | **6293-6844** | **服務層抽離、FastAPI 骨架、Next.js 前端、API 端點、圖表元件、Job manager、config 安全、測試遷移檢查表實作時必讀** |
+| **Phase 10 前端架構重構（10-A~10-H）** | **6293-7049** | **服務層抽離、FastAPI 骨架、Next.js 前端、API 端點、圖表元件、Job manager、config 安全、測試遷移檢查表實作時必讀。10-C 區段含 10-C-1 / 10-C-2 兩階段的檔案清單、Job dispatcher 樣板、SSE 訊息規格、狀態 badge 判定演算法** |
 
-### 測試指南.md（~2979 行）
+### 測試指南.md（~3029 行）
 
 | 區段 | 行範圍 | 何時讀 |
 |:---|:---|:---|
@@ -367,9 +370,24 @@ risk:
 | Phase 8-G 測試 | 2128-2174 | 儀表板說明文字測試 |
 | Phase 8 全階段回歸 | 2176-2194 | Phase 8 完成後 |
 | Phase 9 測試（9-A~9-G） | 2196-2603 | 美股 US-1 與 9-G intraday 實作與驗收時必讀 |
-| **Phase 10 測試（10-A~10-H）** | **2606-2884** | **服務層、API 端點、前端 Vitest、E2E Playwright、測試遷移檢查表** |
+| **Phase 10 測試（10-A~10-H）** | **2606-2934** | **服務層、API 端點、前端 Vitest、E2E Playwright、測試遷移檢查表。10-C 案例編號已重新命名為 `10-C-{階段}-{序號}`（如 `10-C-1-1`、`10-C-2-3`），舊 10-C-1..4 對照表記在該節開頭** |
 | 全專案最終回歸 | 2887-2927 | Phase 完成後 |
 | 測試數量統計總覽 | 2929-2979 | 測試統計（含 Phase 10 估算 ~70 + 30 手動 + E2E） |
+
+### web/_design/ — 10-C 視覺設計稿（Phase 10-C 實作必讀）
+
+10-C 資料管理頁的視覺、配色、版型、Dark/Light 兩版皆已產出於 `web/_design/`，10-C-1 / 10-C-2 實作前**必須先讀完此目錄**：
+
+| 檔案 | 內容 | 用途 |
+|:---|:---|:---|
+| `web/_design/data-mockup.tsx`（~607 行） | 完整 TSX 視覺稿，含 Dark / Light 兩版、`TOKENS` 主題系統、假資料（6 檔台股 + 3 檔美股）、DELETE Dialog（單步確認版）、6 條「設計建議變更」JSX 註解 | 10-C-1 移植視覺、tokens、配色、佈局；10-C-2 也須沿用相同視覺系統 |
+| `web/_design/data-1.jpg` | Dark 版列表頁截圖 | 視覺對照基準 |
+| `web/_design/data-2.jpg` | Dark 版 DELETE Dialog 截圖 | DELETE 對話框視覺對照 |
+
+實作守則：
+- **不要** 直接 import `web/_design/data-mockup.tsx`（按 [web/_design/README.md](web/_design/README.md) 規則，`_design/` 不進 build）
+- 將 mockup 內的視覺結構、tokens、配色搬到 `web/src/app/data/page.tsx` 與 `web/src/components/data/*`
+- mockup 第 12-45 行 JSX 註解列了 6 條「設計建議變更」，多數已在規格決議：① 美股單列 + raw+adj 標記、② 全部重建二次確認（10-C-2）、③ 美股 callout、⑤ badge 三態閾值、⑥ 動作欄配色（更新藍 / 刪除紅）。④ 新增標的彈窗設計在 10-C-2 處理
 
 ### 驗證後已知問題.md（~785 行）
 
