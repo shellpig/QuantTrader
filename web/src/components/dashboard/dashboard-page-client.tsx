@@ -7,7 +7,7 @@ import { MarketSwitcher } from "@/components/market-switcher";
 import { StockSelector } from "@/components/stock-selector";
 import { CandlestickChart } from "@/components/dashboard/candlestick-chart";
 import { HelpTooltip } from "@/components/dashboard/help-tooltip";
-import { DASHBOARD_TOOLTIP_TEXT } from "@/components/dashboard/tooltip-text";
+import { DASHBOARD_TOOLTIP_TEXT, PATTERN_DETAILS } from "@/components/dashboard/tooltip-text";
 import { useDashboard } from "@/lib/hooks/useDashboard";
 import { changeColor, formatNumber, formatPct } from "@/lib/formatters";
 import type {
@@ -445,7 +445,14 @@ function PatternsPanel({
           <tbody>
             {rows.map((row) => (
               <tr key={row.name} className="border-t border-slate-800">
-                <td className="px-3 py-2 [font-family:var(--font-mono)]">{row.name}</td>
+                <td className="px-3 py-2 [font-family:var(--font-mono)]">
+                  <span className="flex items-center gap-1">
+                    {row.name}
+                    {PATTERN_DETAILS[row.name] ? (
+                      <HelpTooltip text={PATTERN_DETAILS[row.name] ?? ""} />
+                    ) : null}
+                  </span>
+                </td>
                 <td className="px-3 py-2">
                   <span
                     className={`whitespace-nowrap rounded-full px-2 py-0.5 text-xs ${
@@ -642,6 +649,8 @@ function ChartSection({
         interval={interval}
         daily={payload.daily_df}
         intraday={payload.intraday_df}
+        resistanceLevels={payload.technical.resistance_levels}
+        supportLevels={payload.technical.support_levels}
       />
     </section>
   );
@@ -682,74 +691,71 @@ export default function DashboardPageClient() {
 
           {/* ── Left column ── */}
           <div className="space-y-3">
-            <header className="space-y-2 rounded-xl border border-slate-800 bg-slate-950/70 p-4">
-              <div className="flex flex-wrap items-end justify-between gap-3">
-                <div>
-                  <h1 className="text-3xl font-semibold text-slate-100">個股分析</h1>
-                  <p className="text-sm text-slate-400">技術面 · 籌碼 · 型態 · AI 劇本</p>
-                </div>
-                <div className="flex w-full flex-wrap items-center gap-2 xl:w-auto">
-                  <MarketSwitcher
-                    value={market}
-                    onChange={(next) => {
-                      setMarket(next);
-                      setPendingSymbol("");
-                      setSymbol(null);
-                      setAiHint("");
-                    }}
-                  />
-                  <StockSelector
-                    key={market}
-                    market={market}
-                    value={pendingSymbol}
-                    onInputChange={setPendingSymbol}
-                    onChange={(value) => {
-                      setPendingSymbol(value);
-                      setSymbol(normalizeSymbol(value));
-                      setAiHint("");
-                    }}
-                    className="min-w-[220px] xl:min-w-[320px]"
-                  />
-                  <button
-                    type="button"
-                    className="inline-flex items-center gap-1 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
-                    onClick={handleAnalyze}
-                  >
-                    <Search className="h-4 w-4" />
-                    分析
-                  </button>
-                  <button
-                    type="button"
-                    className="inline-flex items-center gap-1 rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-200 hover:bg-slate-800 disabled:opacity-60"
-                    onClick={() => void mutate()}
-                    disabled={!symbol}
-                  >
-                    <RefreshCw className="h-4 w-4" />
-                    即時更新
-                  </button>
-                </div>
+            {/* Compact header — no title, single control row + price row */}
+            <header className="space-y-2 rounded-xl border border-slate-800 bg-slate-950/70 p-3">
+              {/* Control row */}
+              <div className="flex flex-wrap items-center gap-2">
+                <MarketSwitcher
+                  value={market}
+                  onChange={(next) => {
+                    setMarket(next);
+                    setPendingSymbol("");
+                    setSymbol(null);
+                    setAiHint("");
+                  }}
+                />
+                <StockSelector
+                  key={market}
+                  market={market}
+                  value={pendingSymbol}
+                  onInputChange={setPendingSymbol}
+                  onChange={(value) => {
+                    setPendingSymbol(value);
+                    setSymbol(normalizeSymbol(value));
+                    setAiHint("");
+                  }}
+                  className="w-32 min-w-0"
+                />
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+                  onClick={handleAnalyze}
+                >
+                  <Search className="h-4 w-4" />
+                  分析
+                </button>
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-200 hover:bg-slate-800 disabled:opacity-60"
+                  onClick={() => void mutate()}
+                  disabled={!symbol}
+                >
+                  <RefreshCw className="h-4 w-4" />
+                  即時更新
+                </button>
               </div>
 
-              <div className="flex flex-wrap items-center gap-3 border-t border-slate-800 pt-3">
-                <div className="text-4xl font-semibold [font-family:var(--font-mono)] text-slate-100">
+              {/* Price row */}
+              <div className="flex flex-wrap items-center gap-3 border-t border-slate-800 pt-2">
+                <div className="text-xl font-semibold [font-family:var(--font-mono)] text-slate-100">
                   {titleSymbol}
                 </div>
-                <div className="text-xl text-slate-200">{titleName}</div>
+                <div className="text-base text-slate-200">{titleName}</div>
                 {quote || intradaySnapshot ? (
                   <>
-                    <div className={`text-5xl font-semibold [font-family:var(--font-mono)] ${priceTone}`}>
+                    <div className={`text-3xl font-semibold [font-family:var(--font-mono)] ${priceTone}`}>
                       {formatNumber(quote?.price ?? intradaySnapshot?.price ?? 0, 2)}
                     </div>
-                    <div className={`text-lg [font-family:var(--font-mono)] ${priceTone}`}>
+                    <div className={`text-base [font-family:var(--font-mono)] ${priceTone}`}>
                       {formatSignedValue(quote?.change ?? intradaySnapshot?.change ?? 0, 2)} (
                       {formatPct(quote?.change_pct ?? intradaySnapshot?.change_pct ?? 0, 2)})
                     </div>
-                    <div className="text-sm text-slate-500">
+                    <div className="text-xs text-slate-500">
                       {data?.analysis_time} · {interval === "minute" ? "分 K" : "日 K"}
                     </div>
                   </>
                 ) : (
-                  <div className="text-sm text-slate-500">美股模式暫無即時報價</div>
+                  <div className="text-xs text-slate-500">美股模式暫無即時報價</div>
                 )}
               </div>
             </header>

@@ -6,16 +6,18 @@ import {
   ColorType,
   HistogramSeries,
   LineSeries,
+  LineStyle,
   createChart,
   type CandlestickData,
   type HistogramData,
   type IChartApi,
+  type IPriceLine,
   type ISeriesApi,
   type LineData,
   type Time,
   type UTCTimestamp,
 } from "lightweight-charts";
-import type { OhlcvBar } from "@/types/analysis";
+import type { OhlcvBar, PriceLevel } from "@/types/analysis";
 import type { Market } from "@/types/market";
 import { MARKET_DOWN_COLOR, MARKET_UP_COLOR } from "@/types/market";
 
@@ -26,6 +28,8 @@ interface CandlestickChartProps {
   interval: ChartInterval;
   daily: OhlcvBar[];
   intraday: OhlcvBar[];
+  resistanceLevels?: PriceLevel[];
+  supportLevels?: PriceLevel[];
 }
 
 interface ChartBar {
@@ -257,11 +261,20 @@ function fmtVol(v: number): string {
   return String(Math.round(v));
 }
 
+const VISIBLE_BARS: Record<ChartInterval, number> = {
+  day: 120,
+  week: 26,
+  month: 12,
+  minute: 120,
+};
+
 export function CandlestickChart({
   market,
   interval,
   daily,
   intraday,
+  resistanceLevels = [],
+  supportLevels = [],
 }: CandlestickChartProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -276,6 +289,7 @@ export function CandlestickChart({
   const macdRef = useRef<ISeriesApi<"Line"> | null>(null);
   const macdSignalRef = useRef<ISeriesApi<"Line"> | null>(null);
   const macdHistRef = useRef<ISeriesApi<"Histogram"> | null>(null);
+  const priceLineRefsRef = useRef<IPriceLine[]>([]);
 
   // Refs for crosshair tooltip data lookup
   const barsRef = useRef<ChartBar[]>([]);
@@ -323,6 +337,7 @@ export function CandlestickChart({
       wickUpColor: upColor,
       wickDownColor: downColor,
       borderVisible: false,
+      priceLineVisible: false,
     });
 
     const volume = chart.addSeries(HistogramSeries, {
@@ -482,6 +497,7 @@ export function CandlestickChart({
       macdRef.current = null;
       macdSignalRef.current = null;
       macdHistRef.current = null;
+      priceLineRefsRef.current = [];
     };
   }, [market]);
 
@@ -525,8 +541,47 @@ export function CandlestickChart({
     macdRef.current?.setData(macd.macd);
     macdSignalRef.current?.setData(macd.signal);
     macdHistRef.current?.setData(macd.hist);
-    chartRef.current?.timeScale().fitContent();
-  }, [bars, market]);
+
+    // Remove stale S/R lines and redraw
+    const candle = candleRef.current;
+    for (const pl of priceLineRefsRef.current) {
+      try { candle.removePriceLine(pl); } catch { /* ignore if already removed */ }
+    }
+    priceLineRefsRef.current = [];
+    for (const level of resistanceLevels) {
+      priceLineRefsRef.current.push(
+        candle.createPriceLine({
+          price: level.value,
+          color: "#ef4444",
+          lineStyle: LineStyle.Dashed,
+          lineWidth: 1,
+          axisLabelVisible: true,
+          title: "壓力",
+        }),
+      );
+    }
+    for (const level of supportLevels) {
+      priceLineRefsRef.current.push(
+        candle.createPriceLine({
+          price: level.value,
+          color: "#22c55e",
+          lineStyle: LineStyle.Dashed,
+          lineWidth: 1,
+          axisLabelVisible: true,
+          title: "支撐",
+        }),
+      );
+    }
+
+    // Set default visible range per interval
+    if (bars.length > 0) {
+      const visibleCount = VISIBLE_BARS[interval];
+      chartRef.current?.timeScale().setVisibleLogicalRange({
+        from: Math.max(0, bars.length - visibleCount),
+        to: bars.length - 1,
+      });
+    }
+  }, [bars, market, resistanceLevels, supportLevels, interval]);
 
   return (
     <div

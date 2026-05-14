@@ -35,16 +35,16 @@ export function Sidebar() {
   return (
     <>
       {/* ── PC: left fixed sidebar ── */}
-      <aside className="hidden lg:flex lg:flex-col lg:fixed lg:inset-y-0 lg:left-0 lg:w-40 lg:border-r lg:border-border lg:bg-card lg:z-40">
+      <aside className="hidden lg:flex lg:flex-col lg:fixed lg:inset-y-0 lg:left-0 lg:w-32 lg:border-r lg:border-border lg:bg-card lg:z-40">
         {/* Logo */}
-        <div className="flex h-16 items-center px-6 border-b border-border">
-          <span className="text-lg font-bold text-foreground tracking-tight">
+        <div className="flex h-16 items-center px-3 border-b border-border">
+          <span className="text-base font-bold text-foreground tracking-tight">
             QuantTrader
           </span>
         </div>
 
         {/* Nav */}
-        <nav className="flex flex-col gap-1 p-3 flex-1 overflow-y-auto">
+        <nav className="flex flex-col gap-1 p-2 flex-1 overflow-y-auto">
           {NAV_ITEMS.map((item) => (
             <SidebarLink key={item.href} item={item} active={pathname === item.href} />
           ))}
@@ -72,7 +72,7 @@ function SidebarLink({ item, active }: { item: NavItem; active: boolean }) {
     <Link
       href={item.href}
       className={cn(
-        "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+        "flex items-center gap-2 rounded-lg px-2 py-2 text-sm font-medium transition-colors",
         active
           ? "bg-primary/10 text-primary"
           : "text-muted-foreground hover:bg-muted hover:text-foreground",
