@@ -1,0 +1,19 @@
+# Next.js
+.next/
+out/
+
+# Node
+node_modules/
+
+# Vitest / test output
+coverage/
+
+# Environment
+.env*.local
+
+# Build
+dist/
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
