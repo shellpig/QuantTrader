@@ -1,33 +1,37 @@
-// Analysis / Dashboard types (Phase 10-B)
-// Mirrors Python dataclasses in src/services/dashboard_service.py
+// Analysis / Dashboard types (Phase 10-D)
+// Synced with docs/mock_dashboard_payload.json and backend dataclasses.
 
 import type { Market } from "./market";
 
+export interface PriceLevel {
+  value: number;
+  label: string;
+  kind: string;
+}
+
+export interface TechnicalScoreComponents {
+  ma: number;
+  kd: number;
+  volume_price: number;
+  breakout: number;
+}
+
 export interface TechnicalSummary {
-  trend: string;
-  trend_strength: string;
-  ma5: number | null;
-  ma20: number | null;
-  ma60: number | null;
-  rsi: number | null;
-  rsi_signal: string;
-  macd: number | null;
-  macd_signal: number | null;
-  macd_histogram: number | null;
-  macd_trend: string;
-  kd_k: number | null;
-  kd_d: number | null;
-  kd_signal: string;
-  bb_upper: number | null;
-  bb_lower: number | null;
-  bb_signal: string;
-  support: number | null;
-  resistance: number | null;
-  volume_ma20: number | null;
-  volume_ratio: number | null;
-  price_change_1d: number | null;
-  price_change_5d: number | null;
-  price_change_20d: number | null;
+  trend_direction: string;
+  ma_status: string;
+  kd_status: string;
+  macd_status: string;
+  volume_status: string;
+  volume_price_relation: string;
+  short_term_score: number;
+  short_term_label: string;
+  short_term_components: TechnicalScoreComponents;
+  resistance_levels: PriceLevel[];
+  support_levels: PriceLevel[];
+  volume_price_divergence: string;
+  ma_bias: string;
+  chip_behavior: string;
+  operation_observation: string;
 }
 
 export interface CandlePattern {
@@ -70,12 +74,13 @@ export interface ChipSummary {
 }
 
 export interface OhlcvBar {
-  date: string;       // "YYYY-MM-DD" for daily
+  date: string; // ISO 8601 with timezone, e.g. "2025-11-11T00:00:00+08:00"
   open: number;
   high: number;
   low: number;
   close: number;
   volume: number;
+  symbol: string;
 }
 
 export interface USIntradaySnapshot {
@@ -102,24 +107,67 @@ export interface RealtimeQuote {
   yesterday_close: number;
   volume: number;
   timestamp: string;
+  trade_date: string | null;
+  best_bid: number[];
+  best_ask: number[];
+  best_bid_vol: number[];
+  best_ask_vol: number[];
+  is_market_open: boolean;
+  is_estimated_price: boolean;
+  price_label: string;
+  estimated_price: number | null;
+}
+
+export interface BidAskStructure {
+  total_bid_vol: number;
+  total_ask_vol: number;
+  bid_ratio: number;
+  ask_ratio: number;
+  label: string;
+}
+
+export interface TradingScenario {
+  name: string;
+  entry_range: string;
+  stop_loss: number;
+  target: string;
+}
+
+export interface DashboardAnalysis {
+  industry_overview: string[];
+  company_overview: string[];
+  volume_price_analysis: string;
+  scenarios: TradingScenario[];
+  conclusion: string;
+}
+
+export interface ChipRecentRow {
+  日期: string;
+  外資: number;
+  投信: number;
+  自營商: number;
 }
 
 export interface DashboardPayloadResponse {
   symbol: string;
   market: Market;
-  daily_bars: OhlcvBar[];
+  subject_name: string;
+  analysis_time: string;
+  ai_enabled: boolean;
+  daily_df: OhlcvBar[];
   technical: TechnicalSummary;
   candle_patterns: CandlePattern[];
   chart_patterns: ChartPatternResult[];
   multi_timeframe: MultiTimeframeAnalysis;
-  ai_enabled: boolean;
   quote: RealtimeQuote | null;
+  bid_ask: BidAskStructure | null;
   chip: ChipSummary | null;
+  chip_recent_df: ChipRecentRow[];
   chip_error: string | null;
+  intraday_df: OhlcvBar[];
   intraday_snapshot: USIntradaySnapshot | null;
   intraday_error: string | null;
-  subject_name: string;
-  analysis_time: string;
+  analysis: DashboardAnalysis | null;
 }
 
 export interface ApiError {
