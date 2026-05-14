@@ -251,6 +251,12 @@ function buildMacd(
   return { macd, signal, hist };
 }
 
+function fmtVol(v: number): string {
+  if (v >= 1e8) return `${(v / 1e8).toFixed(1)}億`;
+  if (v >= 1e4) return `${(v / 1e4).toFixed(0)}萬`;
+  return String(Math.round(v));
+}
+
 export function CandlestickChart({
   market,
   interval,
@@ -271,6 +277,12 @@ export function CandlestickChart({
   const macdSignalRef = useRef<ISeriesApi<"Line"> | null>(null);
   const macdHistRef = useRef<ISeriesApi<"Histogram"> | null>(null);
 
+  // Refs for crosshair tooltip data lookup
+  const barsRef = useRef<ChartBar[]>([]);
+  const ma5DataRef = useRef<LineData<Time>[]>([]);
+  const ma20DataRef = useRef<LineData<Time>[]>([]);
+  const ma60DataRef = useRef<LineData<Time>[]>([]);
+
   const bars = useMemo(() => {
     if (interval === "minute" && intraday.length > 0) return toChartBars(intraday, "minute");
     return toChartBars(daily, interval);
@@ -281,7 +293,7 @@ export function CandlestickChart({
 
     const chart = createChart(containerRef.current, {
       autoSize: true,
-      height: 620,
+      height: 460,
       layout: {
         background: { type: ColorType.Solid, color: "transparent" },
         textColor: "#94a3b8",
@@ -323,19 +335,19 @@ export function CandlestickChart({
 
     const ma5 = chart.addSeries(LineSeries, {
       color: "#f59e0b",
-      lineWidth: 2,
+      lineWidth: 1,
       lastValueVisible: false,
       priceLineVisible: false,
     });
     const ma20 = chart.addSeries(LineSeries, {
       color: "#3b82f6",
-      lineWidth: 2,
+      lineWidth: 1,
       lastValueVisible: false,
       priceLineVisible: false,
     });
     const ma60 = chart.addSeries(LineSeries, {
       color: "#c084fc",
-      lineWidth: 2,
+      lineWidth: 1,
       lastValueVisible: false,
       priceLineVisible: false,
     });
@@ -399,6 +411,63 @@ export function CandlestickChart({
     macdSignalRef.current = macdSignal;
     macdHistRef.current = macdHist;
 
+    // Crosshair tooltip — created via useEffect to avoid SSR hydration mismatch
+    const tooltip = document.createElement("div");
+    tooltip.style.cssText = [
+      "position:absolute",
+      "display:none",
+      "padding:8px 10px",
+      "background:rgba(15,23,42,0.92)",
+      "border:1px solid rgba(100,116,139,0.4)",
+      "border-radius:8px",
+      "font-size:11px",
+      "color:#e2e8f0",
+      "pointer-events:none",
+      "z-index:10",
+      "white-space:nowrap",
+      "line-height:1.7",
+    ].join(";");
+    containerRef.current.appendChild(tooltip);
+
+    chart.subscribeCrosshairMove((param) => {
+      if (!param.point || !param.time) {
+        tooltip.style.display = "none";
+        return;
+      }
+      const bar = barsRef.current.find((b) => b.time === param.time);
+      if (!bar) {
+        tooltip.style.display = "none";
+        return;
+      }
+
+      const ma5Val = ma5DataRef.current.find((d) => d.time === param.time)?.value;
+      const ma20Val = ma20DataRef.current.find((d) => d.time === param.time)?.value;
+      const ma60Val = ma60DataRef.current.find((d) => d.time === param.time)?.value;
+
+      const fmt = (v: number) => v.toFixed(2);
+      const lines = [
+        `<span style="color:#94a3b8">${param.time}</span>`,
+        `開 <b>${fmt(bar.open)}</b>  高 <b>${fmt(bar.high)}</b>  低 <b>${fmt(bar.low)}</b>  收 <b>${fmt(bar.close)}</b>`,
+        `成交量 <b>${fmtVol(bar.volume)}</b>`,
+        [
+          ma5Val != null ? `<span style="color:#f59e0b">MA5 ${fmt(ma5Val)}</span>` : "",
+          ma20Val != null ? `<span style="color:#3b82f6">MA20 ${fmt(ma20Val)}</span>` : "",
+          ma60Val != null ? `<span style="color:#c084fc">MA60 ${fmt(ma60Val)}</span>` : "",
+        ].filter(Boolean).join("  "),
+      ].filter(Boolean).join("<br>");
+      tooltip.innerHTML = lines;
+
+      const container = containerRef.current;
+      if (!container) return;
+      const containerWidth = container.clientWidth;
+      const tooltipWidth = 230;
+      const x = param.point.x;
+      const left = x + 16 + tooltipWidth < containerWidth ? x + 16 : x - tooltipWidth - 8;
+      tooltip.style.display = "block";
+      tooltip.style.left = `${left}px`;
+      tooltip.style.top = `${Math.max(4, param.point.y - 70)}px`;
+    });
+
     return () => {
       chart.remove();
       chartRef.current = null;
@@ -432,15 +501,24 @@ export function CandlestickChart({
       value: row.volume,
       color: row.close >= row.open ? upColor : downColor,
     }));
+
+    const sma5 = buildSma(bars, 5);
+    const sma20 = buildSma(bars, 20);
+    const sma60 = buildSma(bars, 60);
+    barsRef.current = bars;
+    ma5DataRef.current = sma5;
+    ma20DataRef.current = sma20;
+    ma60DataRef.current = sma60;
+
     const kd = buildStochasticKD(bars);
     const rsi = buildRsi(bars, 14);
     const macd = buildMacd(bars);
 
     candleRef.current.setData(candleData);
     volRef.current.setData(volumeData);
-    ma5Ref.current?.setData(buildSma(bars, 5));
-    ma20Ref.current?.setData(buildSma(bars, 20));
-    ma60Ref.current?.setData(buildSma(bars, 60));
+    ma5Ref.current?.setData(sma5);
+    ma20Ref.current?.setData(sma20);
+    ma60Ref.current?.setData(sma60);
     kdKRef.current?.setData(kd.k);
     kdDRef.current?.setData(kd.d);
     rsiRef.current?.setData(rsi);
@@ -453,7 +531,7 @@ export function CandlestickChart({
   return (
     <div
       ref={containerRef}
-      className="h-[620px] w-full rounded-xl bg-slate-950/70"
+      className="relative h-[460px] w-full rounded-xl bg-slate-950/70"
       data-testid="candlestick-chart"
     />
   );

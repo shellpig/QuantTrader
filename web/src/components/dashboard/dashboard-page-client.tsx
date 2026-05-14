@@ -84,7 +84,7 @@ function HeaderRow({
             </div>
           </div>
           <div>
-            <div className="text-slate-500">PC</div>
+            <div className="text-slate-500">前收</div>
             <div className="text-slate-100 [font-family:var(--font-mono)]">
               {formatNumber(intradaySnapshot.previous_raw_close, 2)}
             </div>
@@ -96,7 +96,7 @@ function HeaderRow({
             </div>
           </div>
           <div>
-            <div className="text-slate-500">V</div>
+            <div className="text-slate-500">成交量</div>
             <div className="text-slate-100 [font-family:var(--font-mono)]">
               {formatNumber(intradaySnapshot.volume, 0)}
             </div>
@@ -118,57 +118,62 @@ function HeaderRow({
     );
   }
   if (!quote) return null;
+  const isMarketOpen = quote.is_market_open;
   return (
     <section className="rounded-xl border border-slate-800 bg-slate-950/70 px-4 py-3">
-      <div className="grid grid-cols-2 gap-3 text-xs text-slate-300 md:grid-cols-7">
+      <div className={`grid gap-3 text-xs text-slate-300 ${isMarketOpen ? "grid-cols-2 md:grid-cols-7" : "grid-cols-2 md:grid-cols-5"}`}>
         <div>
-          <div className="text-slate-500">O</div>
+          <div className="text-slate-500">開盤</div>
           <div className="[font-family:var(--font-mono)]">
             {formatNumber(quote.open, 2)}
           </div>
         </div>
         <div>
-          <div className="text-slate-500">H</div>
+          <div className="text-slate-500">最高</div>
           <div className="[font-family:var(--font-mono)]">
             {formatNumber(quote.high, 2)}
           </div>
         </div>
         <div>
-          <div className="text-slate-500">L</div>
+          <div className="text-slate-500">最低</div>
           <div className="[font-family:var(--font-mono)]">
             {formatNumber(quote.low, 2)}
           </div>
         </div>
         <div>
-          <div className="text-slate-500">PC</div>
+          <div className="text-slate-500">前收</div>
           <div className="[font-family:var(--font-mono)]">
             {formatNumber(quote.yesterday_close, 2)}
           </div>
         </div>
         <div>
-          <div className="text-slate-500">V</div>
+          <div className="text-slate-500">成交量</div>
           <div className="[font-family:var(--font-mono)]">
-            {formatNumber(quote.volume, market === "tw" ? 0 : 0)}
+            {formatNumber(quote.volume, 0)}
           </div>
         </div>
-        <div>
-          <div className="text-slate-500">買量</div>
-          <div className={`[font-family:var(--font-mono)] ${changeColor(1, "tw")}`}>
-            {formatNumber(
-              (quote.best_bid_vol?.[0] ?? 0) + (quote.best_bid_vol?.[1] ?? 0),
-              0,
-            )}
-          </div>
-        </div>
-        <div>
-          <div className="text-slate-500">賣量</div>
-          <div className={`[font-family:var(--font-mono)] ${changeColor(-1, "tw")}`}>
-            {formatNumber(
-              (quote.best_ask_vol?.[0] ?? 0) + (quote.best_ask_vol?.[1] ?? 0),
-              0,
-            )}
-          </div>
-        </div>
+        {isMarketOpen ? (
+          <>
+            <div>
+              <div className="text-slate-500">買量</div>
+              <div className={`[font-family:var(--font-mono)] ${changeColor(1, "tw")}`}>
+                {formatNumber(
+                  (quote.best_bid_vol?.[0] ?? 0) + (quote.best_bid_vol?.[1] ?? 0),
+                  0,
+                )}
+              </div>
+            </div>
+            <div>
+              <div className="text-slate-500">賣量</div>
+              <div className={`[font-family:var(--font-mono)] ${changeColor(-1, "tw")}`}>
+                {formatNumber(
+                  (quote.best_ask_vol?.[0] ?? 0) + (quote.best_ask_vol?.[1] ?? 0),
+                  0,
+                )}
+              </div>
+            </div>
+          </>
+        ) : null}
       </div>
     </section>
   );
@@ -433,7 +438,7 @@ function PatternsPanel({
           <thead className="bg-slate-900/80 text-slate-300">
             <tr>
               <th className="px-3 py-2 text-left">型態</th>
-              <th className="px-3 py-2 text-left">狀態</th>
+              <th className="w-16 px-3 py-2 text-left">狀態</th>
               <th className="px-3 py-2 text-left">說明</th>
             </tr>
           </thead>
@@ -443,7 +448,7 @@ function PatternsPanel({
                 <td className="px-3 py-2 [font-family:var(--font-mono)]">{row.name}</td>
                 <td className="px-3 py-2">
                   <span
-                    className={`rounded-full px-2 py-0.5 text-xs ${
+                    className={`whitespace-nowrap rounded-full px-2 py-0.5 text-xs ${
                       row.formed
                         ? "bg-rise/15 text-rise"
                         : "bg-slate-700/60 text-slate-300"
@@ -590,7 +595,7 @@ function AiPanel({
   );
 }
 
-function DashboardMain({
+function ChartSection({
   payload,
   market,
   interval,
@@ -608,53 +613,37 @@ function DashboardMain({
     { value: "minute", label: "分 K" },
   ];
   return (
-    <>
-      <HeaderRow
-        quote={payload.quote}
-        intradaySnapshot={payload.intraday_snapshot}
+    <section className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          {tabs.map((tab) => (
+            <button
+              key={tab.value}
+              type="button"
+              onClick={() => onIntervalChange(tab.value)}
+              className={`rounded-md px-3 py-1.5 text-sm ${
+                interval === tab.value
+                  ? "bg-slate-800 text-slate-100"
+                  : "text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-2 text-xs">
+          <span style={{ color: "#f59e0b" }}>MA5</span>
+          <span style={{ color: "#3b82f6" }}>MA20</span>
+          <span style={{ color: "#c084fc" }}>MA60</span>
+        </div>
+      </div>
+      <CandlestickChart
         market={market}
+        interval={interval}
+        daily={payload.daily_df}
+        intraday={payload.intraday_df}
       />
-      <section className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_360px]">
-        <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
-          <div className="mb-2 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              {tabs.map((tab) => (
-                <button
-                  key={tab.value}
-                  type="button"
-                  onClick={() => onIntervalChange(tab.value)}
-                  className={`rounded-md px-3 py-1.5 text-sm ${
-                    interval === tab.value
-                      ? "bg-slate-800 text-slate-100"
-                      : "text-slate-400 hover:text-slate-200"
-                  }`}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </div>
-            <div className="text-xs text-slate-400">MA5 / MA20 / MA60</div>
-          </div>
-          <CandlestickChart
-            market={market}
-            interval={interval}
-            daily={payload.daily_df}
-            intraday={payload.intraday_df}
-          />
-        </div>
-        <div className="space-y-3">
-          <TechnicalPanel technical={payload.technical} />
-          <LevelsPanel technical={payload.technical} />
-          {market === "tw" ? (
-            <ChipPanel
-              chip={payload.chip}
-              bidAsk={payload.bid_ask}
-              chipRecent={payload.chip_recent_df}
-            />
-          ) : null}
-        </div>
-      </section>
-    </>
+    </section>
   );
 }
 
@@ -687,113 +676,134 @@ export default function DashboardPageClient() {
 
   return (
     <div className="-mx-4 -my-6 px-4 py-6 xl:px-6">
-      <div className="mx-auto max-w-[2400px] space-y-3">
-        <header className="space-y-2 rounded-xl border border-slate-800 bg-slate-950/70 p-4">
-          <div className="flex flex-wrap items-end justify-between gap-3">
-            <div>
-              <h1 className="text-3xl font-semibold text-slate-100">個股分析</h1>
-              <p className="text-sm text-slate-400">技術面 · 籌碼 · 型態 · AI 劇本</p>
-            </div>
-            <div className="flex w-full flex-wrap items-center gap-2 xl:w-auto">
-              <MarketSwitcher
-                value={market}
-                onChange={(next) => {
-                  setMarket(next);
-                  setPendingSymbol("");
-                  setSymbol(null);
-                  setAiHint("");
-                }}
-              />
-              <StockSelector
-                key={market}
-                market={market}
-                value={pendingSymbol}
-                onInputChange={setPendingSymbol}
-                onChange={(value) => {
-                  setPendingSymbol(value);
-                  setSymbol(normalizeSymbol(value));
-                  setAiHint("");
-                }}
-                className="min-w-[220px] xl:min-w-[320px]"
-              />
-              <button
-                type="button"
-                className="inline-flex items-center gap-1 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
-                onClick={handleAnalyze}
-              >
-                <Search className="h-4 w-4" />
-                分析
-              </button>
-              <button
-                type="button"
-                className="inline-flex items-center gap-1 rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-200 hover:bg-slate-800 disabled:opacity-60"
-                onClick={() => void mutate()}
-                disabled={!symbol}
-              >
-                <RefreshCw className="h-4 w-4" />
-                即時更新
-              </button>
-            </div>
-          </div>
+      <div className="mx-auto max-w-[2400px]">
+        {/* Two-column layout: left = main content, right = analysis panels */}
+        <div className="xl:grid xl:grid-cols-[minmax(0,1fr)_360px] xl:gap-3 xl:items-start">
 
-          <div className="flex flex-wrap items-center gap-3 border-t border-slate-800 pt-3">
-            <div className="text-4xl font-semibold [font-family:var(--font-mono)] text-slate-100">
-              {titleSymbol}
-            </div>
-            <div className="text-xl text-slate-200">{titleName}</div>
-            {quote || intradaySnapshot ? (
+          {/* ── Left column ── */}
+          <div className="space-y-3">
+            <header className="space-y-2 rounded-xl border border-slate-800 bg-slate-950/70 p-4">
+              <div className="flex flex-wrap items-end justify-between gap-3">
+                <div>
+                  <h1 className="text-3xl font-semibold text-slate-100">個股分析</h1>
+                  <p className="text-sm text-slate-400">技術面 · 籌碼 · 型態 · AI 劇本</p>
+                </div>
+                <div className="flex w-full flex-wrap items-center gap-2 xl:w-auto">
+                  <MarketSwitcher
+                    value={market}
+                    onChange={(next) => {
+                      setMarket(next);
+                      setPendingSymbol("");
+                      setSymbol(null);
+                      setAiHint("");
+                    }}
+                  />
+                  <StockSelector
+                    key={market}
+                    market={market}
+                    value={pendingSymbol}
+                    onInputChange={setPendingSymbol}
+                    onChange={(value) => {
+                      setPendingSymbol(value);
+                      setSymbol(normalizeSymbol(value));
+                      setAiHint("");
+                    }}
+                    className="min-w-[220px] xl:min-w-[320px]"
+                  />
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-1 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+                    onClick={handleAnalyze}
+                  >
+                    <Search className="h-4 w-4" />
+                    分析
+                  </button>
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-1 rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-200 hover:bg-slate-800 disabled:opacity-60"
+                    onClick={() => void mutate()}
+                    disabled={!symbol}
+                  >
+                    <RefreshCw className="h-4 w-4" />
+                    即時更新
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3 border-t border-slate-800 pt-3">
+                <div className="text-4xl font-semibold [font-family:var(--font-mono)] text-slate-100">
+                  {titleSymbol}
+                </div>
+                <div className="text-xl text-slate-200">{titleName}</div>
+                {quote || intradaySnapshot ? (
+                  <>
+                    <div className={`text-5xl font-semibold [font-family:var(--font-mono)] ${priceTone}`}>
+                      {formatNumber(quote?.price ?? intradaySnapshot?.price ?? 0, 2)}
+                    </div>
+                    <div className={`text-lg [font-family:var(--font-mono)] ${priceTone}`}>
+                      {formatSignedValue(quote?.change ?? intradaySnapshot?.change ?? 0, 2)} (
+                      {formatPct(quote?.change_pct ?? intradaySnapshot?.change_pct ?? 0, 2)})
+                    </div>
+                    <div className="text-sm text-slate-500">
+                      {data?.analysis_time} · {interval === "minute" ? "分 K" : "日 K"}
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-sm text-slate-500">美股模式暫無即時報價</div>
+                )}
+              </div>
+            </header>
+
+            {!symbol ? (
+              <section className="rounded-xl border border-dashed border-slate-700 bg-slate-950/40 p-8 text-center text-slate-400">
+                請輸入股票代碼或名稱後點選「分析」。
+              </section>
+            ) : null}
+
+            {isLoading ? (
+              <div className="h-[460px] animate-pulse rounded-xl bg-slate-900/80" />
+            ) : null}
+
+            {error ? (
+              <section className="rounded-xl border border-red-900/60 bg-red-950/20 p-4 text-sm text-red-200">
+                分析失敗：{error.message}
+              </section>
+            ) : null}
+
+            {data && !error ? (
               <>
-                <div className={`text-5xl font-semibold [font-family:var(--font-mono)] ${priceTone}`}>
-                  {formatNumber(quote?.price ?? intradaySnapshot?.price ?? 0, 2)}
-                </div>
-                <div className={`text-lg [font-family:var(--font-mono)] ${priceTone}`}>
-                  {formatSignedValue(quote?.change ?? intradaySnapshot?.change ?? 0, 2)} (
-                  {formatPct(quote?.change_pct ?? intradaySnapshot?.change_pct ?? 0, 2)})
-                </div>
-                <div className="text-sm text-slate-500">
-                  {data?.analysis_time} · {interval === "minute" ? "分 K" : "日 K"}
-                </div>
+                <HeaderRow
+                  quote={data.quote}
+                  intradaySnapshot={data.intraday_snapshot}
+                  market={market}
+                />
+                <ChartSection
+                  payload={data}
+                  market={market}
+                  interval={interval}
+                  onIntervalChange={setInterval}
+                />
+                {/* Bottom dual panels */}
+                <section className="grid gap-3 xl:grid-cols-2">
+                  <PatternsPanel candles={data.candle_patterns} charts={data.chart_patterns} />
+                  <MultiTimeframePanel mtf={data.multi_timeframe} technical={data.technical} />
+                </section>
               </>
-            ) : (
-              <div className="text-sm text-slate-500">美股模式暫無即時報價</div>
-            )}
+            ) : null}
           </div>
-        </header>
 
-        {!symbol ? (
-          <section className="rounded-xl border border-dashed border-slate-700 bg-slate-950/40 p-8 text-center text-slate-400">
-            請輸入股票代碼或名稱後點選「分析」。
-          </section>
-        ) : null}
-
-        {isLoading ? (
-          <section className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_360px]">
-            <div className="h-[620px] animate-pulse rounded-xl bg-slate-900/80" />
-            <div className="space-y-3">
-              <div className="h-56 animate-pulse rounded-xl bg-slate-900/80" />
-              <div className="h-40 animate-pulse rounded-xl bg-slate-900/80" />
-              <div className="h-52 animate-pulse rounded-xl bg-slate-900/80" />
-            </div>
-          </section>
-        ) : null}
-
-        {error ? (
-          <section className="rounded-xl border border-red-900/60 bg-red-950/20 p-4 text-sm text-red-200">
-            分析失敗：{error.message}
-          </section>
-        ) : null}
-
-        {data && !error ? (
-          <>
-            <DashboardMain
-              payload={data}
-              market={market}
-              interval={interval}
-              onIntervalChange={setInterval}
-            />
-            <section className="grid gap-3 xl:grid-cols-3">
-              <PatternsPanel candles={data.candle_patterns} charts={data.chart_patterns} />
-              <MultiTimeframePanel mtf={data.multi_timeframe} technical={data.technical} />
+          {/* ── Right column (analysis panels) ── */}
+          {data && !error ? (
+            <div className="mt-3 space-y-3 xl:mt-0">
+              <TechnicalPanel technical={data.technical} />
+              <LevelsPanel technical={data.technical} />
+              {market === "tw" ? (
+                <ChipPanel
+                  chip={data.chip}
+                  bidAsk={data.bid_ask}
+                  chipRecent={data.chip_recent_df}
+                />
+              ) : null}
               <AiPanel
                 aiEnabled={data.ai_enabled}
                 analysis={data.analysis}
@@ -801,13 +811,14 @@ export default function DashboardPageClient() {
                   setAiHint("請先於設定頁啟用 AI（Phase 10-E 完成串接）。")
                 }
               />
-            </section>
-            {aiHint ? (
-              <div className="inline-flex items-center gap-2 rounded-lg border border-amber-800/70 bg-amber-950/30 px-3 py-2 text-xs text-amber-200">
-                {aiHint}
-              </div>
-            ) : null}
-          </>
+            </div>
+          ) : null}
+        </div>
+
+        {aiHint ? (
+          <div className="mt-3 inline-flex items-center gap-2 rounded-lg border border-amber-800/70 bg-amber-950/30 px-3 py-2 text-xs text-amber-200">
+            {aiHint}
+          </div>
         ) : null}
       </div>
     </div>

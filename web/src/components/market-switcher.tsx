@@ -37,8 +37,8 @@ export function MarketSwitcher({
           className={cn(
             "rounded-md px-3 py-1 text-sm font-medium transition-colors",
             value === market
-              ? "bg-background text-foreground shadow-sm"
-              : "text-muted-foreground hover:text-foreground",
+              ? "bg-slate-700 text-slate-100 shadow-sm"
+              : "text-slate-400 hover:text-slate-200",
           )}
           aria-pressed={value === market}
           data-testid={`market-option-${market}`}

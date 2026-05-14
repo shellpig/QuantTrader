@@ -35,7 +35,7 @@ export function Sidebar() {
   return (
     <>
       {/* ── PC: left fixed sidebar ── */}
-      <aside className="hidden lg:flex lg:flex-col lg:fixed lg:inset-y-0 lg:left-0 lg:w-60 lg:border-r lg:border-border lg:bg-card lg:z-40">
+      <aside className="hidden lg:flex lg:flex-col lg:fixed lg:inset-y-0 lg:left-0 lg:w-40 lg:border-r lg:border-border lg:bg-card lg:z-40">
         {/* Logo */}
         <div className="flex h-16 items-center px-6 border-b border-border">
           <span className="text-lg font-bold text-foreground tracking-tight">
