@@ -19,6 +19,7 @@
 | **V2.0** | 2026/05/10 | 新增 Phase 8（個股綜合分析儀表板）：8-A 技術面自動判讀引擎、8-B K 線型態辨識、8-C 籌碼分析管線、8-D 即時行情接入、8-E AI 綜合分析與操作劇本、8-F 儀表板 UI。新增 TWSE MIS 即時報價、FinMind 法人/融資融券管線、`src/analysis/` 模組群。 |
 | **V2.1** | 2026/05/11 | 確認 Phase 9（美股 US-1 支援）規格：第一版只做美股日 K、調整後價格、回測與技術分析；不做即時行情、籌碼、分 K、匯率換算、財報與期權。新增多市場基礎、`market=us` 資料管線、USD 回測與既有 UI 市場切換規格。 |
 | **V2.2** | 2026/05/13 | 新增 Phase 9-G：美股 yfinance 1m intraday 盤中快照與分 K 圖。使用最新 1 分 K close 作為近似盤中價，漲跌以該 raw 價格對前一紐約交易日 raw close 計算；新增專用 intraday API，不改 `fetch_minute(market="us")` 的 US-1 拒絕行為；不做 WebSocket、買一 / 賣一、五檔、逐筆或實盤級即時報價。 |
+| **V2.3** | 2026/05/14 | 新增 Phase 10（前端架構重構）：從 Streamlit 遷移至 Next.js + FastAPI。10-A 服務層抽離 + FastAPI 後端骨架、10-B Next.js 前端骨架、10-C 資料管理頁、10-D 個股分析儀表板（Lightweight Charts）、10-E 回測研究工作台、10-F AI 問答頁、10-G 設定頁 + 全局整合、10-H 舊 UI 移除與收尾。新增 `src/services/`、`api/`、`web/` 目錄。 |
 
 ---
 
@@ -2668,7 +2669,8 @@ You must reply entirely in Traditional Chinese (zh-TW).
 | **7** 策略擴充 | 7-A → 7-D（4 段） | 9.5-14 天 | |
 | **8** 個股綜合分析儀表板 | 8-A → 8-G（7 段） | 11.5-18 天 | ✅ |
 | **9** 美股 US-1/9-G 支援 | 9-A → 9-G（7 段） | 9.5-15.5 天 | ✅ |
-| **合計** | 39 個子階段 | **64-84.5 天（約 14-18 週）** | |
+| **10** 前端架構重構 | 10-A → 10-H（8 段） | 15-25 天 | ✅ |
+| **合計** | 47 個子階段 | **79-109.5 天（約 16-22 週）** | |
 
 ---
 
@@ -2680,13 +2682,230 @@ You must reply entirely in Traditional Chinese (zh-TW).
 | **LLM API（AI 問答）** | 約 $1-5 USD/月 | 依 provider、模型與問答頻率而定 |
 | **yfinance** | 免費 | 非官方 API；台股 fallback 與 Phase 9 美股 US-1 日 K 資料源，使用量大時有被封或欄位變動風險 |
 | **美股付費資料源（US-2 以後可選）** | 暫不納入 | US-1 不採購；若 yfinance 品質不足，再評估 Polygon、Alpha Vantage 或其他供應商 |
-| **Streamlit（本機）** | 免費 | 本機 localhost 運行 |
+| **Streamlit（本機）** | 免費 | 本機 localhost 運行；Phase 10-H 移除後不再使用 |
+| **Next.js + FastAPI（本機）** | 免費 | Phase 10 起取代 Streamlit，本機 localhost 運行 |
 | **合計（初期）** | 約 $1-5 USD/月 | ≈ NT$30-150/月 |
 
 **費用升級觸發條件：**
 - 若 FinMind 免費層不足 → 升級付費方案（NT$300/月），可取得完整歷史分K
 - 若 LLM API 費用過高 → 增加 prompt caching 優化、切換較便宜模型、或限制每日問答次數
 - 若美股資料品質或穩定性不足 → 另開 US-2，評估付費美股資料源（Polygon、Alpha Vantage 等）；US-1 既有功能不受影響，US-2 只擴充資料源與成本精度，不修改 US-1 已有流程；不得在 US-1 偷偷擴大資料商依賴
+
+---
+
+### Phase 10：前端架構重構 — Streamlit → Next.js
+
+#### Phase 10 定位
+
+Phase 10 將 UI 從 Streamlit 遷移至 Next.js (React) + FastAPI，解決 Streamlit 的根本限制：單欄流式佈局、手機體驗差、每次互動整頁重跑、互動性受限、Plotly 大量 K 線效能瓶頸。
+
+**改版目標：**
+
+1. **資訊密度提升** — 單頁同時呈現更多分析資訊，減少頁面切換
+2. **手機可操作** — 手機瀏覽器可查看行情、檢視分析結果、瀏覽回測報告
+3. **視覺品質** — 接近 TradingView / Bloomberg Terminal 的專業金融工具質感
+4. **操作流暢** — 局部更新、即時回應、無整頁閃爍
+5. **核心演算法不重寫** — `src/` 下分析、回測、資料、策略演算法完全保留；`src/ui/pages/` 中混雜的非渲染邏輯抽離至 `src/services/` 服務層
+
+#### 技術選型
+
+| 類別 | 選型 | 理由 |
+|:---|:---|:---|
+| 前端框架 | Next.js 15+ / React 19+ / TypeScript 5+ | 生態系最大、元件化、App Router layout 嵌套 |
+| 樣式系統 | Tailwind CSS v4 | Mobile-first responsive、原子化、shadcn/ui 原生整合 |
+| UI 元件庫 | shadcn/ui (Radix UI) | 直接複製原始碼可自訂、accessibility 合規、Dark/Light 原生 |
+| 金融圖表 | Lightweight Charts (TradingView 開源) | Canvas 渲染效能高、十字線/多圖同步/觸控操作 |
+| 輔助圖表 | Recharts | 非金融圖表（回測績效 bar chart 等） |
+| 後端 API | FastAPI | async、自動 OpenAPI 文件、型別檢查 |
+| 資料 fetching | SWR ≥2 | React data fetching + 快取 |
+| 套件管理 | pnpm ≥9 | 比 npm 快；OneDrive 衝突時退回 npm |
+
+**資料傳輸協定：**
+
+| 場景 | 協定 |
+|:---|:---|
+| 一般查詢（技術分析、回測結果、設定讀寫） | REST JSON |
+| 美股 / 台股行情輪詢 | REST JSON + 前端 polling (SWR) |
+| 回測進度 | Server-Sent Events (SSE) |
+
+#### 系統架構
+
+```
+使用者瀏覽器 (PC / 平板 / 手機)
+  └── Next.js 前端 (web/, localhost:3000)
+        │ HTTP REST / SSE
+        ▼
+      FastAPI 後端 (api/, localhost:8000)
+        └── src/services/ 服務層（10-A 新增）
+              └── src/ 核心模組（演算法不重寫）
+                    └── DuckDB + Parquet (data/) + config.yaml
+```
+
+三者（Streamlit / FastAPI / Next.js）在 10-H 前可同時運行互不干擾。
+
+#### 專案目錄規劃
+
+Phase 10 新增三個主要目錄：
+
+| 目錄 | 說明 |
+|:---|:---|
+| `src/services/` | 服務層：從 `src/ui/pages/` 抽離的非渲染邏輯（payload 組裝、自動補抓、回測資料同步、config 讀寫） |
+| `api/` | FastAPI 後端 API 層：`main.py` + `deps.py` + `routers/`（analysis, backtest, data, ai, config, realtime, jobs） |
+| `web/` | Next.js 前端：App Router、shadcn/ui 元件、Lightweight Charts 圖表、TypeScript 型別 |
+
+新增測試目錄：`tests/test_services/`、`tests/test_api/`。
+
+#### 子階段拆分
+
+Phase 10 拆為 **10-A ~ 10-H** 八個子階段，每個可獨立驗證。
+
+| 子階段 | 名稱 | 依賴 | 說明 |
+|:---|:---|:---|:---|
+| **10-A** | 服務層抽離 + FastAPI 後端骨架 | — | `src/services/` 抽離 4 個 service、FastAPI app + CORS + health + config + data/symbols + Job manager |
+| **10-B** | Next.js 前端骨架 | scaffold 可平行；驗收依賴 10-A | 專案初始化、layout、sidebar、theme、routing、api-client、market-switcher、stock-selector |
+| **10-C** | 資料管理頁 | 10-A, 10-B | 資料 CRUD API + 前端資料管理頁面 + DELETE 端點（新功能） |
+| **10-D** | 個股分析儀表板 | 10-A, 10-B | K 線圖（Lightweight Charts）、技術分析、型態、籌碼、AI 劇本、聚合端點 |
+| **10-E** | 回測研究工作台 | 10-A, 10-B | 單次/批次/掃描/WFA 回測、Job lifecycle、SSE 進度、K 線 + signal overlay |
+| **10-F** | AI 問答頁 | 10-A, 10-B | AI chat 介面、SSE 串流回應 |
+| **10-G** | 設定頁 + 全局整合 | 10-A ~ 10-F | 設定管理、策略 preset CRUD、Command Palette、鍵盤快捷鍵、Error Boundary |
+| **10-H** | 舊 UI 移除與收尾 | 10-G 全部驗收後 | 移除 `src/ui/`、Streamlit 依賴、測試遷移檢查表、文件更新 |
+
+10-A 與 10-B 的 scaffold 工作可同時進行；10-B 開發階段使用 mock data，最終驗收依賴 10-A。
+
+#### 10-A：服務層抽離 + FastAPI 後端骨架
+
+**服務層抽離（`src/services/`）：**
+
+| 來源 | 目標 service | 關鍵函式 |
+|:---|:---|:---|
+| `src/ui/pages/dashboard.py` | `dashboard_service.py` | `build_dashboard_payload`、`prepare_daily_data`、`prepare_chip_data`、`fetch_us_intraday_snapshot` |
+| `src/ui/pages/backtest.py` | `backtest_service.py` | `build_strategy`、`load_backtest_data`、`run_backtest_job` |
+| `src/ui/pages/data_management.py` | `data_service.py` | `run_maintenance`、`get_symbol_status`、`list_symbols` |
+| `src/ui/pages/settings.py` | `config_service.py` | `read_config`、`update_config`、`update_secrets`、`get_secrets_status` |
+
+服務層函式回傳結果物件或錯誤物件，不直接操作 UI（不含 `st.error()`、`st.session_state` 等）。Streamlit 頁面與 API router 各自負責將結果轉成 UI 或 HTTP 回應。
+
+**FastAPI 骨架：**
+
+- `api/main.py`：FastAPI app 入口，CORS middleware（允許 `localhost:3000`）
+- `api/deps.py`：共用依賴注入（Config、Storage）
+- `api/routers/config.py`：`GET /api/config`、`PUT /api/config`、`PUT /api/config/secrets`
+- `api/routers/data.py`：`GET /api/data/symbols?market=tw`
+- `api/routers/jobs.py`：`POST /api/jobs`、`GET /api/jobs/{id}/events` (SSE)、`GET /api/jobs/{id}/result`、`POST /api/jobs/{id}/cancel`
+- `api/job_manager.py`：in-memory Job manager（queue、狀態追蹤、寫入鎖、TTL 清除）
+- `GET /api/health`：健康檢查
+
+**Job manager 與 Write lock：**
+
+個人單機使用，同時最多 1 個寫入型 job。所有回測 job 均視為寫入型（因 `load_backtest_data` 會 auto-sync 寫入 Parquet/DuckDB）。`DELETE /api/data/` 與 `GET /api/dashboard/payload` 也須取得 write lock。Lock 忙碌時立即回傳 `409 Conflict`。Job 結果 TTL 30 分鐘。
+
+**驗收條件：**
+
+1. `src/services/` 四個 service 建立完成
+2. 舊 Streamlit UI 改為呼叫 `src/services/`，行為不變
+3. `uvicorn api.main:app --reload` 啟動成功
+4. `GET /api/health` 回傳 `{"status": "ok"}`
+5. `GET /api/config` 回傳 config（不含 secrets）
+6. `GET /api/data/symbols?market=tw` 回傳已存在的台股標的清單
+7. Job lifecycle：`POST /api/jobs` → `GET .../events` SSE → `GET .../result`
+8. `POST /api/jobs/{id}/cancel` 可取消 running job
+9. 同時提交 2 個寫入型 job，第 2 個回傳 `409 Conflict`
+10. 服務層測試 `tests/test_services/` 通過
+11. API 端點測試 `tests/test_api/test_config_api.py`、`test_jobs_api.py` 通過
+
+#### 10-B：Next.js 前端骨架
+
+**產出：** `web/` 完整初始化（Next.js + Tailwind CSS + shadcn/ui）、Root layout（sidebar + theme provider）、5 個頁面路由空殼（dashboard / backtest / data / ai / settings）、`api-client.ts`、`market-switcher.tsx`、`stock-selector.tsx`。
+
+**驗收條件：**
+
+1. `pnpm dev` 啟動成功（localhost:3000）；OneDrive 衝突時 `.npmrc` 加 `package-import-method=copy`，仍失敗則改用 `npm`
+2. 5 個頁面可透過 sidebar 切換，URL 對應正確
+3. Dark / Light 主題切換即時生效
+4. 手機寬度下 sidebar 收合為底部 tab bar
+5. `api-client.ts` 可呼叫 10-A 的 `/api/health`
+6. OneDrive 同步不報錯
+
+#### 10-C：資料管理頁
+
+**新增功能：** `DELETE /api/data/{market}/{symbol}` — 刪除標的的所有本機 Parquet + DuckDB metadata。前端必須彈出確認 Dialog，DELETE 必須取得 write lock。刪除的是本機快取，可透過重新下載恢復。不刪除 `data/backtest/` 下已保存的回測結果。
+
+**其餘功能對齊現有 Streamlit 資料管理頁：** 市場切換、資料狀態 DataTable、新增標的、更新/重建操作（走 Job）、美股停用分K/籌碼提示。
+
+#### 10-D：個股分析儀表板
+
+改版核心頁面，用 Lightweight Charts 取代 Plotly。
+
+**API 設計：**
+
+- 聚合端點 `GET /api/dashboard/payload` — 頁面初載用，一次取得全部
+- 細部端點 `GET /api/analysis/{technical|pattern|chip|daily}` — 局部刷新用
+- `GET /api/realtime/{tw|us/intraday}` — 重新整理報價用
+- `POST /api/ai/analyze` — AI 分析獨立觸發
+
+**圖表實作：** K 線 + MA 疊加、成交量獨立圖、技術指標副圖（KD/RSI/MACD），全部時間軸同步。台股紅漲綠跌、美股綠漲紅跌。日 K 使用 business day string `"YYYY-MM-DD"`，美股 intraday 使用 `timestamp_utc` (UTC epoch 秒) + `exchange_tz`。
+
+**Responsive 佈局：** PC ≥1280px 左右分欄（圖表 70% + 技術摘要面板），手機 <768px 全寬堆疊 + 底部 tab bar。
+
+#### 10-E：回測研究工作台
+
+單次回測、批次比較、參數掃描、WFA 統一走 Job lifecycle（`POST /api/jobs` → SSE 進度 → result）。前端含 tearsheet cards、equity curve、K 線 + 買賣點 overlay、heatmap、WFA 表格 + CSV 匯出、取消按鈕。
+
+#### 10-F：AI 問答頁
+
+`POST /api/ai/chat`（SSE 串流回應）、Chat 介面、串流逐字顯示、AI disabled 時顯示設定引導。
+
+#### 10-G：設定頁 + 全局整合
+
+**Secrets 安全規則：** GET 永不回傳 API key 值；API key 只能透過 `PUT /api/config/secrets` write-only 寫入；`PUT /api/config` 走 schema whitelist；前端 API key 輸入框永遠為空，只顯示設定狀態。
+
+**全局整合：** Command Palette (Ctrl+K)、鍵盤快捷鍵、Toast 通知、Error Boundary、Loading skeleton。
+
+#### 10-H：舊 UI 移除與收尾
+
+**前置條件：** 10-A ~ 10-G 全部通過人工驗收。
+
+**測試遷移檢查表（不可跳過）：** 每個被刪的 Streamlit test case 必須先在 service 層/API/前端測試中有對應替代。
+
+**動作：** 移除 `src/ui/`、Streamlit 依賴、`run_quanttrader.bat`、已有替代的 Streamlit 測試。更新文件。全專案回歸測試（測試總數不低於移除前）。
+
+#### Phase 10 主題系統
+
+從 6 套收斂為 2 套基礎主題（Dark 預設 + Light）+ 可選強調色。shadcn/ui 原生 dark/light 雙模式。K 線圖顏色依市場動態切換 CSS 變數 `--chart-up` / `--chart-down`。
+
+#### Phase 10 Responsive 斷點
+
+| 斷點 | 寬度 | 佈局策略 |
+|:---|:---|:---|
+| `sm` | ≥640px | 單欄，圖表全寬 |
+| `md` | ≥768px | 雙欄開始出現 |
+| `lg` | ≥1024px | Sidebar 固定展開 |
+| `xl` | ≥1280px | 主要開發目標佈局 |
+| `2xl` | ≥1536px | 三欄佈局 |
+
+手機 (<768px)：底部 Tab Bar、K 線全寬 300px、DataTable 可滾動、Dialog 全螢幕 Sheet。觸控：pinch zoom、swipe、long press 十字線、最小觸控目標 44×44px。
+
+#### Phase 10 明確不做
+
+- 不做使用者認證/登入（個人工具）
+- 不做雲端部署（維持零伺服器）
+- 不做 PWA / 離線模式
+- 不做 WebSocket（SSE 足夠）
+- 不做 i18n（維持繁體中文）
+- 不做 Server Components streaming（初期用 SWR）
+- 不重寫核心演算法
+- 不做 Docker 容器化
+- 不做 CI/CD pipeline
+
+#### Phase 10 風險
+
+| 風險 | 緩解 |
+|:---|:---|
+| React/TypeScript 學習曲線 | shadcn/ui 現成元件 + AI 輔助 |
+| Lightweight Charts API 差異 | 10-D 先做 PoC 驗證 |
+| FastAPI 與 src/ import 整合 | 10-A 優先驗證 |
+| OneDrive + Node.js 相容性 | `.npmrc` 設 `package-import-method=copy`；fallback npm |
+| DuckDB 並發存取 | Job manager 限制同時 1 個寫入型 job |
 
 ---
 
@@ -2707,7 +2926,7 @@ You must reply entirely in Traditional Chinese (zh-TW).
 ---
 
 *本規格書（shellpig 版）基於企業版 V3.0 精簡而來，由 Claude Sonnet 4.6 協助設計。*
-*個人研究工具，技術棧：Python 3.12 + DuckDB + LLM Provider APIs + Streamlit。*
+*個人研究工具，技術棧：Python 3.12 + DuckDB + LLM Provider APIs + Streamlit（Phase 10 起遷移至 Next.js + FastAPI）。*
 
 ---
 

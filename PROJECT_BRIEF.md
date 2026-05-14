@@ -2,7 +2,7 @@
 
 本文件供新 session 快速了解專案全貌，取代逐份閱讀全部規格文件。需要深入某區段時，按行號索引讀取對應文件。
 
-最後更新：2026-05-13
+最後更新：2026-05-14
 
 ---
 
@@ -10,7 +10,9 @@
 
 台股量化交易研究工具（個人版），運行於 Windows 11 本機。聚焦研究與回測，不接實盤。三大核心功能：自動化台股資料管道、回測引擎（向量化 + 事件驅動）、AI 技術分析問答。
 
-2026-05-13 Phase 9-A~9-F 自動化驗證全部完成（`89a4071` 已 push）：多市場基礎架構、美股日 K 資料管線、美股回測支援、美股技術分析儀表板、資料管理頁美股支援、Phase 9 整合回歸（428 passed）。9-F 手動驗收 12 項（9-F-1~9-F-12）待使用者執行。9-G 規格已追加：美股 yfinance 1m intraday 盤中快照與分 K 圖，使用最新 1 分 K raw close 作為近似盤中價，漲跌對前一紐約交易日 raw close，不做 WebSocket / 買一賣一 / 五檔 / tick。
+2026-05-14 Phase 10 規格已完成並寫入正式文件：前端架構從 Streamlit 遷移至 Next.js (React) + FastAPI，拆為 10-A~10-H 八個子階段。新增 `src/services/`（服務層）、`api/`（FastAPI 後端）、`web/`（Next.js 前端）。核心演算法不重寫。Phase 9-G（美股 intraday）為前置條件。
+
+Phase 9 狀態：9-A~9-F 自動化驗證全部完成（428 passed）。9-F 手動驗收 12 項待使用者執行。9-G 規格已定，待實作。
 
 ## 技術棧
 
@@ -18,9 +20,11 @@
 - 資料處理 pandas、技術指標 pandas-ta
 - 台股資料 FinMind API + yfinance 備援；美股日 K 使用 yfinance（Phase 9-B）；9-G 規格追加美股 yfinance 1m intraday 盤中快照與分 K 圖
 - 儲存 DuckDB + Parquet（零伺服器）
-- UI Streamlit、圖表 Plotly
+- UI Streamlit（Phase 10-H 移除後由 Next.js 取代）、圖表 Plotly（Phase 10 由 Lightweight Charts 取代）
+- Phase 10 新增：Next.js 15+ / React 19+ / TypeScript 5+ / Tailwind CSS v4 / shadcn/ui / Lightweight Charts / SWR
+- Phase 10 新增：FastAPI ≥0.115 / uvicorn / sse-starlette（後端 API 層）
 - AI LLM（OpenAI / Anthropic / Gemini，provider-neutral）
-- 測試 pytest、虛擬環境 `.venv\Scripts\python.exe`
+- 測試 pytest、虛擬環境 `.venv\Scripts\python.exe`；Phase 10 前端測試 Vitest + Playwright
 
 ## 目錄結構
 
@@ -39,11 +43,28 @@ src/
 ├── analysis/       technical_summary.py, pattern.py, chip_analysis.py
 ├── indicators/     calculator.py（pandas-ta 封裝 + 別名映射）
 ├── ai/             advisor.py（LLM Provider Tool Use）
-└── ui/
+├── services/       ★ Phase 10 新增：服務層（從 ui/pages/ 抽離的非渲染邏輯）
+│                   dashboard_service.py, backtest_service.py,
+│                   data_service.py, config_service.py
+└── ui/             Streamlit UI（Phase 10-H 移除）
     ├── app.py      Streamlit 主程式
     ├── themes.py   6 套主題定義
     └── pages/      backtest.py, dashboard.py, data_management.py,
                     ai_chat.py, settings.py
+
+api/                 ★ Phase 10 新增：FastAPI 後端 API 層
+├── main.py          FastAPI app 入口、CORS
+├── deps.py          共用依賴注入
+├── job_manager.py   in-memory Job manager（write lock、TTL）
+└── routers/         analysis.py, backtest.py, data.py, ai.py,
+                     config.py, realtime.py, jobs.py
+
+web/                 ★ Phase 10 新增：Next.js 前端
+├── src/app/         App Router（dashboard, backtest, data, ai, settings）
+├── src/components/  共用元件（sidebar, charts/, metric-card, stock-selector, ...）
+├── src/hooks/       use-stock-data.ts, use-backtest.ts, use-realtime.ts
+├── src/lib/         api-client.ts, formatters.ts, utils.ts
+└── src/types/       analysis.ts, backtest.ts, market.ts, config.ts
 
 tests/
 ├── fixtures/       手工構造的 CSV 測試資料
@@ -58,6 +79,12 @@ tests/
 ├── test_strategies.py, test_batch.py, test_sweep.py, test_walk_forward.py
 ├── test_technical_summary.py, test_pattern.py
 ├── test_chip_analysis.py, test_realtime.py, test_dashboard_page.py
+├── test_services/   ★ Phase 10 新增：服務層測試
+│                    test_dashboard_svc.py, test_backtest_svc.py,
+│                    test_data_svc.py, test_config_svc.py
+└── test_api/        ★ Phase 10 新增：API 端點測試
+                     test_config_api.py, test_jobs_api.py, test_data_api.py,
+                     test_analysis_api.py, test_backtest_api.py, test_ai_api.py
 
 data/                （gitignore，執行時自動建立）
   raw/tw/{symbol}/       daily.parquet, minute.parquet,
@@ -189,16 +216,18 @@ risk:
 | 9-E | ✅ 完成 | 資料管理頁美股支援：市場切換、yfinance 日 K 更新/重建、BRK.B 正規化、raw/adjusted 狀態、停用分 K 與籌碼 |
 | 9-F | ⚠️ 自動驗證完成，手動驗收待做 | Phase 9 整合回歸與文件收束：全專案自動測試 428 passed；手動驗收 9-F-1~9-F-12 待使用者執行 |
 | 9-G | 📋 規格已定，待實作 | 美股 yfinance 1m intraday 盤中快照與分 K 圖：新增專用 `fetch_us_intraday` 類 API、保留 `fetch_minute(market="us")` 拒絕；最新 1 分 K raw close 作為近似盤中價、漲跌對前一紐約交易日 raw close、今日判斷以紐約日期為準、成交量為今日 1m volume 加總並 cast 成 Python int、分 K 圖放日 K 圖前；不做 WebSocket、買一/賣一、五檔、tick、intraday 回測 |
+| 10 | 📋 規格已定，待實作（依賴 9-G 完成） | 前端架構重構：Streamlit → Next.js + FastAPI。10-A 服務層抽離 + FastAPI 骨架、10-B Next.js 骨架（可與 10-A 平行 scaffold）、10-C 資料管理頁（含 DELETE 新功能）、10-D 個股分析儀表板（Lightweight Charts）、10-E 回測工作台（Job + SSE）、10-F AI 問答（SSE 串流）、10-G 設定 + 全局整合（Command Palette、Secrets 安全）、10-H 舊 UI 移除（測試遷移檢查表不可跳過） |
 
 ## 當前待辦
 
 見 `驗證後已知問題.md`（每次必讀）。
 
-主線：Phase 9-A~9-F 自動化部分全部完成，已 push（`89a4071`）。9-F 手動驗收 12 項（9-F-1~9-F-12）待使用者執行。9-G 已完成規格文件追加，待後續實作。
+主線：Phase 9-A~9-F 自動化完成（428 passed），9-G 規格已定待實作。Phase 10 規格已完成（V2.3），寫入三份正式文件，待 9-G 完成後啟動。
 
 2026-05-14 狀態：
 - 最新 commit 請以 `git log --oneline -1` 為準；本 brief 已改為不硬寫最新 hash，避免文件在 commit 後立即失真。
-- Phase 9-G 規格已寫入 `量化交易系統規格書_shellpig版.md`、`開發設計方針.md`、`測試指南.md` 並更新本 brief：使用 yfinance 1m intraday 補美股盤中快照與分 K 圖；新增專用 intraday API、不改 `fetch_minute(market="us")` 拒絕；總覽現價採最新 1 分 K raw close，漲跌 / 漲跌幅對前一紐約交易日 raw close；判斷最新 bar 是否為今日時以 `America/New_York` 當前日期為準；成交量採今日 regular session 1m volume 加總並 cast 成 Python int；分 K 圖放在日 K 圖之前；若 intraday 不可用則降級 adjusted daily；不做 WebSocket、買一/賣一、五檔、tick、盤前盤後或 intraday 回測。
+- Phase 10 規格已寫入 `量化交易系統規格書_shellpig版.md`（V2.3）、`開發設計方針.md`、`測試指南.md`：前端架構從 Streamlit 遷移至 Next.js + FastAPI，拆為 10-A~10-H 八個子階段。新增 `src/services/` 服務層、`api/` FastAPI 後端、`web/` Next.js 前端。技術選型 Next.js 15+ / React 19+ / TypeScript 5+ / Tailwind CSS v4 / shadcn/ui / Lightweight Charts / SWR / FastAPI。核心演算法不重寫。10-A 與 10-B 可平行 scaffold。10-H 舊 UI 移除需通過測試遷移檢查表。
+- Phase 9-G 規格已寫入三份正式文件：使用 yfinance 1m intraday 補美股盤中快照與分 K 圖。
 - Phase 9-C/9-D/9-E 已驗證完成；Phase 9-F 全專案自動回歸 428 passed，文件收束完成。
 - Phase 9-C 驗證結果：`tests/test_cost.py tests/test_engine_vec.py tests/test_dca_backtest.py tests/test_backtest_page.py -m "not integration"` 為 42 passed；py_compile `src/backtest/cost.py src/backtest/_helpers.py src/backtest/dca.py src/backtest/batch.py src/backtest/sweep.py src/backtest/walk_forward.py src/ui/pages/backtest.py tests/test_cost.py tests/test_dca_backtest.py tests/test_backtest_page.py` 通過。
 - Phase 9-C research tabs 回歸：`tests/test_batch.py tests/test_sweep.py tests/test_walk_forward.py tests/test_strategy_config.py tests/test_strategies.py -m "not integration"` 為 120 passed。
@@ -267,33 +296,34 @@ risk:
 
 ## 規格文件索引
 
-### 量化交易系統規格書_shellpig版.md（~2730 行）
+### 量化交易系統規格書_shellpig版.md（~2989 行）
 
 | 區段 | 行範圍 | 何時讀 |
 |:---|:---|:---|
-| 修訂歷史 | 3-22 | 查版本變更，Phase 9 為 `V2.1` |
-| 專案願景與目標 | 46-61 | 理解定位 |
-| 技術語言與套件選型 | 63-90 | 技術決策參考 |
-| 系統架構（四層架構圖） | 92-176 | 理解整體結構 |
-| 資料來源規劃 | 178-222 | 修改 fetcher 時 |
-| 資料品質與清洗（L1/L2/L3、時區） | 224-294 | 修改 cleaner / timezone 時 |
-| 回測引擎規格 | 296-485 | 修改 backtest 時 |
-| AI 技術分析模組 | 487-634 | 修改 ai/advisor 時 |
-| 風控規格 | 636-649 | 風控相關 |
-| 本機部署規格 | 651-747 | 環境設定 |
-| 測試策略 | 749-770 | 測試方針 |
-| Phase 1-4 開發計畫 | 772-951 | 查歷史 phase 規格 |
-| Phase 5 回測體驗 | 953-1070 | 修改 DCA / 股價走勢 |
-| Phase 6 UI/UX | 1072-1221 | 修改主題切換、設定頁與側邊欄 UI 小修 |
-| Phase 7 策略擴充（7-A~7-D） | 1223-1932 | 策略、研究工作台、參數掃描、WFA |
-| Phase 8 個股綜合分析儀表板（8-A~8-G） | 1934-2365 | 實作 analysis/ / realtime / dashboard / 說明文字時必讀 |
-| **Phase 9 美股 US-1 / 9-G 支援** | **2368-2646** | **美股日 K、調整後價格、回測、技術分析、多市場架構、yfinance 1m intraday 盤中快照與分 K 圖時必讀** |
-| 子階段總覽 | 2648-2663 | Phase 總覽 |
-| 費用估算 | 2665-2681 | API / yfinance / US-2 資料源成本 |
-| 附錄 A：免責聲明全文 | 2683-2702 | 免責聲明文案 |
-| 附錄 B：架構決策補充 | 2704-2730 | 美股邊界與 AI provider 抽象 |
+| 修訂歷史 | 3-23 | 查版本變更，Phase 10 為 `V2.3` |
+| 專案願景與目標 | 47-62 | 理解定位 |
+| 技術語言與套件選型 | 64-91 | 技術決策參考 |
+| 系統架構（四層架構圖） | 93-177 | 理解整體結構 |
+| 資料來源規劃 | 179-223 | 修改 fetcher 時 |
+| 資料品質與清洗（L1/L2/L3、時區） | 225-295 | 修改 cleaner / timezone 時 |
+| 回測引擎規格 | 297-486 | 修改 backtest 時 |
+| AI 技術分析模組 | 488-635 | 修改 ai/advisor 時 |
+| 風控規格 | 637-650 | 風控相關 |
+| 本機部署規格 | 652-748 | 環境設定 |
+| 測試策略 | 750-771 | 測試方針 |
+| Phase 1-4 開發計畫 | 773-952 | 查歷史 phase 規格 |
+| Phase 5 回測體驗 | 954-1071 | 修改 DCA / 股價走勢 |
+| Phase 6 UI/UX | 1073-1222 | 修改主題切換、設定頁與側邊欄 UI 小修 |
+| Phase 7 策略擴充（7-A~7-D） | 1224-1933 | 策略、研究工作台、參數掃描、WFA |
+| Phase 8 個股綜合分析儀表板（8-A~8-G） | 1935-2366 | 實作 analysis/ / realtime / dashboard / 說明文字時必讀 |
+| Phase 9 美股 US-1 / 9-G 支援 | 2369-2693 | 美股日 K、調整後價格、回測、技術分析、多市場架構、yfinance 1m intraday 時必讀 |
+| **Phase 10 前端架構重構（10-A~10-H）** | **2696-2909** | **Streamlit → Next.js + FastAPI 遷移、服務層抽離、API 設計、圖表、Responsive、主題系統時必讀** |
+| 子階段總覽 | 2663-2675 | Phase 總覽（含 Phase 10） |
+| 費用估算 | 2677-2695 | API / yfinance / Next.js / US-2 資料源成本 |
+| 附錄 A：免責聲明全文 | 2912-2931 | 免責聲明文案 |
+| 附錄 B：架構決策補充 | 2933-2989 | 美股邊界與 AI provider 抽象 |
 
-### 開發設計方針.md（~6273 行）
+### 開發設計方針.md（~6844 行）
 
 | 區段 | 行範圍 | 何時讀 |
 |:---|:---|:---|
@@ -311,9 +341,10 @@ risk:
 | Phase 7-D Walk-Forward Analysis | 3740-4169 | 實作 WFA runner / UI tab 時必讀 |
 | Phase 8-A~8-F 個股綜合分析儀表板 | 4171-5258 | 實作 analysis/ / realtime / dashboard 時必讀 |
 | Phase 8-G 新手友善說明文字 | 5260-5683 | 實作儀表板說明文字時必讀 |
-| **Phase 9 美股 US-1 / 9-G 支援** | **5685-6273** | **實作多市場基礎、美股資料管線、回測、dashboard、資料管理頁、美股 intraday snapshot 前必讀** |
+| Phase 9 美股 US-1 / 9-G 支援 | 5685-6290 | 實作多市場基礎、美股資料管線、回測、dashboard、資料管理頁、美股 intraday snapshot 前必讀 |
+| **Phase 10 前端架構重構（10-A~10-H）** | **6293-6844** | **服務層抽離、FastAPI 骨架、Next.js 前端、API 端點、圖表元件、Job manager、config 安全、測試遷移檢查表實作時必讀** |
 
-### 測試指南.md（~2680 行）
+### 測試指南.md（~2979 行）
 
 | 區段 | 行範圍 | 何時讀 |
 |:---|:---|:---|
@@ -329,11 +360,12 @@ risk:
 | Phase 7-D 測試 | 1698-1856 | Walk-Forward 測試 |
 | Phase 7 全階段回歸 | 1858-1876 | Phase 7-D 完成後 |
 | Phase 8 測試（8-A~8-F） | 1878-2126 | 個股分析儀表板測試 |
-| **Phase 8-G 測試** | **2128-2174** | **儀表板說明文字測試** |
+| Phase 8-G 測試 | 2128-2174 | 儀表板說明文字測試 |
 | Phase 8 全階段回歸 | 2176-2194 | Phase 8 完成後 |
-| **Phase 9 測試（9-A~9-G）** | **2196-2599** | **美股 US-1 與 9-G intraday 實作與驗收時必讀** |
-| 全專案最終回歸 | 2601-2639 | Phase 完成後 |
-| 測試數量統計總覽 | 2641-2680 | 測試統計與 Phase 9 估算 |
+| Phase 9 測試（9-A~9-G） | 2196-2603 | 美股 US-1 與 9-G intraday 實作與驗收時必讀 |
+| **Phase 10 測試（10-A~10-H）** | **2606-2884** | **服務層、API 端點、前端 Vitest、E2E Playwright、測試遷移檢查表** |
+| 全專案最終回歸 | 2887-2927 | Phase 完成後 |
+| 測試數量統計總覽 | 2929-2979 | 測試統計（含 Phase 10 估算 ~70 + 30 手動 + E2E） |
 
 ### 驗證後已知問題.md（~785 行）
 
@@ -358,8 +390,26 @@ risk:
 # 覆蓋率
 .\.venv\Scripts\python.exe -m pytest tests/ --cov=src --cov-report=term-missing -m "not integration"
 
-# 啟動 Streamlit UI
+# 啟動 Streamlit UI（Phase 10-H 前可用）
 .\.venv\Scripts\python.exe -m streamlit run src/ui/app.py
+
+# Phase 10：啟動 FastAPI 後端
+.\.venv\Scripts\python.exe -m uvicorn api.main:app --reload --port 8000
+
+# Phase 10：啟動 Next.js 前端（在 web/ 目錄）
+cd web && pnpm dev
+
+# Phase 10：服務層測試
+.\.venv\Scripts\python.exe -m pytest tests/test_services/ -v -m "not integration"
+
+# Phase 10：API 端點測試
+.\.venv\Scripts\python.exe -m pytest tests/test_api/ -v -m "not integration"
+
+# Phase 10：前端測試（在 web/ 目錄）
+cd web && pnpm test
+
+# Phase 10：E2E smoke test（在 web/ 目錄）
+cd web && pnpm exec playwright test
 ```
 
 注意：Windows/OneDrive 路徑下 pytest 暫存目錄可能出現 `PermissionError: [WinError 5]`，視為環境問題，不影響測試結果。
