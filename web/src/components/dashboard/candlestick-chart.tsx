@@ -307,7 +307,7 @@ export function CandlestickChart({
 
     const chart = createChart(containerRef.current, {
       autoSize: true,
-      height: 460,
+      height: 400,
       layout: {
         background: { type: ColorType.Solid, color: "transparent" },
         textColor: "#94a3b8",
@@ -586,7 +586,7 @@ export function CandlestickChart({
   return (
     <div
       ref={containerRef}
-      className="relative h-[460px] w-full rounded-xl bg-slate-950/70"
+      className="relative h-[400px] w-full rounded-xl bg-slate-950/70"
       data-testid="candlestick-chart"
     />
   );

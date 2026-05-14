@@ -194,25 +194,25 @@ function TechnicalPanel({ technical }: { technical: TechnicalSummary }) {
     { key: "ma_bias", label: "乖離 MA20", value: technical.ma_bias },
   ];
   return (
-    <section className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
-      <div className="mb-3 flex items-center justify-between">
+    <section className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+      <div className="mb-2 flex items-center justify-between">
         <h3 className="text-sm font-semibold text-slate-100">技術分析總覽</h3>
         <span className="text-xs text-slate-500">近 60 日</span>
       </div>
-      <div className="space-y-2">
+      <div className="space-y-1">
         {rows.map((row) => (
           <div
             key={row.label}
-            className="grid grid-cols-[90px_1fr] items-start gap-2 border-b border-slate-800/70 pb-1.5 text-sm"
+            className="grid grid-cols-[80px_1fr] items-start gap-1.5 border-b border-slate-800/70 pb-1 text-xs"
           >
             <div className="flex items-center gap-1 text-slate-300">
               {row.label}
               <HelpTooltip text={DASHBOARD_TOOLTIP_TEXT[row.key]} />
             </div>
-            <div className="[font-family:var(--font-mono)] text-slate-100">{row.value}</div>
+            <div className="min-w-0 break-words [font-family:var(--font-mono)] text-slate-100">{row.value}</div>
           </div>
         ))}
-        <div className="grid grid-cols-[90px_1fr] items-start gap-2 pt-1.5 text-sm">
+        <div className="grid grid-cols-[80px_1fr] items-start gap-1.5 pt-1 text-xs">
           <div className="flex items-center gap-1 text-slate-300">
             短線分數
             <HelpTooltip text={DASHBOARD_TOOLTIP_TEXT.short_term_score} />
@@ -228,28 +228,26 @@ function TechnicalPanel({ technical }: { technical: TechnicalSummary }) {
 
 function LevelsPanel({ technical }: { technical: TechnicalSummary }) {
   return (
-    <section className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
-      <div className="mb-3 flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-slate-100">關鍵價位</h3>
-      </div>
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <div className="mb-1 flex items-center gap-1 text-xs text-slate-400">
+    <section className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+      <h3 className="mb-2 text-sm font-semibold text-slate-100">關鍵價位</h3>
+      <div className="space-y-1.5">
+        <div className="flex items-baseline justify-between gap-2">
+          <div className="flex shrink-0 items-center gap-1 text-xs text-slate-400">
             壓力區
             <HelpTooltip text={DASHBOARD_TOOLTIP_TEXT.resistance} />
           </div>
-          <div className="text-2xl font-semibold text-rise [font-family:var(--font-mono)]">
+          <div className="min-w-0 text-right text-base font-semibold text-rise [font-family:var(--font-mono)]">
             {technical.resistance_levels
               .map((item) => formatNumber(item.value, 0))
               .join(" / ")}
           </div>
         </div>
-        <div>
-          <div className="mb-1 flex items-center gap-1 text-xs text-slate-400">
+        <div className="flex items-baseline justify-between gap-2">
+          <div className="flex shrink-0 items-center gap-1 text-xs text-slate-400">
             支撐區
             <HelpTooltip text={DASHBOARD_TOOLTIP_TEXT.support} />
           </div>
-          <div className="text-2xl font-semibold text-fall [font-family:var(--font-mono)]">
+          <div className="min-w-0 text-right text-base font-semibold text-fall [font-family:var(--font-mono)]">
             {technical.support_levels
               .map((item) => formatNumber(item.value, 0))
               .join(" / ")}
@@ -339,8 +337,8 @@ function ChipPanel({
 }) {
   if (!chip) return null;
   return (
-    <section className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
-      <div className="mb-3 flex items-center justify-between gap-2">
+    <section className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+      <div className="mb-2 flex items-center justify-between gap-2">
         <h3 className="text-sm font-semibold text-slate-100">籌碼分析 近 5 日</h3>
         {chipRecent.length > 0 ? <ChipRecentDialog rows={chipRecent} /> : null}
       </div>
@@ -431,31 +429,31 @@ function PatternsPanel({
 }) {
   const rows = mapPatternRows(candles, charts);
   return (
-    <section className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
-      <h3 className="mb-3 text-sm font-semibold text-slate-100">K 線型態</h3>
+    <section className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+      <h3 className="mb-2 text-sm font-semibold text-slate-100">K 線型態</h3>
       <div className="overflow-hidden rounded-lg border border-slate-800">
-        <table className="w-full text-sm">
+        <table className="w-full text-xs">
           <thead className="bg-slate-900/80 text-slate-300">
             <tr>
-              <th className="px-3 py-2 text-left">型態</th>
-              <th className="w-16 px-3 py-2 text-left">狀態</th>
-              <th className="px-3 py-2 text-left">說明</th>
+              <th className="px-2 py-1.5 text-left">型態</th>
+              <th className="w-14 px-2 py-1.5 text-left">狀態</th>
+              <th className="px-2 py-1.5 text-left">說明</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((row) => (
               <tr key={row.name} className="border-t border-slate-800">
-                <td className="px-3 py-2 [font-family:var(--font-mono)]">
-                  <span className="flex items-center gap-1">
+                <td className="min-w-0 px-2 py-1.5">
+                  <span className="flex items-center gap-1 break-all">
                     {row.name}
                     {PATTERN_DETAILS[row.name] ? (
                       <HelpTooltip text={PATTERN_DETAILS[row.name] ?? ""} />
                     ) : null}
                   </span>
                 </td>
-                <td className="px-3 py-2">
+                <td className="px-2 py-1.5">
                   <span
-                    className={`whitespace-nowrap rounded-full px-2 py-0.5 text-xs ${
+                    className={`whitespace-nowrap rounded-full px-1.5 py-0.5 text-xs ${
                       row.formed
                         ? "bg-rise/15 text-rise"
                         : "bg-slate-700/60 text-slate-300"
@@ -464,7 +462,7 @@ function PatternsPanel({
                     {row.formed ? "成立" : "未成"}
                   </span>
                 </td>
-                <td className="px-3 py-2 text-slate-300">{row.description}</td>
+                <td className="min-w-0 break-words px-2 py-1.5 text-slate-300">{row.description}</td>
               </tr>
             ))}
           </tbody>
@@ -487,43 +485,43 @@ function MultiTimeframePanel({
     { label: "月 K", key: "timeframe_monthly", value: mtf.monthly },
   ] as const;
   return (
-    <section className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
-      <h3 className="mb-3 text-sm font-semibold text-slate-100">多週期 · 量價</h3>
-      <div className="space-y-2 border-b border-slate-800 pb-3">
+    <section className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+      <h3 className="mb-2 text-sm font-semibold text-slate-100">多週期 · 量價</h3>
+      <div className="space-y-1.5 border-b border-slate-800 pb-2">
         {rows.map((row) => (
-          <div key={row.label} className="grid grid-cols-[50px_70px_1fr] items-center gap-2 text-sm">
+          <div key={row.label} className="grid grid-cols-[46px_64px_1fr] items-center gap-1.5 text-xs">
             <div className="flex items-center gap-1 text-slate-300">
               {row.label}
               <HelpTooltip text={DASHBOARD_TOOLTIP_TEXT[row.key]} />
             </div>
-            <span className="rounded-full bg-rise/15 px-2 py-0.5 text-center text-rise">
+            <span className="rounded-full bg-rise/15 px-1.5 py-0.5 text-center text-rise">
               {row.value.trend_direction}
             </span>
-            <span className="text-slate-100 [font-family:var(--font-mono)]">{row.value.strength}</span>
+            <span className="min-w-0 break-words text-slate-100 [font-family:var(--font-mono)]">{row.value.strength}</span>
           </div>
         ))}
       </div>
-      <div className="mt-3 space-y-3">
+      <div className="mt-2 space-y-2">
         <div>
-          <div className="mb-1 flex items-center gap-1 text-sm text-slate-300">
+          <div className="mb-0.5 flex items-center gap-1 text-xs text-slate-300">
             量價背離
             <HelpTooltip text={DASHBOARD_TOOLTIP_TEXT.volume_price_divergence} />
           </div>
-          <p className="text-sm text-slate-100">{technical.volume_price_divergence}</p>
+          <p className="break-words text-xs text-slate-100">{technical.volume_price_divergence}</p>
         </div>
         <div>
-          <div className="mb-1 flex items-center gap-1 text-sm text-slate-300">
+          <div className="mb-0.5 flex items-center gap-1 text-xs text-slate-300">
             均線乖離
             <HelpTooltip text={DASHBOARD_TOOLTIP_TEXT.ma_bias} />
           </div>
-          <p className="text-sm text-slate-100">{technical.ma_bias}</p>
+          <p className="break-words text-xs text-slate-100">{technical.ma_bias}</p>
         </div>
         <div>
-          <div className="mb-1 flex items-center gap-1 text-sm text-slate-300">
+          <div className="mb-0.5 flex items-center gap-1 text-xs text-slate-300">
             操作觀察
             <HelpTooltip text={DASHBOARD_TOOLTIP_TEXT.operation_observation} />
           </div>
-          <p className="text-sm text-slate-100">{technical.operation_observation}</p>
+          <p className="break-words text-xs text-slate-100">{technical.operation_observation}</p>
         </div>
       </div>
     </section>
@@ -541,7 +539,7 @@ function AiPanel({
 }) {
   if (!aiEnabled) {
     return (
-      <section className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
+      <section className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
         <div className="mb-4 flex items-center justify-between">
           <h3 className="text-sm font-semibold text-slate-200">隔日操作劇本</h3>
           <span className="rounded-full bg-slate-800 px-3 py-1 text-xs text-slate-400">
@@ -566,7 +564,7 @@ function AiPanel({
 
   if (!analysis) {
     return (
-      <section className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
+      <section className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
         <h3 className="mb-2 text-sm font-semibold text-slate-200">隔日操作劇本</h3>
         <p className="text-sm text-slate-300">AI 分析失敗，請稍後重試。</p>
       </section>
@@ -574,16 +572,16 @@ function AiPanel({
   }
 
   return (
-    <section className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
-      <h3 className="mb-3 text-sm font-semibold text-slate-200">隔日操作劇本</h3>
-      <div className="space-y-2">
+    <section className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+      <h3 className="mb-2 text-sm font-semibold text-slate-200">隔日操作劇本</h3>
+      <div className="space-y-1.5">
         {analysis.scenarios.map((scenario) => (
-          <div key={scenario.name} className="rounded-lg border border-slate-800 bg-slate-900/40 p-3">
-            <div className="mb-1 text-sm font-medium text-slate-100">{scenario.name}</div>
-            <div className="grid grid-cols-3 gap-2 text-xs text-slate-300">
+          <div key={scenario.name} className="rounded-lg border border-slate-800 bg-slate-900/40 p-2">
+            <div className="mb-1 text-xs font-medium text-slate-100">{scenario.name}</div>
+            <div className="grid grid-cols-3 gap-1 text-xs text-slate-300">
               <div>
                 <div className="text-slate-500">進場價</div>
-                <div className="[font-family:var(--font-mono)]">{scenario.entry_range}</div>
+                <div className="break-all [font-family:var(--font-mono)]">{scenario.entry_range}</div>
               </div>
               <div>
                 <div className="text-slate-500">停損</div>
@@ -597,7 +595,7 @@ function AiPanel({
           </div>
         ))}
       </div>
-      <p className="mt-3 text-xs text-slate-400">{analysis.conclusion}</p>
+      <p className="mt-2 text-xs text-slate-400">{analysis.conclusion}</p>
     </section>
   );
 }
@@ -686,8 +684,8 @@ export default function DashboardPageClient() {
   return (
     <div className="-mx-4 -my-6 px-4 py-6 xl:px-6">
       <div className="mx-auto max-w-[2400px]">
-        {/* Two-column layout: left = main content, right = analysis panels */}
-        <div className="xl:grid xl:grid-cols-[minmax(0,1fr)_360px] xl:gap-3 xl:items-start">
+        {/* Three-column layout: left=chart(50%), middle=analysis(25%), right=patterns(25%) */}
+        <div className="xl:grid xl:grid-cols-[2fr_1fr_1fr] xl:gap-3 xl:items-start">
 
           {/* ── Left column ── */}
           <div className="space-y-3">
@@ -767,7 +765,7 @@ export default function DashboardPageClient() {
             ) : null}
 
             {isLoading ? (
-              <div className="h-[460px] animate-pulse rounded-xl bg-slate-900/80" />
+              <div className="h-[400px] animate-pulse rounded-xl bg-slate-900/80" />
             ) : null}
 
             {error ? (
@@ -789,18 +787,14 @@ export default function DashboardPageClient() {
                   interval={interval}
                   onIntervalChange={setInterval}
                 />
-                {/* Bottom dual panels */}
-                <section className="grid gap-3 xl:grid-cols-2">
-                  <PatternsPanel candles={data.candle_patterns} charts={data.chart_patterns} />
-                  <MultiTimeframePanel mtf={data.multi_timeframe} technical={data.technical} />
-                </section>
+                {/* Q4: chart 下方暫時留白，後續新增資訊區塊 */}
               </>
             ) : null}
           </div>
 
-          {/* ── Right column (analysis panels) ── */}
+          {/* ── Middle column: analysis panels ── */}
           {data && !error ? (
-            <div className="mt-3 space-y-3 xl:mt-0">
+            <div className="mt-3 space-y-2 xl:mt-0">
               <TechnicalPanel technical={data.technical} />
               <LevelsPanel technical={data.technical} />
               {market === "tw" ? (
@@ -817,6 +811,14 @@ export default function DashboardPageClient() {
                   setAiHint("請先於設定頁啟用 AI（Phase 10-E 完成串接）。")
                 }
               />
+            </div>
+          ) : null}
+
+          {/* ── Right column: pattern panels ── */}
+          {data && !error ? (
+            <div className="mt-3 space-y-2 xl:mt-0">
+              <PatternsPanel candles={data.candle_patterns} charts={data.chart_patterns} />
+              <MultiTimeframePanel mtf={data.multi_timeframe} technical={data.technical} />
             </div>
           ) : null}
         </div>
