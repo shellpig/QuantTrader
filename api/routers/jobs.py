@@ -1,23 +1,22 @@
-"""Jobs router — /api/jobs/* endpoints (Phase 10-A).
+"""Jobs router — /api/jobs/* endpoints.
 
-Job lifecycle:
-  POST /api/jobs          → create job, return job_id
-  GET  /api/jobs/{id}     → poll job status
-  GET  /api/jobs/{id}/events  → SSE progress stream (10-E onwards)
-  GET  /api/jobs/{id}/result  → completed job result
-  POST /api/jobs/{id}/cancel  → cancel running job
+Phase 10-A: skeleton lifecycle (create / poll / cancel / result).
+Phase 10-C-2: added _run_data_job dispatcher for data_update / data_rebuild,
+              proper write-lock acquisition, SSE stream endpoint.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from api.deps import get_manager
-from api.job_manager import Job, JobManager
+from api.job_manager import Job, JobManager, _WRITE_JOB_TYPES
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
@@ -30,14 +29,6 @@ router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 class CreateJobRequest(BaseModel):
     type: str
     params: dict[str, Any] = {}
-
-
-class JobResponse(BaseModel):
-    job_id: str
-    status: str
-    progress: float
-    message: str
-    type: str
 
 
 def _job_to_response(job: Job) -> dict[str, Any]:
@@ -63,29 +54,25 @@ async def create_job(
 ) -> dict[str, Any]:
     """Create a new job.
 
-    Write-type jobs (data_fetch, backtest_run, etc.) require the write lock.
-    Returns 409 if the lock is currently held.
+    Write-type jobs require the write lock — returns 409 if locked.
+    The background runner releases the lock when done.
     """
-    from api.job_manager import _WRITE_JOB_TYPES  # noqa: PLC0415
-
     is_write = request.type in _WRITE_JOB_TYPES
-    if is_write and manager.is_write_locked():
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "error": {
-                    "code": "WRITE_LOCK_BUSY",
-                    "message": "目前有其他資料操作正在進行，請稍後再試",
-                }
-            },
-        )
+    if is_write:
+        acquired = await manager.acquire_write_lock()
+        if not acquired:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": {
+                        "code": "WRITE_LOCK_BUSY",
+                        "message": "目前有其他資料操作正在進行，請稍後再試",
+                    }
+                },
+            )
 
     job = await manager.create_job(request.type, request.params)
-
-    # Immediately start a background task for supported job types.
-    # For now only "dummy" is supported in 10-A; real runners will be added in 10-E.
     asyncio.create_task(_run_job(manager, job, request.params))  # noqa: RUF006
-
     return _job_to_response(job)
 
 
@@ -96,8 +83,56 @@ def get_job(
 ) -> dict[str, Any]:
     job = manager.get_job(job_id)
     if job is None:
-        raise HTTPException(status_code=404, detail={"error": {"code": "JOB_NOT_FOUND", "message": f"Job {job_id} not found"}})
+        raise HTTPException(
+            status_code=404,
+            detail={"error": {"code": "JOB_NOT_FOUND", "message": f"Job {job_id} not found"}},
+        )
     return _job_to_response(job)
+
+
+@router.get("/{job_id}/events")
+async def stream_job_events(
+    job_id: str,
+    request: Request,
+    manager: JobManager = Depends(get_manager),
+) -> StreamingResponse:
+    """SSE stream of progress / result events for a job.
+
+    Events:
+      progress — { current, total, current_symbol, status, error? }
+      result   — { succeeded, failed }
+    """
+    job = manager.get_job(job_id)
+    if job is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": {"code": "JOB_NOT_FOUND", "message": f"Job {job_id} not found"}},
+        )
+
+    queue = manager.get_events_queue(job_id)
+    if queue is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": {"code": "JOB_NOT_FOUND", "message": f"Event queue for {job_id} not found"}},
+        )
+
+    async def generate():  # type: ignore[return]
+        while True:
+            if await request.is_disconnected():
+                break
+            try:
+                item: dict[str, Any] | None = await asyncio.wait_for(queue.get(), timeout=15.0)
+                if item is None:  # sentinel — job ended
+                    break
+                yield f"event: {item['type']}\ndata: {json.dumps(item['data'])}\n\n"
+            except asyncio.TimeoutError:
+                yield ": keepalive\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.get("/{job_id}/result")
@@ -107,11 +142,19 @@ def get_job_result(
 ) -> dict[str, Any]:
     job = manager.get_job(job_id)
     if job is None:
-        raise HTTPException(status_code=404, detail={"error": {"code": "JOB_NOT_FOUND", "message": f"Job {job_id} not found"}})
+        raise HTTPException(
+            status_code=404,
+            detail={"error": {"code": "JOB_NOT_FOUND", "message": f"Job {job_id} not found"}},
+        )
     if job.status != "complete":
         raise HTTPException(
             status_code=409,
-            detail={"error": {"code": "JOB_NOT_COMPLETE", "message": f"Job status is '{job.status}', not 'complete'"}},
+            detail={
+                "error": {
+                    "code": "JOB_NOT_COMPLETE",
+                    "message": f"Job status is '{job.status}', not 'complete'",
+                }
+            },
         )
     return {"data": job.result or {}, "meta": {"job_id": job_id}}
 
@@ -125,37 +168,127 @@ async def cancel_job(
     if not cancelled:
         job = manager.get_job(job_id)
         if job is None:
-            raise HTTPException(status_code=404, detail={"error": {"code": "JOB_NOT_FOUND", "message": f"Job {job_id} not found"}})
+            raise HTTPException(
+                status_code=404,
+                detail={"error": {"code": "JOB_NOT_FOUND", "message": f"Job {job_id} not found"}},
+            )
         raise HTTPException(
             status_code=409,
-            detail={"error": {"code": "JOB_NOT_CANCELLABLE", "message": f"Job status is '{job.status}'"}},
+            detail={
+                "error": {
+                    "code": "JOB_NOT_CANCELLABLE",
+                    "message": f"Job status is '{job.status}'",
+                }
+            },
         )
     return {"data": {"status": "cancelled"}, "meta": {"job_id": job_id}}
 
 
 # ---------------------------------------------------------------------------
-# Background task dispatcher (10-A skeleton — only "dummy" type)
+# Background task dispatcher
 # ---------------------------------------------------------------------------
 
 
 async def _run_job(manager: JobManager, job: Job, params: dict[str, Any]) -> None:
-    """Dispatch job to appropriate runner.
+    """Dispatch job to appropriate runner; release write-lock when done."""
+    manager.update_job(job.id, status="running", progress=0.05, message="啟動中…")
 
-    Real runners (backtest, data_fetch, etc.) will be wired up in 10-E/10-C.
+    try:
+        if job.type in ("data_update", "data_rebuild"):
+            await _run_data_job(manager, job, params)
+        elif job.type == "dummy":
+            await _run_dummy_job(manager, job)
+        else:
+            manager.update_job(
+                job.id,
+                status="error",
+                progress=0.0,
+                message=f"尚未實作的 job type: {job.type}",
+                error={
+                    "code": "NOT_IMPLEMENTED",
+                    "message": f"Job type '{job.type}' is not yet implemented",
+                },
+            )
+            manager._close_event_queue(job.id)
+    except Exception as exc:  # noqa: BLE001
+        manager.fail_job(job.id, error={"code": "RUNNER_ERROR", "message": str(exc)})
+    finally:
+        if job.is_write_type():
+            manager.release_write_lock()
+
+
+async def _run_data_job(manager: JobManager, job: Job, params: dict[str, Any]) -> None:
+    """Runner for data_update and data_rebuild job types.
+
+    Single-file failures do NOT abort the batch — they are recorded in `failed`.
     """
-    manager.update_job(job.id, status="running", progress=0.1, message="啟動中…")
+    from src.services.data_service import DataServiceError, list_symbols, run_maintenance
 
-    if job.type == "dummy":
-        await _run_dummy_job(manager, job)
+    market = params.get("market", "tw")
+    rebuild = (job.type == "data_rebuild")
+
+    # Resolve target symbols
+    if params.get("all"):
+        raw = list_symbols(market=market)
+        symbols: list[str] = [
+            (r["symbol"] if isinstance(r, dict) else str(r)) for r in raw
+        ]
     else:
-        # Placeholder for future job types — mark as error for now
+        symbols = [str(s) for s in (params.get("symbols") or [])]
+
+    if not symbols:
+        manager.fail_job(job.id, error={"code": "NO_TARGETS", "message": "未指定任何 symbol"})
+        return
+
+    succeeded: list[str] = []
+    failed: list[dict[str, str]] = []
+    total = len(symbols)
+
+    for i, symbol in enumerate(symbols, 1):
+        # Check for cancellation between files
+        current = manager.get_job(job.id)
+        if current and current.status == "cancelled":
+            break
+
+        manager.push_event(job.id, "progress", {
+            "current": i,
+            "total": total,
+            "current_symbol": symbol,
+            "status": "updating",
+        })
         manager.update_job(
             job.id,
-            status="error",
-            progress=0.0,
-            message=f"尚未實作的 job type: {job.type}",
-            error={"code": "NOT_IMPLEMENTED", "message": f"Job type '{job.type}' is not yet implemented"},
+            progress=(i - 0.5) / total,
+            message=f"{'重建' if rebuild else '更新'} {symbol}…",
         )
+
+        try:
+            result = await asyncio.to_thread(
+                run_maintenance, symbol, rebuild=rebuild, market=market
+            )
+            if isinstance(result, DataServiceError):
+                raise RuntimeError(result.message)
+            succeeded.append(symbol)
+            manager.push_event(job.id, "progress", {
+                "current": i,
+                "total": total,
+                "current_symbol": symbol,
+                "status": "done",
+            })
+        except Exception as exc:  # noqa: BLE001
+            err_str = str(exc)
+            failed.append({"symbol": symbol, "error": err_str})
+            manager.push_event(job.id, "progress", {
+                "current": i,
+                "total": total,
+                "current_symbol": symbol,
+                "status": "failed",
+                "error": err_str,
+            })
+
+    final_result: dict[str, Any] = {"succeeded": succeeded, "failed": failed}
+    manager.push_event(job.id, "result", final_result)
+    manager.complete_job(job.id, result=final_result)
 
 
 async def _run_dummy_job(manager: JobManager, job: Job) -> None:
@@ -173,3 +306,4 @@ async def _run_dummy_job(manager: JobManager, job: Job) -> None:
         message="完成",
         result={"ok": True, "params": job.type},
     )
+    manager._close_event_queue(job.id)

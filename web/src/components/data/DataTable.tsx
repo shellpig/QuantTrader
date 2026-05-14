@@ -1,7 +1,8 @@
 "use client";
 
-// Data management table with sticky header (Phase 10-C-1)
-// 更新 button is disabled — 10-C-2 will enable it.
+// Data management table with sticky header (Phase 10-C-1 + 10-C-2)
+// 10-C-1: list + DELETE
+// 10-C-2: per-row 更新 button wired to data_update job
 
 import { RefreshCw, Trash2 } from "lucide-react";
 import { StatusBadge } from "./StatusBadge";
@@ -10,12 +11,14 @@ import type { SymbolRow } from "@/types/data";
 interface DataTableProps {
   rows: SymbolRow[];
   onDelete: (row: SymbolRow) => void;
+  onUpdate?: (row: SymbolRow) => void;
+  isJobRunning?: boolean;
 }
 
 // col layout: code | name+variant | range | bars | status | actions
 const GRID = "grid-cols-[100px_1fr_220px_80px_100px_180px]";
 
-export function DataTable({ rows, onDelete }: DataTableProps) {
+export function DataTable({ rows, onDelete, onUpdate, isJobRunning = false }: DataTableProps) {
   if (rows.length === 0) {
     return (
       <div className="rounded-xl border border-slate-800/80 bg-slate-900/60 px-4 py-12 text-center text-sm text-slate-500">
@@ -81,11 +84,12 @@ export function DataTable({ rows, onDelete }: DataTableProps) {
 
             {/* 動作 */}
             <div className="flex items-center justify-end gap-1.5">
-              {/* 更新 — disabled until 10-C-2 */}
+              {/* 更新 */}
               <button
-                disabled
-                title="Phase 10-C-2 開發中"
-                className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md text-xs border border-sky-500/30 bg-sky-500/10 text-sky-300 opacity-40 cursor-not-allowed"
+                onClick={() => onUpdate?.(row)}
+                disabled={isJobRunning || !onUpdate}
+                data-testid={`update-btn-${row.symbol}`}
+                className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md text-xs border border-sky-500/30 bg-sky-500/10 text-sky-300 hover:bg-sky-500/20 disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <RefreshCw className="h-3 w-3" />
                 更新
@@ -94,8 +98,9 @@ export function DataTable({ rows, onDelete }: DataTableProps) {
               {/* 刪除 */}
               <button
                 onClick={() => onDelete(row)}
+                disabled={isJobRunning}
                 data-testid={`delete-btn-${row.symbol}`}
-                className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md text-xs border border-rose-500/30 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20"
+                className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md text-xs border border-rose-500/30 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20 disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <Trash2 className="h-3 w-3" />
                 刪除

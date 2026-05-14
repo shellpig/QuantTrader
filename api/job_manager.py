@@ -1,10 +1,8 @@
-"""In-memory Job Manager with write-lock support (Phase 10-A).
+"""In-memory Job Manager with write-lock and SSE event queue support.
 
-Design notes:
-- Single asyncio.Lock (_write_lock) prevents concurrent write-type jobs.
-- Jobs expire after ttl_seconds (default 30 min); cleanup is lazy.
-- Write-type job types: data_fetch, data_rebuild, backtest_run,
-  backtest_batch, backtest_sweep, backtest_wfa.
+Phase 10-A: core lifecycle (create / poll / cancel / cleanup).
+Phase 10-C-2: added data_update write-type, push_event/fail_job/complete_job,
+              per-job asyncio.Queue for SSE streaming.
 """
 
 from __future__ import annotations
@@ -17,8 +15,9 @@ from typing import Any
 
 _WRITE_JOB_TYPES: frozenset[str] = frozenset(
     {
-        "data_fetch",
+        "data_update",
         "data_rebuild",
+        "data_fetch",
         "backtest_run",
         "backtest_batch",
         "backtest_sweep",
@@ -37,6 +36,7 @@ class Job:
     result: dict[str, Any] | None
     error: dict[str, Any] | None
     created_at: datetime
+    params: dict[str, Any] = field(default_factory=dict)
     ttl_seconds: int = 1800   # 30 minutes
 
     def is_write_type(self) -> bool:
@@ -53,23 +53,10 @@ class JobManager:
     def __init__(self) -> None:
         self._jobs: dict[str, Job] = {}
         self._write_lock: asyncio.Lock = asyncio.Lock()
+        # Per-job event queues for SSE streaming (None sentinel closes the stream)
+        self._event_queues: dict[str, asyncio.Queue[dict[str, Any] | None]] = {}
 
-    # ── public API ─────────────────────────────────────────────────────────
-
-    async def create_job(self, job_type: str, params: dict[str, Any]) -> Job:
-        """Create a new job.  Write-type jobs must call acquire_write_lock() first."""
-        job = Job(
-            id=str(uuid.uuid4()),
-            type=job_type,
-            status="pending",
-            progress=0.0,
-            message="等待中…",
-            result=None,
-            error=None,
-            created_at=datetime.now(timezone.utc),
-        )
-        self._jobs[job.id] = job
-        return job
+    # ── write-lock helpers ─────────────────────────────────────────────────
 
     async def acquire_write_lock(self) -> bool:
         """Try to acquire the write lock without waiting.
@@ -77,8 +64,7 @@ class JobManager:
         Returns True if acquired, False if already held.
         Caller is responsible for releasing via release_write_lock().
         """
-        acquired = self._write_lock.locked()
-        if acquired:
+        if self._write_lock.locked():
             return False
         await self._write_lock.acquire()
         return True
@@ -93,6 +79,25 @@ class JobManager:
 
     def is_write_locked(self) -> bool:
         return self._write_lock.locked()
+
+    # ── job lifecycle ──────────────────────────────────────────────────────
+
+    async def create_job(self, job_type: str, params: dict[str, Any]) -> Job:
+        """Create a new job with a fresh event queue."""
+        job = Job(
+            id=str(uuid.uuid4()),
+            type=job_type,
+            status="pending",
+            progress=0.0,
+            message="等待中…",
+            result=None,
+            error=None,
+            created_at=datetime.now(timezone.utc),
+            params=params,
+        )
+        self._jobs[job.id] = job
+        self._event_queues[job.id] = asyncio.Queue()
+        return job
 
     def get_job(self, job_id: str) -> Job | None:
         self.cleanup_expired()
@@ -130,16 +135,45 @@ class JobManager:
         if job.status in ("complete", "error"):
             return False
         job.status = "cancelled"
+        self._close_event_queue(job_id)
         return True
 
     def cleanup_expired(self) -> None:
         expired = [jid for jid, j in self._jobs.items() if j.is_expired()]
         for jid in expired:
             del self._jobs[jid]
+            self._event_queues.pop(jid, None)
 
     def all_jobs(self) -> list[Job]:
         self.cleanup_expired()
         return list(self._jobs.values())
+
+    # ── SSE event queue ────────────────────────────────────────────────────
+
+    def push_event(self, job_id: str, event_type: str, data: dict[str, Any]) -> None:
+        """Push an SSE event into the job's queue."""
+        queue = self._event_queues.get(job_id)
+        if queue is not None:
+            queue.put_nowait({"type": event_type, "data": data})
+
+    def get_events_queue(self, job_id: str) -> asyncio.Queue[dict[str, Any] | None] | None:
+        return self._event_queues.get(job_id)
+
+    def fail_job(self, job_id: str, error: dict[str, Any]) -> None:
+        """Mark job as error and close the SSE stream."""
+        self.update_job(job_id, status="error", error=error, message="錯誤")
+        self._close_event_queue(job_id)
+
+    def complete_job(self, job_id: str, result: dict[str, Any]) -> None:
+        """Mark job as complete and close the SSE stream."""
+        self.update_job(job_id, status="complete", progress=1.0, result=result, message="完成")
+        self._close_event_queue(job_id)
+
+    def _close_event_queue(self, job_id: str) -> None:
+        """Send None sentinel to the SSE queue so the stream generator exits."""
+        queue = self._event_queues.get(job_id)
+        if queue is not None:
+            queue.put_nowait(None)
 
 
 # Singleton instance shared across the FastAPI app
