@@ -20,6 +20,7 @@
 | **V2.1** | 2026/05/11 | 確認 Phase 9（美股 US-1 支援）規格：第一版只做美股日 K、調整後價格、回測與技術分析；不做即時行情、籌碼、分 K、匯率換算、財報與期權。新增多市場基礎、`market=us` 資料管線、USD 回測與既有 UI 市場切換規格。 |
 | **V2.2** | 2026/05/13 | 新增 Phase 9-G：美股 yfinance 1m intraday 盤中快照與分 K 圖。使用最新 1 分 K close 作為近似盤中價，漲跌以該 raw 價格對前一紐約交易日 raw close 計算；新增專用 intraday API，不改 `fetch_minute(market="us")` 的 US-1 拒絕行為；不做 WebSocket、買一 / 賣一、五檔、逐筆或實盤級即時報價。 |
 | **V2.3** | 2026/05/14 | 新增 Phase 10（前端架構重構）：從 Streamlit 遷移至 Next.js + FastAPI。10-A 服務層抽離 + FastAPI 後端骨架、10-B Next.js 前端骨架、10-C 資料管理頁、10-D 個股分析儀表板（Lightweight Charts）、10-E 回測研究工作台、10-F AI 問答頁、10-G 設定頁 + 全局整合、10-H 舊 UI 移除與收尾。新增 `src/services/`、`api/`、`web/` 目錄。 |
+| **V2.4** | 2026/05/15 | Phase 10-F 拆分為 **10-F-1（UI shell + lock）** 與 **10-F-2（接 LLM）**：10-F-1 完整實作 AI 問答頁 UI（含免責聲明 gate + localStorage 持久、訊息泡泡與 Markdown 渲染 `react-markdown` + remark-gfm、Mock 逐字串流模擬未來 SSE token 動畫），但**不串接真實 LLM**；後端 `/api/ai/chat` 與 `/api/ai/status` 僅做最小骨架（chat 永遠回 `503 AI_DISABLED`、status 永遠回 `{ available: false, reason: "feature_locked" }`）；Sidebar AI 入口加「後續開放」灰色徽章；訊息歷史刷新即清不持久化。**設定頁的 AI 開關鎖死延至 10-G 一起做**（在 10-G 把 toggle 預設 disabled）。10-F-2 延後實作、時程不卡 10-G / 10-H，將補上 `AIAdvisor.stream_chat()` 三 adapter（Anthropic / OpenAI / Gemini）與真實 SSE。10-F-1 落地時 `pyproject.toml` 與 `web/package.json` package version 同步 bump 至 `0.2.0`（兩個 package version 從此對齊）。 |
 
 ---
 
@@ -2766,7 +2767,8 @@ Phase 10 拆為 **10-A ~ 10-H** 八個子階段，每個可獨立驗證。
 | **10-C** | 資料管理頁 | 10-A, 10-B | 資料 CRUD API + 前端資料管理頁面 + DELETE 端點（新功能） |
 | **10-D** | 個股分析儀表板 | 10-A, 10-B | K 線圖（Lightweight Charts）、技術分析、型態、籌碼、AI 劇本、聚合端點 |
 | **10-E** | 回測研究工作台 | 10-A, 10-B | 單次/批次/掃描/WFA 回測、Job lifecycle、SSE 進度、K 線 + signal overlay |
-| **10-F** | AI 問答頁 | 10-A, 10-B | AI chat 介面、SSE 串流回應 |
+| **10-F-1** | AI 問答頁 UI shell（不接 LLM） | 10-A, 10-B | Chat UI 完成（免責聲明 gate / 訊息泡泡 / Markdown / Mock 逐字串流）；後端 `/api/ai/chat` 回 503、`/api/ai/status` 回 feature_locked；sidebar 加「後續開放」徽章；package version bump 至 `0.2.0` |
+| **10-F-2** | AI 問答頁接 LLM（延後） | 10-F-1 | 補 `AIAdvisor.stream_chat()` Anthropic / OpenAI / Gemini 三 adapter；`POST /api/ai/chat` 改為真實 SSE token 串流；不卡 10-G / 10-H |
 | **10-G** | 設定頁 + 全局整合 | 10-A ~ 10-F | 設定管理、策略 preset CRUD、Command Palette、鍵盤快捷鍵、Error Boundary |
 | **10-H** | 舊 UI 移除與收尾 | 10-G 全部驗收後 | 移除 `src/ui/`、Streamlit 依賴、測試遷移檢查表、文件更新 |
 
@@ -2929,7 +2931,62 @@ data: { "succeeded": ["2330", ...], "failed": [{ "symbol": "2317", "error": "...
 
 #### 10-F：AI 問答頁
 
-`POST /api/ai/chat`（SSE 串流回應）、Chat 介面、串流逐字顯示、AI disabled 時顯示設定引導。
+10-F **拆為兩階段交付**：10-F-1 先做完整 UI shell 並把後端 chat 端點鎖死回 503（不接 LLM），10-F-2 才補上 `AIAdvisor.stream_chat()` 與真實 SSE token 串流。此拆分讓 AI 問答頁的視覺、訊息結構、免責聲明、Markdown 渲染、Mock token 動畫可先驗收完成，避開 LLM 串流 + tool use 的複雜度，並讓 10-G / 10-H 不必等 AI 功能落地就能往前推進。
+
+##### 10-F-1：UI shell + 後端 lock（不接 LLM）
+
+**範圍：**
+- 前端 [web/src/app/ai/page.tsx](web/src/app/ai/page.tsx) 對齊 [web/_design/ai-chat.jsx](web/_design/ai-chat.jsx) 視覺稿完整實作（含 Dark/Light）
+- **免責聲明 gate**：首次進入顯示「我了解」按鈕；接受後寫入 `localStorage`（key 命名 `ai_chat.disclaimer_accepted_v1`）持久；後續進頁不再顯示
+- **訊息泡泡 + Markdown**：用 `react-markdown` + `remark-gfm` 渲染，支援 `**bold**`、`- list`、行內 code；user / assistant 兩種樣式（依 mockup 第 81-103 行）
+- **Mock 逐字串流**：使用者送出 → 立即 push user message → 模擬 token by token 出現 assistant placeholder（每 20-40ms 一個 char，總長 < 5 秒），文案固定為「AI 串接尚未開放（這是 UI 預覽）。本訊息為模擬輸出，待 Phase 10-F-2 接上真實 LLM 後將改為串流逐字回應。」
+- **訊息歷史**：純前端 React state，**刷新即清不持久化**（為與未來真 LLM 多輪對話保持一致，不引入 localStorage）
+- **Header 狀態 chip**：顯示「AI · 未啟用」灰色 chip（不顯示 provider / model）
+- **Sidebar AI 入口**：[web/src/components/sidebar.tsx](web/src/components/sidebar.tsx) 在「AI 問答」項目旁加灰色小徽章「後續開放」
+
+**對應後端 API（新增最小骨架）：**
+- `GET /api/ai/status` → `200 { available: false, reason: "feature_locked", message: "AI 功能尚未開放，將於後續版本啟用。" }`
+- `POST /api/ai/chat` → `503 { error: { code: "AI_DISABLED", message: "AI 功能尚未開放。" } }`（不做 SSE）
+- 既有 `POST /api/ai/analyze`（dashboard 隔日操作劇本用）保留現狀，AI off 時仍回 503
+
+**設定頁 AI 鎖死的職責分工：**
+- **不在 10-F-1 動設定頁**（目前仍是 Phase 10-B 留下的 placeholder shell）
+- AI 開關 UI（toggle disabled + tooltip「AI 功能尚未開放」）與後端強制 `ai.enabled=false` 的 schema whitelist 一起留到 **10-G** 實作設定頁時處理
+- 期間 `config.yaml` 維持 `ai.enabled: false` 預設值；使用者手動編檔仍可開，但前端任何 AI 路徑都會走「未啟用」分支（dashboard AI 劇本 503、chat 端點 503、status feature_locked）
+
+**版號 bump：**
+- 10-F-1 落地時 `pyproject.toml` 從 `0.1.0` → **`0.2.0`**
+- `web/package.json` 從 `0.10.0` → **`0.2.0`**（與 py 對齊；放棄 Next.js scaffold 預設 0.10.0）
+- 文件版號 → V2.4
+
+**驗收條件：**
+1. 進入 `/ai` 首次顯示免責聲明卡，點「我了解」後關閉並寫 `localStorage`；重新整理頁面不再顯示
+2. Header 顯示「AI 問答」標題 + 副標 +「AI · 未啟用」灰色 chip
+3. 輸入框可打字；按 Enter 或點送出後：user 泡泡立即出現、assistant 泡泡以逐字方式 push（20-40ms / char）出固定 placeholder 文案
+4. Markdown 渲染：`**62.4**` 顯示粗體、`- 項目` 顯示清單
+5. 訊息歷史保留在 state；F5 重整後清空
+6. Sidebar「AI 問答」項目旁顯示灰色「後續開放」徽章
+7. `GET /api/ai/status` 回 `feature_locked`、`POST /api/ai/chat` 回 503
+8. 對應前端 vitest 元件測試與後端 `test_ai_api.py` 全綠（status / chat 503 / analyze AI off regression）
+
+##### 10-F-2：接 LLM（延後實作）
+
+**範圍：**
+- `src/ai/advisor.py` 新增 `AIAdvisor.stream_chat(messages: list) -> AsyncIterator[str]`
+- 三 adapter（`AnthropicAdapter` / `OpenAIAdapter` / `GeminiAdapter`）各自實作 `stream_complete()`
+- `POST /api/ai/chat` 改為真實 SSE：`event: token data: {text: chunk}` 多筆 + `event: done data: {}`；error 時 `event: error data: {message: str}`
+- `GET /api/ai/status` 改為依 `ai.enabled` + API key 設定動態回傳
+- 前端 Mock chat hook 換成真實 EventSource / fetch ReadableStream
+- 設定頁 AI toggle 解鎖（搭配 10-G 規格）
+
+**已知待決問題（10-F-2 啟動時必須回答）：**
+- Chat 模式是否啟用 tool use？（現有 `ask()` 跑 6 輪 tool；串流 + tool 是另一種典範）
+- Messages payload 格式（OpenAI 標準 `[{role, content}]` 還是 provider-native？）
+- 取消（abort）行為與 SSE error event 規格
+- 多輪歷史是否在 10-F-2 改為 localStorage 持久化
+
+**時程備註：**
+- 10-F-2 **不卡 10-G / 10-H** 收尾；10-H 移除 `src/ui/` 時 `src/ai/advisor.py` 必須保留（10-F-2 與 dashboard analysis 都仍會用）
 
 #### 10-G：設定頁 + 全局整合
 

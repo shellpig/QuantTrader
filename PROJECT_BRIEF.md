@@ -2,7 +2,7 @@
 
 本文件供新 session 快速了解專案全貌，取代逐份閱讀全部規格文件。需要深入某區段時，按行號索引讀取對應文件。
 
-最後更新：2026-05-14
+最後更新：2026-05-15
 
 ---
 
@@ -221,13 +221,17 @@ risk:
 | 10-C-1 | ✅ 完成 | 資料管理頁 stage-1（列表 + DELETE）：DataTable 顯示 **6 欄**（代碼 / 名稱 / 區間 / K 棒數 / 狀態 / 動作；「大小」欄已從規格移除）、單步確認 Dialog、三態 badge（fresh/stale/missing，基於 ISO-week businessDaysBetween）、美股 raw+adj 標記 + callout。stage-2 按鈕（全部更新/全部重建/動作欄·更新/+ 新增標的）皆 disabled + tooltip「Phase 10-C-2 開發中」。tsc 0 errors + vitest 61 pass（+27：StatusBadge 4 + DeleteConfirmDialog 8 + trading-calendar 13 + 既有 34）+ pytest 39 pass（+14：test_data_api.py）。**Known limitation**：「名稱」欄目前 fallback 至 symbol code（後端 `list_symbols` 暫不補 name 欄；若需中文名稱另議） |
 | 10-C-2 | ✅ 完成 | 資料管理頁 stage-2（更新/重建/新增）：擴充 `api/routers/jobs.py` dispatcher 支援 `data_update` / `data_rebuild` job type（單檔 + all 批次模式、SSE progress + result event、單檔失敗不中斷整批、write lock 互斥）；前端 ProgressBar 全局進度條、RebuildConfirmDialog 二次確認、AddSymbolDialog（複用 StockSelector）、完成後 banner 列出 succeeded / failed 清單。tsc 0 errors + vitest **11 files / 87 tests pass**（10-C-2 補 3 檔 / 26 cases）+ pytest **52 passed**（+13 in `test_data_jobs_api.py`）。**邊界決定**：失敗清單用 banner 取代 toast，toast 系統留待 10-G 全局整合 |
 | 10-D | ✅ 完成 | 個股分析儀表板（Lightweight Charts）：3 輪驗收完成（round-3 13 項基本修正 + round-4 6 項緊湊化 + round-5 三欄佈局 50:25:25）；K 線 + MA + KD/RSI/MACD 副圖、crosshair tooltip、S/R 壓力支撐線、Pattern 長描述 tooltip、Radix Tooltip；tsc 0 errors + vitest 34 pass + pytest 25 pass |
-| 10-E~H | 📋 規格已定，待實作 | 10-E 回測工作台（Job + SSE）、10-F AI 問答（SSE 串流）、10-G 設定 + 全局整合、10-H 舊 UI 移除（測試遷移檢查表不可跳過） |
+| 10-E | 📋 規格已定，待實作 | 回測研究工作台（Job + SSE 進度 / 單次 / 批次 / 掃描 / WFA / K 線 + signal overlay） |
+| 10-F-1 | 📋 規格已定，待實作 | AI 問答頁 UI shell + 後端 lock（**不接 LLM**）：完整 chat UI、免責聲明 gate（localStorage 持久）、`react-markdown` + remark-gfm、Mock 逐字串流（20-40ms / char）、訊息歷史刷新即清；`GET /api/ai/status` 回 `feature_locked`、`POST /api/ai/chat` 回 503；Sidebar AI 入口加灰色「後續開放」徽章；package version py + web 雙雙 bump 至 `0.2.0`；文件 V2.4 |
+| 10-F-2 | ⏸ 延後 | AI 問答頁接 LLM：補 `AIAdvisor.stream_chat()` 三 adapter（Anthropic / OpenAI / Gemini）+ 真實 SSE token 串流；**不卡 10-G / 10-H** |
+| 10-G | 📋 規格已定，待實作 | 設定頁 + 全局整合（Command Palette、Toast 系統、Error Boundary、AI toggle disabled + tooltip） |
+| 10-H | 📋 規格已定，待實作 | 舊 Streamlit UI 移除（測試遷移檢查表不可跳過；`src/ai/advisor.py` 必須保留供 10-F-2 與 dashboard analysis 使用） |
 
 ## 當前待辦
 
 見 `驗證後已知問題.md`（每次必讀）。
 
-主線：Phase 9 全部完成。Phase 10-A 服務層 + FastAPI 骨架、10-B Next.js 前端骨架、**10-C-1 資料管理頁列表 + DELETE**、**10-C-2 資料管理頁更新/重建/新增（SSE + Job dispatcher）**、**10-D 個股分析儀表板（3 輪驗收完成）** 均已完成。**Phase 10-C 全段落結束**；10-E~H 規格已定，待實作。
+主線：Phase 9 全部完成。Phase 10-A 服務層 + FastAPI 骨架、10-B Next.js 前端骨架、**10-C-1 資料管理頁列表 + DELETE**、**10-C-2 資料管理頁更新/重建/新增（SSE + Job dispatcher）**、**10-D 個股分析儀表板（3 輪驗收完成）** 均已完成。**Phase 10-C 全段落結束**。10-F 已**拆成 10-F-1（UI shell + lock）與 10-F-2（接 LLM、延後）**，下一步預計實作 10-F-1（規格、設計方針、測試指南、文件版本 V2.4 已記載）。10-E / 10-F-1 / 10-G / 10-H 規格已定，待實作；10-F-2 延後且不卡 10-G / 10-H。
 
 2026-05-14 狀態：
 - 最新 commit 請以 `git log --oneline -1` 為準；本 brief 已改為不硬寫最新 hash，避免文件在 commit 後立即失真。
@@ -307,7 +311,7 @@ risk:
 
 | 區段 | 行範圍 | 何時讀 |
 |:---|:---|:---|
-| 修訂歷史 | 3-23 | 查版本變更，Phase 10 為 `V2.3` |
+| 修訂歷史 | 3-24 | 查版本變更，最新為 `V2.4`（Phase 10-F 拆分為 10-F-1 + 10-F-2、py / web bump 至 0.2.0） |
 | 專案願景與目標 | 47-62 | 理解定位 |
 | 技術語言與套件選型 | 64-91 | 技術決策參考 |
 | 系統架構（四層架構圖） | 93-177 | 理解整體結構 |
