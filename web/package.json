@@ -1,6 +1,6 @@
 {
   "name": "quanttrader-web",
-  "version": "0.10.0",
+  "version": "0.2.0",
   "private": true,
   "scripts": {
     "sync:mock": "node scripts/sync-dashboard-mock.mjs",
@@ -28,6 +28,8 @@
     "next": "15.3.2",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "swr": "^2.3.3",
     "tailwind-merge": "^3.3.0"
   },

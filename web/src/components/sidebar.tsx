@@ -19,13 +19,14 @@ interface NavItem {
   label: string;
   href: string;
   icon: React.ComponentType<{ className?: string }>;
+  badge?: string;
 }
 
 const NAV_ITEMS: NavItem[] = [
   { label: "個股分析", href: "/dashboard", icon: BarChart3 },
   { label: "回測研究", href: "/backtest", icon: TrendingUp },
   { label: "資料管理", href: "/data",     icon: FolderOpen },
-  { label: "AI 問答",  href: "/ai",       icon: Bot },
+  { label: "AI 問答",  href: "/ai",       icon: Bot,      badge: "後續開放" },
   { label: "設定",     href: "/settings", icon: Settings },
 ];
 
@@ -72,7 +73,7 @@ function SidebarLink({ item, active }: { item: NavItem; active: boolean }) {
     <Link
       href={item.href}
       className={cn(
-        "flex items-center gap-2 rounded-lg px-2 py-2 text-sm font-medium transition-colors",
+        "flex flex-col rounded-lg px-2 py-2 text-sm font-medium transition-colors",
         active
           ? "bg-primary/10 text-primary"
           : "text-muted-foreground hover:bg-muted hover:text-foreground",
@@ -80,8 +81,18 @@ function SidebarLink({ item, active }: { item: NavItem; active: boolean }) {
       aria-current={active ? "page" : undefined}
       data-testid={`sidebar-nav-${item.href.slice(1)}`}
     >
-      <Icon className="h-5 w-5 shrink-0" />
-      {item.label}
+      <span className="flex items-center gap-2">
+        <Icon className="h-5 w-5 shrink-0" />
+        {item.label}
+      </span>
+      {item.badge && (
+        <span
+          className="mt-0.5 self-start rounded-full bg-slate-700/40 px-1.5 py-px text-[10px] font-normal text-slate-400"
+          data-testid={`sidebar-badge-${item.href.slice(1)}`}
+        >
+          {item.badge}
+        </span>
+      )}
     </Link>
   );
 }

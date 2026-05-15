@@ -1,4 +1,4 @@
-"""AI router — dashboard analysis trigger endpoint."""
+"""AI router — dashboard analysis trigger + chat lock endpoints."""
 
 from __future__ import annotations
 
@@ -20,6 +20,30 @@ class AnalyzeRequest(BaseModel):
     symbol: str
     market: str = "tw"
     bars: int = 250
+
+
+class ChatRequest(BaseModel):
+    messages: list[dict] = []  # 10-F-1 不驗 schema，10-F-2 再嚴謹化
+
+
+# ── 10-F-1 lock endpoints ─────────────────────────────────────────────────
+
+
+@router.get("/status")
+def get_ai_status() -> dict:
+    return {
+        "available": False,
+        "reason": "feature_locked",
+        "message": "AI 功能尚未開放，將於後續版本啟用。",
+    }
+
+
+@router.post("/chat")
+def post_ai_chat(_: ChatRequest) -> None:
+    raise HTTPException(
+        status_code=503,
+        detail={"error": {"code": "AI_DISABLED", "message": "AI 功能尚未開放。"}},
+    )
 
 
 def _to_jsonable(value: Any) -> Any:

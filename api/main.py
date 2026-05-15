@@ -16,7 +16,7 @@ from api.routers import ai, analysis, config, data, jobs, realtime
 app = FastAPI(
     title="QuantTrader API",
     description="Backend API for QuantTrader — Taiwan/US stock research toolkit.",
-    version="0.10.0",
+    version="0.2.0",
 )
 
 # ── CORS ──────────────────────────────────────────────────────────────────
