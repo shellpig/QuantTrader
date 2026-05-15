@@ -21,6 +21,7 @@
 | **V2.2** | 2026/05/13 | 新增 Phase 9-G：美股 yfinance 1m intraday 盤中快照與分 K 圖。使用最新 1 分 K close 作為近似盤中價，漲跌以該 raw 價格對前一紐約交易日 raw close 計算；新增專用 intraday API，不改 `fetch_minute(market="us")` 的 US-1 拒絕行為；不做 WebSocket、買一 / 賣一、五檔、逐筆或實盤級即時報價。 |
 | **V2.3** | 2026/05/14 | 新增 Phase 10（前端架構重構）：從 Streamlit 遷移至 Next.js + FastAPI。10-A 服務層抽離 + FastAPI 後端骨架、10-B Next.js 前端骨架、10-C 資料管理頁、10-D 個股分析儀表板（Lightweight Charts）、10-E 回測研究工作台、10-F AI 問答頁、10-G 設定頁 + 全局整合、10-H 舊 UI 移除與收尾。新增 `src/services/`、`api/`、`web/` 目錄。 |
 | **V2.4** | 2026/05/15 | Phase 10-F 拆分為 **10-F-1（UI shell + lock）** 與 **10-F-2（接 LLM）**：10-F-1 完整實作 AI 問答頁 UI（含免責聲明 gate + localStorage 持久、訊息泡泡與 Markdown 渲染 `react-markdown` + remark-gfm、Mock 逐字串流模擬未來 SSE token 動畫），但**不串接真實 LLM**；後端 `/api/ai/chat` 與 `/api/ai/status` 僅做最小骨架（chat 永遠回 `503 AI_DISABLED`、status 永遠回 `{ available: false, reason: "feature_locked" }`）；Sidebar AI 入口加「後續開放」灰色徽章；訊息歷史刷新即清不持久化。**設定頁的 AI 開關鎖死延至 10-G 一起做**（在 10-G 把 toggle 預設 disabled）。10-F-2 延後實作、時程不卡 10-G / 10-H，將補上 `AIAdvisor.stream_chat()` 三 adapter（Anthropic / OpenAI / Gemini）與真實 SSE。10-F-1 落地時 `pyproject.toml` 與 `web/package.json` package version 同步 bump 至 `0.2.0`（兩個 package version 從此對齊）。 |
+| **V2.5** | 2026/05/15 | Phase 10-E 拆分為 **10-E-1（單次回測）/ 10-E-2（策略比較）/ 10-E-3（參數掃描）/ 10-E-4（Walk-Forward）** 四個子階段：四段共用 Job lifecycle + SSE 進度 + 取消、共用 K 線 + Markers chart 元件、共用 tearsheet 5 metric card；後端 dispatcher 比照 10-C-2 `_run_data_job` 樣板擴充。**明確不做老 Streamlit 的「歷史結果」tab**（Next.js SWR cache 後切頁狀態不會掉，迫切性降低）；**Heatmap 採「排名表 + 顏色背景」為主，僅當 sweep 為恰好 2 個參數時加 2D heatmap（自製 CSS Grid + Tailwind 色階，不引入 heatmap 套件）**；**多策略 equity curve 疊圖用 lightweight-charts 多個 LineSeries 同圖（不引入 Recharts）**；**WFA CSV 由後端產生 blob、前端 `<a download>` 觸發下載**。取消行為：服務層 `run_*_job` 在迴圈點檢查 `manager.get_job(job.id).status == "cancelled"` 後 break，比照 10-C-2 模式。**實作順序調整：10-G 將拆為 10-G-1（基礎設施先行：Toast 系統 + Error Boundary + Loading Skeleton + Command Palette）與 10-G-2（設定頁主功能），執行順序改為 10-G-1 → 10-E（4 段）→ 10-G-2 → 10-H；10-E 4 個子階段假設 10-G-1 已就位，job complete / cancel / error 通知統一走 toast、SSE 中載入態統一用 skeleton、頁面/股票導航支援 Command Palette。10-G-1 / 10-G-2 細部規格將於後續 V2.6 補上。** |
 
 ---
 
@@ -2766,7 +2767,10 @@ Phase 10 拆為 **10-A ~ 10-H** 八個子階段，每個可獨立驗證。
 | **10-B** | Next.js 前端骨架 | scaffold 可平行；驗收依賴 10-A | 專案初始化、layout、sidebar、theme、routing、api-client、market-switcher、stock-selector |
 | **10-C** | 資料管理頁 | 10-A, 10-B | 資料 CRUD API + 前端資料管理頁面 + DELETE 端點（新功能） |
 | **10-D** | 個股分析儀表板 | 10-A, 10-B | K 線圖（Lightweight Charts）、技術分析、型態、籌碼、AI 劇本、聚合端點 |
-| **10-E** | 回測研究工作台 | 10-A, 10-B | 單次/批次/掃描/WFA 回測、Job lifecycle、SSE 進度、K 線 + signal overlay |
+| **10-E-1** | 單次回測 | 10-A, 10-B, **10-G-1** | 單次回測 Job + SSE、5 metric card tearsheet、K 線 + MA + buy/sell markers、equity curve、trades 表；建立 form / K 線 / tearsheet 元件供 10-E-2~4 重用；使用 10-G-1 的 toast / skeleton / error boundary / command palette |
+| **10-E-2** | 策略比較（批次） | 10-E-1 | 批次比較 Job + SSE、比較表（8 欄）、多策略 equity 疊圖（lightweight-charts 多 LineSeries）、單列展開詳細結果（重用 10-E-1 tearsheet）；toast 通知完成 / 取消 / 失敗 |
+| **10-E-3** | 參數掃描 | 10-E-2 | 參數掃描 Job + SSE（throttle）、排名表（含 sample_warning）、2D heatmap（僅 2 參數時）、組合數 ≤ 200 限制、取消按鈕；CSV 匯出；toast 通知完成 / 取消 |
+| **10-E-4** | Walk-Forward Analysis | 10-E-3 | WFA Job + 巢狀 SSE（window × IS sweep）、Summary / Window / Stability 三表、Degradation 顯示、CSV 匯出；toast 通知完成 / 取消 / 資料不足錯誤 |
 | **10-F-1** | AI 問答頁 UI shell（不接 LLM） | 10-A, 10-B | Chat UI 完成（免責聲明 gate / 訊息泡泡 / Markdown / Mock 逐字串流）；後端 `/api/ai/chat` 回 503、`/api/ai/status` 回 feature_locked；sidebar 加「後續開放」徽章；package version bump 至 `0.2.0` |
 | **10-F-2** | AI 問答頁接 LLM（延後） | 10-F-1 | 補 `AIAdvisor.stream_chat()` Anthropic / OpenAI / Gemini 三 adapter；`POST /api/ai/chat` 改為真實 SSE token 串流；不卡 10-G / 10-H |
 | **10-G** | 設定頁 + 全局整合 | 10-A ~ 10-F | 設定管理、策略 preset CRUD、Command Palette、鍵盤快捷鍵、Error Boundary |
@@ -2927,7 +2931,436 @@ data: { "succeeded": ["2330", ...], "failed": [{ "symbol": "2317", "error": "...
 
 #### 10-E：回測研究工作台
 
-單次回測、批次比較、參數掃描、WFA 統一走 Job lifecycle（`POST /api/jobs` → SSE 進度 → result）。前端含 tearsheet cards、equity curve、K 線 + 買賣點 overlay、heatmap、WFA 表格 + CSV 匯出、取消按鈕。
+10-E **拆為 4 個子階段交付**：10-E-1（單次）→ 10-E-2（批次）→ 10-E-3（掃描）→ 10-E-4（WFA）。每段獨立驗收。**10-E 開工前必須完成 10-G-1（基礎設施先行）**，4 段共用 10-G-1 的：
+
+- **Toast 系統** — 所有 SSE job 的 complete / cancelled / error 統一走 toast（不再寫 inline banner）；10-C-2 既有的失敗清單 banner 也在 10-G-1 階段遷移為 toast
+- **Error Boundary** — 整個 `BacktestPage` 用 Error Boundary 包住，SSE 斷線 / fetch 失敗時顯示 fallback UI 而非整頁白屏
+- **Loading Skeleton** — 載入態用 shadcn `Skeleton`：K 線 / equity / tearsheet 卡 / 表格各一份 skeleton 變體
+- **Command Palette（Ctrl+K）** — 頁面跳轉支援「單次回測 / 策略比較 / 參數掃描 / Walk-Forward」四個 entry；股票搜尋已含
+
+所有 4 段共用：
+
+- **Job lifecycle**：`POST /api/jobs` → `GET /api/jobs/{id}/events`（SSE 進度）→ `GET /api/jobs/{id}/result`，比照 10-C-2 `_run_data_job` 模式
+- **取消行為**：`POST /api/jobs/{id}/cancel`；服務層 `run_*_job` 在每個迴圈點檢查 `manager.get_job(job.id).status == "cancelled"` 後 break
+- **市場 / 貨幣 / 單位**：透過 `MarketSwitcher` 切換，前端 formatter 處理 USD vs TWD、「股」vs「張」（重用 10-D 既有 logic）
+- **共用前端元件**：建立於 10-E-1，供 2~4 重用
+  - `web/src/components/backtest/TearsheetCards.tsx` — 5 metric card（交易次數 / 總報酬率 / 年化報酬率 / 最大回撤 / Sharpe）
+  - `web/src/components/backtest/CandleChartWithMarkers.tsx` — Lightweight Charts K 線 + MA 疊加 + buy/sell markers（綠 ↑ / 紅 ↓）
+  - `web/src/components/backtest/EquityCurveChart.tsx` — Lightweight Charts 單線或多線 equity 圖
+  - `web/src/components/backtest/TradesTable.tsx` — 交易明細表（shadcn Table，paginated）
+  - `web/src/components/backtest/StrategyPresetSelect.tsx` — 策略 preset 下拉
+  - `web/src/components/backtest/DateRangePicker.tsx` — 日期區間
+  - `web/src/components/backtest/BacktestProgressBar.tsx` — 進度條（重用 10-C-2 `ProgressBar` 樣式）
+- **明確不做**：老 Streamlit 第 5 個 tab「歷史結果」（Next.js SWR cache 後切頁狀態不會掉，迫切性降低；若日後有需要可在 10-H 後另議）
+- **明確不做**：drawdown / monthly / summary 副圖（老頁面 plotly 三圖）；以 5 metric card 取代彙整
+
+##### 10-E-1：單次回測
+
+**範圍：**
+- 前端 [web/src/app/backtest/page.tsx](web/src/app/backtest/page.tsx) 建立 4 tab 框架（單次 / 比較 / 掃描 / WFA），但 10-E-1 只實作「單次」tab
+- 10-E-2~4 三個 tab 顯示為 disabled + tooltip「Phase 10-E-{N} 開發中」（比照 10-C-1 模式）
+
+**後端：**
+- `POST /api/jobs` 接 `type="backtest_run"`；params 如下表
+- 服務層擴充 `src/services/backtest_service.py` 既有 `run_backtest_job()`，加入 cancellation token + 進度回呼
+- Job dispatcher [api/routers/jobs.py](api/routers/jobs.py) 新增分支 `_run_backtest_run_job`
+- 因單次回測極短（< 1 秒），SSE 只推 `running` → `complete`，**不分割多個 progress 事件**
+
+**params schema：**
+```json
+{
+  "market": "tw" | "us",
+  "symbol": "2330" | "AAPL",
+  "start_date": "2020-01-01",
+  "end_date": "2024-12-31",
+  "strategy_preset_index": 0,
+  "engine": "vectorized" | "event_driven",
+  "initial_capital": 1000000
+}
+```
+**`strategy_preset_index`** 指向 `config.yaml` 的 `strategies[]` 索引；前端 `StrategyPresetSelect` 透過 `GET /api/config` 取得 preset 清單後讓使用者挑選，送 index 給後端。
+
+**result schema：**
+```json
+{
+  "symbol": "2330",
+  "market": "tw",
+  "currency": "TWD",
+  "engine": "vectorized",
+  "strategy_type": "moving_average_cross",
+  "strategy_params": { "short_window": 20, "long_window": 60 },
+  "metrics": {
+    "total_trades": 15,
+    "total_return": 0.345,
+    "annual_return": 0.0876,
+    "max_drawdown": -0.182,
+    "max_drawdown_start": "2022-04-21",
+    "max_drawdown_end": "2022-10-13",
+    "sharpe_ratio": 0.92,
+    "win_rate": 0.467,
+    "profit_factor": 1.85
+  },
+  "equity_curve": [
+    { "date": "2020-01-02", "value": 1000000 },
+    ...
+  ],
+  "trades": [
+    { "entry_date": "2020-03-15", "exit_date": "2020-05-20", "side": "long",
+      "entry_price": 285.5, "exit_price": 312.0, "shares": 1000,
+      "pnl": 26500, "return_pct": 0.0928 },
+    ...
+  ],
+  "price_data": [
+    { "date": "2020-01-02", "open": 332, "high": 334, "low": 330, "close": 333,
+      "volume": 27345000 },
+    ...
+  ],
+  "signals": [
+    { "date": "2020-03-15", "side": "buy", "price": 285.5 },
+    { "date": "2020-05-20", "side": "sell", "price": 312.0 }
+  ],
+  "dca_warning": null
+}
+```
+
+**Tearsheet 5 metric card：**
+- 交易次數（整數，DCA 顯示「定期定額不適用」）
+- 總報酬率（百分比，紅色 = 負）
+- 年化報酬率（百分比，紅色 = 負）
+- 最大回撤（百分比，永遠紅色或灰）
+- Sharpe（小數兩位）
+- 副標：「幣別：TWD」或「幣別：USD」
+
+**K 線 + Markers：**
+- 與 10-D `CandlestickChart` 同基底，加入 `series.setMarkers([{ time, position, color, shape, text }])`
+- 買入：`position: "belowBar"`, `color: green`, `shape: "arrowUp"`, `text: "B"`
+- 賣出：`position: "aboveBar"`, `color: red`, `shape: "arrowDown"`, `text: "S"`
+- 台股紅漲綠跌、美股綠漲紅跌（重用 `--chart-up` / `--chart-down` CSS 變數）
+- 顯示 MA 疊加（依 strategy_type 自動帶對應的 MA 線；無 MA 策略時不顯示）
+- 預設視野最後 6 個月
+
+**Equity curve：**
+- 單線 `LineSeries`，X 軸與 K 線同期
+- Hover tooltip 顯示日期 + equity 值
+
+**Trades 表：**
+- 6 欄：日期區間 / 方向 / 進場價 / 出場價 / 數量 / PnL（含 return_pct）
+- shadcn `Table`，前端 sort 與 paginate（每頁 20 筆）
+- 美股「股」、台股「股」或「張」依貨幣決定（DCA 的 1 整股提示沿用）
+
+**驗收條件：**
+1. 4 tab 框架建立，「單次回測」可用；10-E-2/3/4 tab disabled + tooltip
+2. 表單：MarketSwitcher / StockSelector / DateRangePicker / EngineSelect / StrategyPresetSelect / 初始資金（number input）/ 開始回測按鈕
+3. 送出後 `POST /api/jobs` 取得 job_id，SSE 顯示 running → complete；完成 < 5 秒
+4. Tearsheet 5 metric card 顯示正確值與幣別
+5. K 線顯示買賣點 markers，台股紅漲綠跌、美股綠漲紅跌
+6. Equity curve 與 K 線時間軸對齊
+7. Trades 表 sortable 與 paginated
+8. DCA preset：顯示 `dca_warning`、無 trades 表、equity 用 DCA 結果替代
+9. 取消按鈕：job 狀態變 `cancelled`；**Toast 顯示「回測已取消」**
+10. 美股回測（AAPL）：USD 顯示、無「張」字、cost calculator 用 `USCostCalculator`
+11. **Job complete 時 toast「回測完成」**；**Job error 時 toast 錯誤色 + 結果區域顯示 error.message**
+12. **載入態 skeleton**：job running 期間，tearsheet / K 線 / equity / trades 四區各顯示對應 skeleton；SSE result 到後同步替換
+13. **Error Boundary**：模擬 SSE 中斷或 invalid JSON，整頁不白屏、顯示 fallback「執行發生錯誤，請重試」
+14. **Command Palette**：Ctrl+K 開啟後可看到「回測：單次 / 策略比較 / 參數掃描 / Walk-Forward」四個導航項
+15. 對應後端測試 `test_backtest_api.py`（≥ 8 cases）+ 前端 vitest（≥ 5 檔 / ≥ 25 cases）全綠
+
+##### 10-E-2：策略比較（批次）
+
+**範圍：**
+- 10-E-1 的「策略比較」tab 解 disable
+- 後端服務層新增 `run_batch_backtest_job()`，包裝既有 `src/backtest/batch.py` `run_strategy_batch()`
+- Job dispatcher 新增 `type="backtest_batch"` 分支
+
+**params schema：**
+```json
+{
+  "market": "tw" | "us",
+  "symbol": "2330",
+  "start_date": "2020-01-01",
+  "end_date": "2024-12-31",
+  "strategy_preset_indices": [0, 1, 2, 3, 4, 5, 6, 7],
+  "initial_capital": 1000000
+}
+```
+- 預設全選 8 個 preset；前端可勾選子集
+- DCA preset 視為「不支援批次比較」，後端回傳該 row `error="..."`，前端表格 row 顯示「—」+ 備註欄文案
+
+**SSE 進度訊號：** 每完成一個策略推一筆 `progress`：
+```
+event: progress
+data: { "current": 3, "total": 8, "current_preset_name": "RSI_14", "status": "running" }
+event: progress
+data: { "current": 3, "total": 8, "current_preset_name": "RSI_14", "status": "done" }
+```
+
+**result schema：**
+```json
+{
+  "symbol": "2330", "market": "tw", "currency": "TWD",
+  "start_date": "2020-01-01", "end_date": "2024-12-31",
+  "initial_capital": 1000000,
+  "summaries": [
+    { "preset_name": "MA20_MA60", "strategy_type": "moving_average_cross",
+      "total_return": 0.345, "annual_return": 0.0876, "max_drawdown": -0.182,
+      "sharpe_ratio": 0.92, "win_rate": 0.467, "profit_factor": 1.85,
+      "total_trades": 15, "error": null,
+      "equity_curve": [...], "trades": [...], "signals": [...] },
+    ...
+  ]
+}
+```
+- 每個 summary 包含完整 equity_curve / trades / signals（用於展開詳細）
+- price_data 只附在 result 頂層一次（所有策略共用同一段股價）
+
+**比較表（8 欄）：**
+| 策略名稱 | 策略類型 | 總報酬 | 年化 | 最大回撤 | Sharpe | 勝率 | Profit Factor | 交易次數 | 備註 |
+- shadcn `Table`，sortable
+- 點 row → 展開區（lazy mount）顯示該策略的 tearsheet + K 線 + trades（複用 10-E-1 元件）
+
+**多策略 equity 疊圖：**
+- 一張 lightweight-charts，每個策略一條 `LineSeries`
+- 顏色從預設 palette 取（最多 8 策略，色票需高對比）
+- Legend 在圖下方或右上角
+- Hover 同步十字線顯示所有策略當日 equity 值
+
+**CSV 匯出按鈕：**
+- `GET /api/jobs/{id}/result?format=csv` → 回 CSV blob（後端產生，沿用 `save_batch_result_csv()` 邏輯）
+- 前端 `<a download="batch_2330_20260515.csv">` 觸發下載
+
+**驗收條件：**
+1. 策略 multi-select 預設全選 8 個，可取消
+2. 進度條顯示 `current / total preset_name`；**Skeleton 顯示在比較表 / 疊圖區域直到第一筆 progress 抵達**
+3. 比較表顯示 8 欄、可排序、DCA row 顯示 error 備註
+4. 多策略 equity 疊圖、十字線同步
+5. 點 row 展開：tearsheet + K 線 + trades（複用 10-E-1 元件）
+6. CSV 匯出；**完成 toast「比較完成，已匯出 N 策略」（含失敗清單若有）**
+7. 取消行為：跑到一半取消後，已完成的策略 result 仍保留、未跑的不在表中；**Toast「比較已取消（已完成 X/Y）」**
+8. **Job error toast 錯誤色 + 結果區域顯示細節**
+9. 對應後端測試 + 前端 vitest 全綠
+
+##### 10-E-3：參數掃描
+
+**範圍：**
+- 10-E-1 的「參數掃描」tab 解 disable
+- 後端服務層新增 `run_sweep_job()`，包裝既有 `src/backtest/sweep.py` `run_parameter_sweep()`
+- Job dispatcher 新增 `type="backtest_sweep"` 分支
+- `MAX_COMBOS = 200`（沿用既有常數）
+
+**params schema：**
+```json
+{
+  "market": "tw" | "us",
+  "symbol": "2330",
+  "start_date": "2020-01-01",
+  "end_date": "2024-12-31",
+  "strategy_type": "moving_average_cross",
+  "param_candidates": {
+    "short_window": [5, 10, 20],
+    "long_window": [40, 60, 120]
+  },
+  "initial_capital": 1000000
+}
+```
+- 前端表單依 `strategy_type` 動態渲染參數輸入欄
+- 每個參數一個 text input，使用者用逗號分隔輸入（`"5,10,20"`），前端 parse 後送 list
+- 表單預設值取自既有 `_SWEEP_DEFAULTS`（移植到前端常數）
+- 送出前前端 echo「總組合數 / 合法組合數 / 上限」訊息
+
+**SSE 進度訊號 + throttle：**
+- 每完成一個 combo 推一筆 progress
+- **Throttle 規則**：若 `valid_combos > 50`，每 5 個 combo 才推一次（後端控制），UI 不會被 ≥1k 訊息淹沒
+- 結束時推 `result` event
+
+```
+event: progress
+data: { "current": 45, "total": 180, "current_params": { "short_window": 20, "long_window": 60 }, "status": "running" }
+```
+
+**result schema：**
+```json
+{
+  "symbol": "2330", "market": "tw", "currency": "TWD",
+  "strategy_type": "moving_average_cross",
+  "start_date": "2020-01-01", "end_date": "2024-12-31",
+  "total_combos": 200,
+  "valid_combos": 180,
+  "max_combos_limit": 200,
+  "results": [
+    { "params": { "short_window": 20, "long_window": 60 },
+      "total_return": 0.345, "annual_return": 0.0876, "max_drawdown": -0.182,
+      "sharpe_ratio": 0.92, "win_rate": 0.467, "profit_factor": 1.85,
+      "total_trades": 15, "error": null, "sample_warning": false },
+    ...
+  ]
+}
+```
+- 不包含完整 equity_curve / trades（資料量太大）；僅 metrics
+- `sample_warning=true` 當 `total_trades < 3`
+
+**前端視覺：**
+
+1. **Top N 排名表**（預設 N=20）：
+   - 欄位：排名 / 參數組合（多參數時用 chip 顯示）/ Sharpe / 總報酬 / 年化 / 最大回撤 / 勝率 / 交易次數 / 警告
+   - sortable，預設按 Sharpe DESC
+   - sample_warning 的 row 顯示警告 icon + tooltip「樣本數 < 3」
+   - 點 row 不展開（不存個別 equity 資料）；如需詳細需回單次回測 tab 跑一次
+
+2. **2D Heatmap**（僅當 `param_candidates` 恰好有 2 個 key 時顯示）：
+   - 自製 CSS Grid + Tailwind 色階（綠 → 黃 → 紅 對應 Sharpe 高 → 低）
+   - X / Y 軸為兩個參數值
+   - cell hover 顯示 tooltip：完整 metrics
+   - cell 點擊：複製該參數組合到剪貼簿（未來在單次回測 tab 貼上）
+   - **不引入** Recharts / nivo / react-heatmap-grid 等套件
+   - 3+ 參數時只顯示排名表
+
+3. **CSV 匯出**：同 10-E-2 模式，後端產 blob
+
+**驗收條件：**
+1. 策略類型下拉切換時，參數輸入欄正確切換
+2. 逗號分隔解析、預設值正確
+3. 合法組合數提示與 200 上限警告（**> 200 時 toast 警告「合法組合數 N 超過上限 200」**）
+4. 進度條顯示 `current / total`，> 50 組時 throttle 生效；**Skeleton 顯示在排名表 / heatmap 區域直到第一筆 progress**
+5. 結果排名表（Top 20 預設）顯示、可排序、sample_warning 顯示警告 icon
+6. 2 參數時顯示 heatmap，色階對應 Sharpe；3+ 參數時不顯示
+7. 取消按鈕：跑到一半取消後，已完成的 combos result 仍保留；**Toast「掃描已取消（已完成 X/Y）」**
+8. CSV 匯出；**完成 toast「掃描完成，共 N 個合法組合」**
+9. 美股掃描（AAPL）：USD 與 cost calculator 正確
+10. **Heatmap cell 點擊複製成功時 toast「參數已複製：short_window=20, long_window=60」**
+11. 對應後端測試 + 前端 vitest 全綠
+
+##### 10-E-4：Walk-Forward Analysis
+
+**範圍：**
+- 10-E-1 的「Walk-Forward」tab 解 disable
+- 後端服務層新增 `run_walk_forward_job()`，包裝既有 `src/backtest/walk_forward.py` `run_walk_forward_analysis()`
+- Job dispatcher 新增 `type="backtest_wfa"` 分支
+- 沿用既有 `MAX_WFA_WINDOWS` / `MIN_WFA_WINDOWS` / `MAX_COMBOS` 常數
+
+**params schema：**
+```json
+{
+  "market": "tw" | "us",
+  "symbol": "2330",
+  "start_date": "2018-01-01",
+  "end_date": "2024-12-31",
+  "strategy_type": "moving_average_cross",
+  "param_candidates": {
+    "short_window": [5, 10, 20],
+    "long_window": [40, 60, 120]
+  },
+  "is_months": 12,
+  "oos_months": 3,
+  "step_months": 3,
+  "optimize_metric": "sharpe_ratio",
+  "initial_capital": 1000000
+}
+```
+- 表單在 10-E-3 基礎上加 IS / OOS / Step 月數 input 與 optimize_metric select
+- 前端送出前估算「預估 N 段 × M 組合 = 最多 N×M 次回測」並顯示
+
+**SSE 巢狀進度訊號：**
+- 外層：每完成一個 window 推一筆 `window_progress`
+- 內層：每完成一個 IS sweep combo 推一筆 `sweep_progress`（throttle 同 10-E-3）
+
+```
+event: window_progress
+data: { "window_id": 2, "total_windows": 6, "phase": "is_sweep" }
+event: sweep_progress
+data: { "window_id": 2, "current": 45, "total": 180, "current_params": {...} }
+event: window_progress
+data: { "window_id": 2, "total_windows": 6, "phase": "oos_validate" }
+event: window_progress
+data: { "window_id": 2, "total_windows": 6, "phase": "done",
+  "best_params": {...}, "oos_sharpe": 0.78 }
+```
+
+**result schema：**
+```json
+{
+  "symbol": "2330", "market": "tw", "currency": "TWD",
+  "strategy_type": "moving_average_cross",
+  "optimize_metric": "sharpe_ratio",
+  "total_window_count": 6,
+  "valid_window_count": 6,
+  "skipped_window_count": 0,
+  "windows": [
+    { "window_id": 1,
+      "is_start": "2018-01-01", "is_end": "2018-12-31",
+      "oos_start": "2019-01-01", "oos_end": "2019-03-31",
+      "best_params": { "short_window": 20, "long_window": 60 },
+      "is_metrics": { ... }, "oos_metrics": { ... },
+      "degradation": -0.35, "skipped": false, "warnings": [] },
+    ...
+  ],
+  "aggregate": {
+    "oos_total_return": 0.42, "oos_annual_return": 0.072,
+    "oos_max_drawdown": -0.15, "oos_sharpe_ratio": 0.65,
+    "oos_win_rate": 0.51
+  },
+  "parameter_stability": {
+    "params": {
+      "short_window": { "values": [20, 20, 10, 20, 10, 20], "cv": 0.234 },
+      "long_window": { "values": [60, 60, 120, 60, 60, 60], "cv": 0.298 }
+    },
+    "warning_count": 1
+  }
+}
+```
+
+**前端三表：**
+
+1. **Summary（彙整）**：4-5 個 metric card（OOS 總報酬 / 年化 / 最大回撤 / Sharpe / 勝率）+ 額外「OOS / IS degradation 平均」chip
+
+2. **Window 表**（每段視窗一行）：
+   | # | IS 期 | OOS 期 | 最佳參數 | IS Sharpe | OOS Sharpe | Degradation | 警告 |
+   - 以日期區間表示 IS / OOS
+   - 最佳參數用 chip 群顯示
+   - degradation 紅色 = 大幅退化
+
+3. **Stability 表**（每參數一行）：
+   | 參數名 | 各視窗的值 | CV（變異係數） | 穩定性 |
+   - 各視窗的值用 chip group
+   - CV 數字 + 穩定性標籤（< 0.2 = 穩定 / 0.2-0.5 = 中等 / > 0.5 = 不穩定）
+
+**CSV 匯出：**
+- 兩個 CSV 檔（沿用 `save_walk_forward_summary_csv()`）：
+  - `wfa_window_{symbol}_{ts}.csv`：每段視窗一行
+  - `wfa_stability_{symbol}_{ts}.csv`：每參數一行
+- 後端 `GET /api/jobs/{id}/result?format=csv&part=window|stability` → 回 CSV blob
+- 前端兩顆「匯出視窗表 CSV」/「匯出穩定性表 CSV」按鈕
+
+**驗收條件：**
+1. 表單 IS / OOS / Step 月數 + optimize_metric 下拉、預估視窗數顯示
+2. 資料不足時前端顯示「需要 N 個月，目前 M 個月」警告，按鈕 disabled；**送出時若後端回 `INSUFFICIENT_DATA_FOR_WFA`，toast 錯誤色顯示**
+3. 進度條：window N / total + 該 window 內的 sweep progress；**Skeleton 顯示在三表區域直到第一筆 window 完成**
+4. Summary 5 card、Window 表、Stability 表全顯示
+5. Degradation 紅色標示（< -0.3）
+6. CV > 0.5 顯示「不穩定」標籤
+7. 兩個 CSV 匯出按鈕都可下載；**下載觸發時 toast「CSV 已下載：wfa_window_2330_20260515.csv」**
+8. 取消按鈕：跑到一半取消後，已完成的 windows 仍保留；**Toast「WFA 已取消（已完成 X/Y 段視窗）」**
+9. 美股 WFA（AAPL）：USD、cost calculator 正確
+10. **Job complete 時 toast「WFA 分析完成，共 N 段視窗、平均 degradation X%」**
+11. 對應後端測試 + 前端 vitest 全綠
+
+##### 10-E 套件依賴（全段共用）
+
+- **不引入新套件**：lightweight-charts（10-D 已用）、shadcn Table / Form / Select / Calendar / Tooltip / Dialog 均已存在於 web/
+- **不引入** Recharts / nivo / react-heatmap-grid：批次 equity 疊圖用 lightweight-charts 多 LineSeries；heatmap 自製 CSS Grid
+
+##### 10-E 通用錯誤碼
+
+| 錯誤碼 | 觸發 | HTTP / Job error |
+|:---|:---|:---|
+| `INVALID_SYMBOL` | symbol 格式錯誤 | 422 |
+| `NO_DATA` | 資料區間內無日線資料 | Job error |
+| `NO_ADJUSTED_DATA` | 美股缺 adjusted 資料 | Job error |
+| `INVALID_PARAMS` | 策略參數驗證失敗（如 short ≥ long） | Job error |
+| `UNSUPPORTED_STRATEGY` | 不支援的 strategy_type | Job error |
+| `OVER_MAX_COMBOS` | sweep / WFA 合法組合數 > 200 | 422 |
+| `INSUFFICIENT_DATA_FOR_WFA` | 資料月數 < required_months | 422 |
+| `JOB_CANCELLED` | 使用者取消 | Job status `cancelled` |
+| `WRITE_LOCK_BUSY` | 已有 backtest job 在跑 | 409 |
 
 #### 10-F：AI 問答頁
 
