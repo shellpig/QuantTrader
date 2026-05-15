@@ -222,24 +222,25 @@ risk:
 | 10-C-2 | ✅ 完成 | 資料管理頁 stage-2（更新/重建/新增）：擴充 `api/routers/jobs.py` dispatcher 支援 `data_update` / `data_rebuild` job type（單檔 + all 批次模式、SSE progress + result event、單檔失敗不中斷整批、write lock 互斥）；前端 ProgressBar 全局進度條、RebuildConfirmDialog 二次確認、AddSymbolDialog（複用 StockSelector）、完成後 banner 列出 succeeded / failed 清單。tsc 0 errors + vitest **11 files / 87 tests pass**（10-C-2 補 3 檔 / 26 cases）+ pytest **52 passed**（+13 in `test_data_jobs_api.py`）。**邊界決定**：失敗清單用 banner 取代 toast，toast 系統留待 10-G 全局整合 |
 | 10-D | ✅ 完成 | 個股分析儀表板（Lightweight Charts）：3 輪驗收完成（round-3 13 項基本修正 + round-4 6 項緊湊化 + round-5 三欄佈局 50:25:25）；K 線 + MA + KD/RSI/MACD 副圖、crosshair tooltip、S/R 壓力支撐線、Pattern 長描述 tooltip、Radix Tooltip；tsc 0 errors + vitest 34 pass + pytest 25 pass |
 | 10-E-1 | 📋 規格已定，**依賴 10-G-1**，待實作 | 單次回測：Job + SSE、5 metric card tearsheet、K 線 + MA + buy/sell markers、equity curve、trades 表；建立 form / K 線 / tearsheet 元件供 10-E-2~4 重用；使用 10-G-1 的 toast / skeleton / error boundary / command palette |
-| 10-E-2 | 📋 規格已定，待實作 | 策略比較（批次）：8 欄比較表 + 多策略 equity 疊圖（lightweight-charts 多 LineSeries）+ row 展開重用 10-E-1 元件 + CSV 匯出 |
+| 10-E-2 | 📋 規格已定，待實作 | 策略比較（批次）：10 欄比較表 + 多策略 equity 疊圖（lightweight-charts 多 LineSeries）+ row 展開重用 10-E-1 元件 + CSV 匯出 |
 | 10-E-3 | 📋 規格已定，待實作 | 參數掃描：Top N 排名表 + 2D heatmap（僅 2 參數，自製 CSS Grid）+ 進度 throttle + sample_warning |
 | 10-E-4 | 📋 規格已定，待實作 | Walk-Forward：Summary / Window / Stability 三表 + 巢狀 SSE 進度（window × IS sweep）+ 雙 CSV 匯出（window + stability） |
 | 10-F-1 | ✅ 完成 | AI 問答頁 UI shell + 後端 lock（**不接 LLM**）：完整 chat UI、免責聲明 gate（localStorage `ai_chat.disclaimer_accepted_v1`）、`react-markdown` + remark-gfm、Mock 逐字串流（25ms / char）、訊息歷史刷新即清；`GET /api/ai/status` 回 `feature_locked`、`POST /api/ai/chat` 回 503；Sidebar AI 入口加灰色「後續開放」徽章；package version py + web + FastAPI 三處同步 bump 至 `0.2.0`；文件 V2.4。tsc 0 errors + vitest **17 files / 124 tests pass**（+31：disclaimer-gate 5 / message-bubble 10 / chat-page-client 8 / use-ai-status 3 / sidebar 5）+ pytest **test_api 59 passed**（+7 in `test_ai_api.py`） |
 | 10-F-2 | ⏸ 延後 | AI 問答頁接 LLM：補 `AIAdvisor.stream_chat()` 三 adapter（Anthropic / OpenAI / Gemini）+ 真實 SSE token 串流；**不卡 10-G / 10-H** |
-| 10-G | 📋 **規劃拆 10-G-1 / 10-G-2**，10-G-1 將在 10-E 前實作 | 10-G-1（基礎設施先行）：Toast 系統 + 10-C-2 banner 遷移、Error Boundary、Loading Skeleton、Command Palette（頁面跳轉 + 股票搜尋）；10-G-2（設定頁主功能）：API key write-only UI、策略 preset CRUD UI、Dark↔Light 主題切換、AI toggle disabled + tooltip。**10-G-1 / 10-G-2 細部規格將於 V2.6 補上**，本表暫保留單列形式 |
+| 10-G-1 | 📋 規格已定，待實作 | 基礎設施先行：`sonner` toast + 10-C-2 banner 遷移、React Error Boundary（只接 render/lifecycle/hook 例外）、`CardSkeleton` / `ChartSkeleton` / `TableSkeleton`、`cmdk` Command Palette（頁面跳轉 + 股票搜尋）；10-E 4 段前置 |
+| 10-G-2 | 📋 規格已定，待實作（10-E 後） | 設定頁主功能：API key write-only UI（5 provider）、策略 preset CRUD（upsert/delete/restore by name）、Dark↔Light 主題切換（`next-themes`、不接 system）、AI toggle disabled + tooltip |
 | 10-H | 📋 規格已定，待實作 | 舊 Streamlit UI 移除（測試遷移檢查表不可跳過；`src/ai/advisor.py` 必須保留供 10-F-2 與 dashboard analysis 使用） |
 
 ## 當前待辦
 
 見 `驗證後已知問題.md`（每次必讀）。
 
-主線：Phase 9 全部完成（含 9-F 手動驗收）。Phase 10-A 服務層 + FastAPI 骨架、10-B Next.js 前端骨架、**10-C-1 資料管理頁列表 + DELETE**、**10-C-2 資料管理頁更新/重建/新增（SSE + Job dispatcher）**、**10-D 個股分析儀表板（3 輪驗收完成）**、**10-F-1 AI 問答頁 UI shell + 後端 lock** 均已完成。**Phase 10-C 全段落結束**；10-F 已拆成 10-F-1（已完成）與 10-F-2（接 LLM、延後且不卡 10-G / 10-H）。**10-E 已拆成 10-E-1 / 10-E-2 / 10-E-3 / 10-E-4 四段（規格 V2.5 已記載，明確不做老 Streamlit 的歷史結果 tab）**。**實作順序調整：10-G-1（基礎設施先行）→ 10-E-1 → 10-E-2 → 10-E-3 → 10-E-4 → 10-G-2（設定頁主功能）→ 10-H**；10-E 4 段都依賴 10-G-1 的 Toast / Error Boundary / Loading Skeleton / Command Palette，先做 10-G-1 可避免 10-E 4 次 inline banner 後再回頭重構。下一步預計實作 10-G-1（規格 V2.6 待補）。
+主線：Phase 9 全部完成（含 9-F 手動驗收）。Phase 10-A 服務層 + FastAPI 骨架、10-B Next.js 前端骨架、**10-C-1 資料管理頁列表 + DELETE**、**10-C-2 資料管理頁更新/重建/新增（SSE + Job dispatcher）**、**10-D 個股分析儀表板（3 輪驗收完成）**、**10-F-1 AI 問答頁 UI shell + 後端 lock** 均已完成。**Phase 10-C 全段落結束**；10-F 已拆成 10-F-1（已完成）與 10-F-2（接 LLM、延後且不卡 10-G / 10-H）。**10-E 已拆成 10-E-1 / 10-E-2 / 10-E-3 / 10-E-4 四段，10-G 已拆成 10-G-1 / 10-G-2（規格 V2.6 已記載）**。**實作順序：10-G-1（基礎設施先行）→ 10-E-1 → 10-E-2 → 10-E-3 → 10-E-4 → 10-G-2（設定頁主功能）→ 10-H**；10-E 4 段都依賴 10-G-1 的 Toast / Error Boundary / Loading Skeleton / Command Palette。下一步預計實作 10-G-1。
 
 2026-05-15 狀態：
 - 最新 commit 請以 `git log --oneline -1` 為準。
-- **10-E 規格拆分為 4 段（V2.5）**：10-E-1（單次）/ 10-E-2（批次）/ 10-E-3（掃描）/ 10-E-4（WFA），規格、設計方針、測試指南三份文件已同步更新。明確不做老 Streamlit「歷史結果」tab；Heatmap 採排名表 + 2D 自製 CSS Grid（僅 2 參數時）；多策略 equity 疊圖用 lightweight-charts 多 LineSeries；WFA 雙 CSV（window + stability）由後端產 blob、前端 `<a download>` 下載；不引入新前端套件（無 Recharts / nivo / heatmap-grid）。4 段共用 5 個元件（TearsheetCards / CandleChartWithMarkers / EquityCurveChart / TradesTable / BacktestProgressBar）+ 共用 hook（use-backtest-job）+ 共用 Job dispatcher cancellation 模式。`_WRITE_JOB_TYPES` 將擴充加入 `backtest_run` / `backtest_batch` / `backtest_sweep` / `backtest_wfa`。
-- **實作順序調整（V2.5 後加註）**：10-G 將拆 10-G-1（基礎設施先行：Toast 系統 + 10-C-2 banner 遷移、Error Boundary、Loading Skeleton、Command Palette）與 10-G-2（設定頁主功能：API key write-only UI、策略 preset CRUD UI、Dark↔Light 主題切換、AI toggle disabled + tooltip）。執行順序改為 **10-G-1 → 10-E-1 → 10-E-2 → 10-E-3 → 10-E-4 → 10-G-2 → 10-H**。10-E 4 段都依賴 10-G-1 的 toast / skeleton / error boundary / command palette；先做 10-G-1 可避免 4 段 inline banner 重構。10-E 規格已補入「10-E 對 10-G-1 的依賴清單」、`BacktestPage` 整體結構樣板（含 Error Boundary 與 Command Palette entry 註冊）、`SingleRunTab` skeleton 切換模式、Toast 訊息文案規範表（14 條）、所有驗收條件補上 toast / skeleton / error boundary / command palette 條目。10-G-1 / 10-G-2 細部規格將於 V2.6 補上。
+- **10-E 規格拆分為 4 段（V2.5，V2.6 收斂合約）**：10-E-1（單次）/ 10-E-2（批次）/ 10-E-3（掃描）/ 10-E-4（WFA），規格、設計方針、測試指南三份文件已同步更新。明確不做老 Streamlit「歷史結果」tab；10-E-2 比較表定為 **10 欄**；Heatmap 採排名表 + 2D 自製 CSS Grid（僅 2 參數時）；多策略 equity 疊圖用 lightweight-charts 多 LineSeries；WFA 雙 CSV（window + stability）由後端產 blob、前端 `<a download>` 下載；不引入新前端套件（無 Recharts / nivo / heatmap-grid）。取消後 job status 保持 `cancelled`，但 partial result 可由 `GET /api/jobs/{id}/result` 讀取；CSV 匯出 query 由 `api/routers/jobs.py` 的既有 result endpoint 處理；fetch / SSE / invalid JSON 走 toast + 頁內 error panel，不交給 Error Boundary。
+- **10-G 規格拆分為 2 段（V2.6）**：10-G-1（基礎設施先行：`sonner` toast + 10-C-2 banner 遷移、Error Boundary、Loading Skeleton、Command Palette）與 10-G-2（設定頁主功能：API key write-only UI、策略 preset CRUD by name、Dark↔Light 主題切換、AI toggle disabled + tooltip）。執行順序為 **10-G-1 → 10-E-1 → 10-E-2 → 10-E-3 → 10-E-4 → 10-G-2 → 10-H**。10-G-1 不裝 `next-themes`，10-G-2 才裝；Error Boundary 只接 React render / lifecycle / hook 例外；API 錯誤一律走 toast。
 - **9-F 手動驗收完成**：9-F-1~9-F-12 全數通過，Phase 9 全階段（含手動驗收）正式收束。
 - **10-F-1 實作 + 驗收完成**：AI 問答頁 UI shell + 後端 lock（不接 LLM）。
   - 後端：`GET /api/ai/status` 回 `{ available: false, reason: "feature_locked" }`、`POST /api/ai/chat` 回 503 + `AI_DISABLED`；既有 `/api/ai/analyze` 不變。
@@ -323,11 +324,11 @@ risk:
 
 ## 規格文件索引
 
-### 量化交易系統規格書_shellpig版.md（~3065 行）
+### 量化交易系統規格書_shellpig版.md（~3755 行）
 
 | 區段 | 行範圍 | 何時讀 |
 |:---|:---|:---|
-| 修訂歷史 | 3-25 | 查版本變更，最新為 `V2.5`（Phase 10-E 拆分為 10-E-1/2/3/4、不做歷史結果、heatmap 採排名表+2D 自製、WFA CSV 雙檔、lightweight-charts 多線疊圖、無新前端套件依賴） |
+| 修訂歷史 | 3-25 | 查版本變更，最新為 `V2.6`（Phase 10-G 拆為 10-G-1/10-G-2；10-E 合約收斂：cancelled partial result、async 錯誤不進 Error Boundary、CSV 由 jobs router、10-E-2 比較表 10 欄） |
 | 專案願景與目標 | 47-62 | 理解定位 |
 | 技術語言與套件選型 | 64-91 | 技術決策參考 |
 | 系統架構（四層架構圖） | 93-177 | 理解整體結構 |
@@ -344,13 +345,15 @@ risk:
 | Phase 7 策略擴充（7-A~7-D） | 1224-1933 | 策略、研究工作台、參數掃描、WFA |
 | Phase 8 個股綜合分析儀表板（8-A~8-G） | 1935-2366 | 實作 analysis/ / realtime / dashboard / 說明文字時必讀 |
 | Phase 9 美股 US-1 / 9-G 支援 | 2369-2693 | 美股日 K、調整後價格、回測、技術分析、多市場架構、yfinance 1m intraday 時必讀 |
-| **Phase 10 前端架構重構（10-A~10-H）** | **2696-2985** | **Streamlit → Next.js + FastAPI 遷移、服務層抽離、API 設計、圖表、Responsive、主題系統時必讀。10-C 已拆為 10-C-1 / 10-C-2 兩階段（規格詳於此區段）** |
+| **Phase 10 前端架構重構（10-A~10-H）** | **2699-3676** | **Streamlit → Next.js + FastAPI 遷移、服務層抽離、API 設計、圖表、Responsive、主題系統時必讀。10-E / 10-G 細部規格詳於此區段** |
 | 子階段總覽 | 2663-2675 | Phase 總覽（含 Phase 10） |
 | 費用估算 | 2677-2695 | API / yfinance / Next.js / US-2 資料源成本 |
-| 附錄 A：免責聲明全文 | 2912-2931 | 免責聲明文案 |
-| 附錄 B：架構決策補充 | 2933-2989 | 美股邊界與 AI provider 抽象 |
+| 10-E：回測研究工作台 | 2935-3368 | 實作 10-E-1~4、Job lifecycle、SSE、取消、CSV、toast/skeleton/error boundary/command palette 整合時必讀 |
+| 10-G：設定頁 + 全局整合 | 3427-3629 | 實作 10-G-1 toast/error boundary/skeleton/command palette，或 10-G-2 settings/secrets/theme/strategy preset 時必讀 |
+| 附錄 A：免責聲明全文 | 3678-3697 | 免責聲明文案 |
+| 附錄 B：架構決策補充 | 3699-3755 | 美股邊界與 AI provider 抽象 |
 
-### 開發設計方針.md（~7049 行）
+### 開發設計方針.md（~8180 行）
 
 | 區段 | 行範圍 | 何時讀 |
 |:---|:---|:---|
@@ -369,9 +372,11 @@ risk:
 | Phase 8-A~8-F 個股綜合分析儀表板 | 4171-5258 | 實作 analysis/ / realtime / dashboard 時必讀 |
 | Phase 8-G 新手友善說明文字 | 5260-5683 | 實作儀表板說明文字時必讀 |
 | Phase 9 美股 US-1 / 9-G 支援 | 5685-6290 | 實作多市場基礎、美股資料管線、回測、dashboard、資料管理頁、美股 intraday snapshot 前必讀 |
-| **Phase 10 前端架構重構（10-A~10-H）** | **6293-7049** | **服務層抽離、FastAPI 骨架、Next.js 前端、API 端點、圖表元件、Job manager、config 安全、測試遷移檢查表實作時必讀。10-C 區段含 10-C-1 / 10-C-2 兩階段的檔案清單、Job dispatcher 樣板、SSE 訊息規格、狀態 badge 判定演算法** |
+| **Phase 10 前端架構重構（10-A~10-H）** | **6293-8180** | **服務層抽離、FastAPI 骨架、Next.js 前端、API 端點、圖表元件、Job manager、config 安全、測試遷移檢查表實作時必讀。10-C / 10-E / 10-G 細部設計皆在此段** |
+| 10-E 回測研究工作台 | 6920-7480 | 實作 backtest jobs、partial cancellation、CSV blob、共用 hook/元件時必讀 |
+| 10-G 設定頁 + 全局整合 | 7649-8119 | 實作 toast、Error Boundary、Skeleton、Command Palette、settings/secrets/theme/preset CRUD 時必讀 |
 
-### 測試指南.md（~3029 行）
+### 測試指南.md（~3275 行）
 
 | 區段 | 行範圍 | 何時讀 |
 |:---|:---|:---|
@@ -390,9 +395,11 @@ risk:
 | Phase 8-G 測試 | 2128-2174 | 儀表板說明文字測試 |
 | Phase 8 全階段回歸 | 2176-2194 | Phase 8 完成後 |
 | Phase 9 測試（9-A~9-G） | 2196-2603 | 美股 US-1 與 9-G intraday 實作與驗收時必讀 |
-| **Phase 10 測試（10-A~10-H）** | **2606-2934** | **服務層、API 端點、前端 Vitest、E2E Playwright、測試遷移檢查表。10-C 案例編號已重新命名為 `10-C-{階段}-{序號}`（如 `10-C-1-1`、`10-C-2-3`），舊 10-C-1..4 對照表記在該節開頭** |
-| 全專案最終回歸 | 2887-2927 | Phase 完成後 |
-| 測試數量統計總覽 | 2929-2979 | 測試統計（含 Phase 10 估算 ~70 + 30 手動 + E2E） |
+| **Phase 10 測試（10-A~10-H）** | **2606-3164** | **服務層、API 端點、前端 Vitest、E2E Playwright、測試遷移檢查表。10-E / 10-G 測試規格已拆段** |
+| 10-E 回測工作台測試 | 2786-2939 | 驗 10-E-1~4：backtest jobs、cancelled partial result、CSV、toast/skeleton/error panel |
+| 10-G 設定頁 + 全局整合測試 | 3005-3092 | 驗 10-G-1 toast/error boundary/skeleton/command palette 與 10-G-2 settings |
+| 全專案最終回歸 | 3179-3219 | Phase 完成後 |
+| 測試數量統計總覽 | 3221-3275 | 測試統計（含 Phase 10 估算） |
 
 ### web/_design/ — 10-C 視覺設計稿（Phase 10-C 實作必讀）
 

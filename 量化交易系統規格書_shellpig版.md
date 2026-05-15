@@ -21,6 +21,7 @@
 | **V2.2** | 2026/05/13 | 新增 Phase 9-G：美股 yfinance 1m intraday 盤中快照與分 K 圖。使用最新 1 分 K close 作為近似盤中價，漲跌以該 raw 價格對前一紐約交易日 raw close 計算；新增專用 intraday API，不改 `fetch_minute(market="us")` 的 US-1 拒絕行為；不做 WebSocket、買一 / 賣一、五檔、逐筆或實盤級即時報價。 |
 | **V2.3** | 2026/05/14 | 新增 Phase 10（前端架構重構）：從 Streamlit 遷移至 Next.js + FastAPI。10-A 服務層抽離 + FastAPI 後端骨架、10-B Next.js 前端骨架、10-C 資料管理頁、10-D 個股分析儀表板（Lightweight Charts）、10-E 回測研究工作台、10-F AI 問答頁、10-G 設定頁 + 全局整合、10-H 舊 UI 移除與收尾。新增 `src/services/`、`api/`、`web/` 目錄。 |
 | **V2.4** | 2026/05/15 | Phase 10-F 拆分為 **10-F-1（UI shell + lock）** 與 **10-F-2（接 LLM）**：10-F-1 完整實作 AI 問答頁 UI（含免責聲明 gate + localStorage 持久、訊息泡泡與 Markdown 渲染 `react-markdown` + remark-gfm、Mock 逐字串流模擬未來 SSE token 動畫），但**不串接真實 LLM**；後端 `/api/ai/chat` 與 `/api/ai/status` 僅做最小骨架（chat 永遠回 `503 AI_DISABLED`、status 永遠回 `{ available: false, reason: "feature_locked" }`）；Sidebar AI 入口加「後續開放」灰色徽章；訊息歷史刷新即清不持久化。**設定頁的 AI 開關鎖死延至 10-G 一起做**（在 10-G 把 toggle 預設 disabled）。10-F-2 延後實作、時程不卡 10-G / 10-H，將補上 `AIAdvisor.stream_chat()` 三 adapter（Anthropic / OpenAI / Gemini）與真實 SSE。10-F-1 落地時 `pyproject.toml` 與 `web/package.json` package version 同步 bump 至 `0.2.0`（兩個 package version 從此對齊）。 |
+| **V2.6** | 2026/05/15 | Phase 10-G 補完細部規格並正式拆為 **10-G-1（基礎設施先行）+ 10-G-2（設定頁主功能）**。**三項拍板決定**：(1) **主題系統** 從舊 Streamlit 6 套收斂為 Dark / Light 二選一（不移植），預設 dark、`next-themes` 留到 10-G-2 才裝、不接 system 自動偵測避免 K 線色閃動；(2) **策略 preset API** 改以 `name` 為主鍵：`POST /api/config/strategies`（upsert by name）+ `DELETE /api/config/strategies/{name}`（idempotent）+ `POST /api/config/strategies/restore`（復原 8 組預設）；payload `{ preset: {name, strategy, params, market} }`、錯誤碼 `INVALID_PRESET` 422；(3) **Toast 系統** 用 `sonner`（拔 `@radix-ui/react-toast`），預設右下、3 秒、success/error/info 三變體，封裝為 `useToast()` hook（介面與 10-E 已預設一致）；Error Boundary 只接 React 例外、API 錯誤一律走 toast。**10-G-1 提供 4 種全局元件供 10-E 4 段共用**：`useToast()` hook + `sonner Toaster`、`<ErrorBoundary>` + 預設 fallback、`CardSkeleton` / `ChartSkeleton` / `TableSkeleton` 三變體、`<CommandPalette>` + `useCommandPaletteEntry()` hook（cmdk 為底、Ctrl+K / Cmd+K / Esc / `/` 開啟並 focus input、頁面 + 股票搜尋）；同時把 10-C-2 既有 5 處 banner（全部更新 / 全部重建 / 新增 / 動作欄·更新 / DELETE）統一遷移為 toast。**10-G-2 設定頁四分區**：API key write-only（5 provider）+ 策略 preset CRUD（含重置預設）+ Dark/Light toggle + AI toggle disabled + tooltip。**10-E 合約收斂**：取消後 job 保持 `cancelled` 並可讀取 partial result；fetch/SSE/invalid JSON 走 toast + 頁內錯誤區，不交給 Error Boundary；CSV 匯出 query 由 `/api/jobs/{id}/result` 所在的 jobs router 負責；10-E-2 比較表定為 10 欄。**10-G-2 在所有 10-E 子階段驗收後才執行**；10-H 移至 10-G-2 之後。 |
 | **V2.5** | 2026/05/15 | Phase 10-E 拆分為 **10-E-1（單次回測）/ 10-E-2（策略比較）/ 10-E-3（參數掃描）/ 10-E-4（Walk-Forward）** 四個子階段：四段共用 Job lifecycle + SSE 進度 + 取消、共用 K 線 + Markers chart 元件、共用 tearsheet 5 metric card；後端 dispatcher 比照 10-C-2 `_run_data_job` 樣板擴充。**明確不做老 Streamlit 的「歷史結果」tab**（Next.js SWR cache 後切頁狀態不會掉，迫切性降低）；**Heatmap 採「排名表 + 顏色背景」為主，僅當 sweep 為恰好 2 個參數時加 2D heatmap（自製 CSS Grid + Tailwind 色階，不引入 heatmap 套件）**；**多策略 equity curve 疊圖用 lightweight-charts 多個 LineSeries 同圖（不引入 Recharts）**；**WFA CSV 由後端產生 blob、前端 `<a download>` 觸發下載**。取消行為：服務層 `run_*_job` 在迴圈點檢查 `manager.get_job(job.id).status == "cancelled"` 後 break，比照 10-C-2 模式。**實作順序調整：10-G 將拆為 10-G-1（基礎設施先行：Toast 系統 + Error Boundary + Loading Skeleton + Command Palette）與 10-G-2（設定頁主功能），執行順序改為 10-G-1 → 10-E（4 段）→ 10-G-2 → 10-H；10-E 4 個子階段假設 10-G-1 已就位，job complete / cancel / error 通知統一走 toast、SSE 中載入態統一用 skeleton、頁面/股票導航支援 Command Palette。10-G-1 / 10-G-2 細部規格將於後續 V2.6 補上。** |
 
 ---
@@ -2768,13 +2769,15 @@ Phase 10 拆為 **10-A ~ 10-H** 八個子階段，每個可獨立驗證。
 | **10-C** | 資料管理頁 | 10-A, 10-B | 資料 CRUD API + 前端資料管理頁面 + DELETE 端點（新功能） |
 | **10-D** | 個股分析儀表板 | 10-A, 10-B | K 線圖（Lightweight Charts）、技術分析、型態、籌碼、AI 劇本、聚合端點 |
 | **10-E-1** | 單次回測 | 10-A, 10-B, **10-G-1** | 單次回測 Job + SSE、5 metric card tearsheet、K 線 + MA + buy/sell markers、equity curve、trades 表；建立 form / K 線 / tearsheet 元件供 10-E-2~4 重用；使用 10-G-1 的 toast / skeleton / error boundary / command palette |
-| **10-E-2** | 策略比較（批次） | 10-E-1 | 批次比較 Job + SSE、比較表（8 欄）、多策略 equity 疊圖（lightweight-charts 多 LineSeries）、單列展開詳細結果（重用 10-E-1 tearsheet）；toast 通知完成 / 取消 / 失敗 |
+| **10-E-2** | 策略比較（批次） | 10-E-1 | 批次比較 Job + SSE、比較表（10 欄）、多策略 equity 疊圖（lightweight-charts 多 LineSeries）、單列展開詳細結果（重用 10-E-1 tearsheet）；toast 通知完成 / 取消 / 失敗 |
 | **10-E-3** | 參數掃描 | 10-E-2 | 參數掃描 Job + SSE（throttle）、排名表（含 sample_warning）、2D heatmap（僅 2 參數時）、組合數 ≤ 200 限制、取消按鈕；CSV 匯出；toast 通知完成 / 取消 |
 | **10-E-4** | Walk-Forward Analysis | 10-E-3 | WFA Job + 巢狀 SSE（window × IS sweep）、Summary / Window / Stability 三表、Degradation 顯示、CSV 匯出；toast 通知完成 / 取消 / 資料不足錯誤 |
 | **10-F-1** | AI 問答頁 UI shell（不接 LLM） | 10-A, 10-B | Chat UI 完成（免責聲明 gate / 訊息泡泡 / Markdown / Mock 逐字串流）；後端 `/api/ai/chat` 回 503、`/api/ai/status` 回 feature_locked；sidebar 加「後續開放」徽章；package version bump 至 `0.2.0` |
 | **10-F-2** | AI 問答頁接 LLM（延後） | 10-F-1 | 補 `AIAdvisor.stream_chat()` Anthropic / OpenAI / Gemini 三 adapter；`POST /api/ai/chat` 改為真實 SSE token 串流；不卡 10-G / 10-H |
-| **10-G** | 設定頁 + 全局整合 | 10-A ~ 10-F | 設定管理、策略 preset CRUD、Command Palette、鍵盤快捷鍵、Error Boundary |
-| **10-H** | 舊 UI 移除與收尾 | 10-G 全部驗收後 | 移除 `src/ui/`、Streamlit 依賴、測試遷移檢查表、文件更新 |
+| **10-G-1** | 基礎設施先行（Toast / Error Boundary / Skeleton / Command Palette） | 10-A, 10-B, 10-C-2（既有 banner 來源）| 為 10-E 4 段預先建立全局元件：`sonner` toast 系統（拔 `@radix-ui/react-toast`）+ React Error Boundary + 3 種 Skeleton 變體 + `cmdk` Command Palette（頁面跳轉 + 股票搜尋）；10-C-2 既有 5 處 banner 全部改 toast |
+| **10-E-1~4** | 回測工作台 4 段 | 10-G-1 | 見上表 |
+| **10-G-2** | 設定頁主功能（API Key / 策略 preset / 主題 / AI toggle） | 10-G-1, 10-E（4 段全部驗收後） | SettingsPage 4 分區實作：API key write-only UI、策略 preset CRUD UI（搭配 `POST /api/config/strategies` upsert + `DELETE /api/config/strategies/{name}` + `POST /api/config/strategies/restore`）、Dark↔Light 主題切換（`next-themes`）、AI toggle disabled + tooltip |
+| **10-H** | 舊 UI 移除與收尾 | 10-G-2 驗收後 | 移除 `src/ui/`、Streamlit 依賴、測試遷移檢查表、文件更新 |
 
 10-A 與 10-B 的 scaffold 工作可同時進行；10-B 開發階段使用 mock data，最終驗收依賴 10-A。
 
@@ -2934,14 +2937,14 @@ data: { "succeeded": ["2330", ...], "failed": [{ "symbol": "2317", "error": "...
 10-E **拆為 4 個子階段交付**：10-E-1（單次）→ 10-E-2（批次）→ 10-E-3（掃描）→ 10-E-4（WFA）。每段獨立驗收。**10-E 開工前必須完成 10-G-1（基礎設施先行）**，4 段共用 10-G-1 的：
 
 - **Toast 系統** — 所有 SSE job 的 complete / cancelled / error 統一走 toast（不再寫 inline banner）；10-C-2 既有的失敗清單 banner 也在 10-G-1 階段遷移為 toast
-- **Error Boundary** — 整個 `BacktestPage` 用 Error Boundary 包住，SSE 斷線 / fetch 失敗時顯示 fallback UI 而非整頁白屏
+- **Error Boundary** — 整個 `BacktestPage` 用 Error Boundary 包住；只接 React render / lifecycle / hook 例外。fetch / SSE / invalid JSON 錯誤由 hook 設為 `status="error"`，顯示頁內錯誤區並走 toast
 - **Loading Skeleton** — 載入態用 shadcn `Skeleton`：K 線 / equity / tearsheet 卡 / 表格各一份 skeleton 變體
 - **Command Palette（Ctrl+K）** — 頁面跳轉支援「單次回測 / 策略比較 / 參數掃描 / Walk-Forward」四個 entry；股票搜尋已含
 
 所有 4 段共用：
 
 - **Job lifecycle**：`POST /api/jobs` → `GET /api/jobs/{id}/events`（SSE 進度）→ `GET /api/jobs/{id}/result`，比照 10-C-2 `_run_data_job` 模式
-- **取消行為**：`POST /api/jobs/{id}/cancel`；服務層 `run_*_job` 在每個迴圈點檢查 `manager.get_job(job.id).status == "cancelled"` 後 break
+- **取消行為**：`POST /api/jobs/{id}/cancel`；服務層 `run_*_job` 在每個迴圈點檢查 `manager.get_job(job.id).status == "cancelled"` 後 break，最後以 `finish_cancelled_job(result=partial_result)` 保持 job status 為 `cancelled` 並保留已完成 partial result；`GET /api/jobs/{id}/result` 對 `complete` / `cancelled` 都可回傳 result（`cancelled` 且無 result 才回 409）
 - **市場 / 貨幣 / 單位**：透過 `MarketSwitcher` 切換，前端 formatter 處理 USD vs TWD、「股」vs「張」（重用 10-D 既有 logic）
 - **共用前端元件**：建立於 10-E-1，供 2~4 重用
   - `web/src/components/backtest/TearsheetCards.tsx` — 5 metric card（交易次數 / 總報酬率 / 年化報酬率 / 最大回撤 / Sharpe）
@@ -3061,7 +3064,7 @@ data: { "succeeded": ["2330", ...], "failed": [{ "symbol": "2317", "error": "...
 10. 美股回測（AAPL）：USD 顯示、無「張」字、cost calculator 用 `USCostCalculator`
 11. **Job complete 時 toast「回測完成」**；**Job error 時 toast 錯誤色 + 結果區域顯示 error.message**
 12. **載入態 skeleton**：job running 期間，tearsheet / K 線 / equity / trades 四區各顯示對應 skeleton；SSE result 到後同步替換
-13. **Error Boundary**：模擬 SSE 中斷或 invalid JSON，整頁不白屏、顯示 fallback「執行發生錯誤，請重試」
+13. **Error Boundary**：模擬 React render throw，主內容顯示 fallback「執行發生錯誤，請重試」，sidebar 不消失；SSE 中斷 / invalid JSON 改由結果區域顯示 error.message + toast
 14. **Command Palette**：Ctrl+K 開啟後可看到「回測：單次 / 策略比較 / 參數掃描 / Walk-Forward」四個導航項
 15. 對應後端測試 `test_backtest_api.py`（≥ 8 cases）+ 前端 vitest（≥ 5 檔 / ≥ 25 cases）全綠
 
@@ -3113,7 +3116,7 @@ data: { "current": 3, "total": 8, "current_preset_name": "RSI_14", "status": "do
 - 每個 summary 包含完整 equity_curve / trades / signals（用於展開詳細）
 - price_data 只附在 result 頂層一次（所有策略共用同一段股價）
 
-**比較表（8 欄）：**
+**比較表（10 欄）：**
 | 策略名稱 | 策略類型 | 總報酬 | 年化 | 最大回撤 | Sharpe | 勝率 | Profit Factor | 交易次數 | 備註 |
 - shadcn `Table`，sortable
 - 點 row → 展開區（lazy mount）顯示該策略的 tearsheet + K 線 + trades（複用 10-E-1 元件）
@@ -3125,16 +3128,16 @@ data: { "current": 3, "total": 8, "current_preset_name": "RSI_14", "status": "do
 - Hover 同步十字線顯示所有策略當日 equity 值
 
 **CSV 匯出按鈕：**
-- `GET /api/jobs/{id}/result?format=csv` → 回 CSV blob（後端產生，沿用 `save_batch_result_csv()` 邏輯）
+- `GET /api/jobs/{id}/result?format=csv` → 回 CSV blob（由 `api/routers/jobs.py` 既有 result endpoint 加 query 分支；後端產生，沿用 `save_batch_result_csv()` 邏輯）
 - 前端 `<a download="batch_2330_20260515.csv">` 觸發下載
 
 **驗收條件：**
 1. 策略 multi-select 預設全選 8 個，可取消
 2. 進度條顯示 `current / total preset_name`；**Skeleton 顯示在比較表 / 疊圖區域直到第一筆 progress 抵達**
-3. 比較表顯示 8 欄、可排序、DCA row 顯示 error 備註
+3. 比較表顯示 10 欄、可排序、DCA row 顯示 error 備註
 4. 多策略 equity 疊圖、十字線同步
 5. 點 row 展開：tearsheet + K 線 + trades（複用 10-E-1 元件）
-6. CSV 匯出；**完成 toast「比較完成，已匯出 N 策略」（含失敗清單若有）**
+6. CSV 匯出；下載時 toast「已下載：batch_2330_20260515.csv」；job complete 時 toast「比較完成（N 成功 / M 失敗）」
 7. 取消行為：跑到一半取消後，已完成的策略 result 仍保留、未跑的不在表中；**Toast「比較已取消（已完成 X/Y）」**
 8. **Job error toast 錯誤色 + 結果區域顯示細節**
 9. 對應後端測試 + 前端 vitest 全綠
@@ -3327,7 +3330,7 @@ data: { "window_id": 2, "total_windows": 6, "phase": "done",
 - 兩個 CSV 檔（沿用 `save_walk_forward_summary_csv()`）：
   - `wfa_window_{symbol}_{ts}.csv`：每段視窗一行
   - `wfa_stability_{symbol}_{ts}.csv`：每參數一行
-- 後端 `GET /api/jobs/{id}/result?format=csv&part=window|stability` → 回 CSV blob
+- 後端 `GET /api/jobs/{id}/result?format=csv&part=window|stability` → 回 CSV blob（由 `api/routers/jobs.py` 既有 result endpoint 加 query 分支）
 - 前端兩顆「匯出視窗表 CSV」/「匯出穩定性表 CSV」按鈕
 
 **驗收條件：**
@@ -3340,7 +3343,7 @@ data: { "window_id": 2, "total_windows": 6, "phase": "done",
 7. 兩個 CSV 匯出按鈕都可下載；**下載觸發時 toast「CSV 已下載：wfa_window_2330_20260515.csv」**
 8. 取消按鈕：跑到一半取消後，已完成的 windows 仍保留；**Toast「WFA 已取消（已完成 X/Y 段視窗）」**
 9. 美股 WFA（AAPL）：USD、cost calculator 正確
-10. **Job complete 時 toast「WFA 分析完成，共 N 段視窗、平均 degradation X%」**
+10. **Job complete 時 toast「WFA 分析完成（N 段視窗）」**
 11. 對應後端測試 + 前端 vitest 全綠
 
 ##### 10-E 套件依賴（全段共用）
@@ -3359,7 +3362,7 @@ data: { "window_id": 2, "total_windows": 6, "phase": "done",
 | `UNSUPPORTED_STRATEGY` | 不支援的 strategy_type | Job error |
 | `OVER_MAX_COMBOS` | sweep / WFA 合法組合數 > 200 | 422 |
 | `INSUFFICIENT_DATA_FOR_WFA` | 資料月數 < required_months | 422 |
-| `JOB_CANCELLED` | 使用者取消 | Job status `cancelled` |
+| `JOB_CANCELLED` | 使用者取消 | Job status `cancelled`；若已有 partial result，`GET /api/jobs/{id}/result` 可回傳 |
 | `WRITE_LOCK_BUSY` | 已有 backtest job 在跑 | 409 |
 
 #### 10-F：AI 問答頁
@@ -3423,9 +3426,206 @@ data: { "window_id": 2, "total_windows": 6, "phase": "done",
 
 #### 10-G：設定頁 + 全局整合
 
-**Secrets 安全規則：** GET 永不回傳 API key 值；API key 只能透過 `PUT /api/config/secrets` write-only 寫入；`PUT /api/config` 走 schema whitelist；前端 API key 輸入框永遠為空，只顯示設定狀態。
+10-G **拆為兩個子階段交付**：**10-G-1（基礎設施先行）→ 10-E（4 段）→ 10-G-2（設定頁主功能）**。10-G-1 的存在是為了讓 10-E 4 個 sub-stage 共用同一套 toast / skeleton / error boundary / command palette，避免每段各寫 inline banner 後再回頭重構。10-G-2 才做設定頁本身的主功能（API key / 策略 preset CRUD / 主題切換 / AI toggle）。
 
-**全局整合：** Command Palette (Ctrl+K)、鍵盤快捷鍵、Toast 通知、Error Boundary、Loading skeleton。
+**Secrets 安全規則（10-G-2 適用）：** GET 永不回傳 API key 值；API key 只能透過 `PUT /api/config/secrets` write-only 寫入；`PUT /api/config` 走 schema whitelist；前端 API key 輸入框永遠為空，只顯示設定狀態。
+
+##### 10-G-1：基礎設施（Toast / Error Boundary / Skeleton / Command Palette）
+
+**範圍：** 提供 10-E 4 段所共同依賴的 4 種全局元件與 hook，並把 10-C-2 已落地的 banner 統一遷移為 toast；不動設定頁主功能（仍是 10-B 留下的 placeholder）。
+
+**前置決定：**
+- Toast 套件用 **`sonner`**（與規格 V2.3 寫的 shadcn Sonner 一致）；拔除 [web/package.json](web/package.json) 已裝但未使用的 `@radix-ui/react-toast`
+- Toast 預設位置 **右下**、停留 **3 秒**，三個變體：**success / error / info**（與 [開發設計方針.md:7259-7273](開發設計方針.md:7259) 14 條 10-E toast 文案表對齊；Sonner 原生另支援 warning / loading / message，本階段不主動使用）
+- Error Boundary **只接 React 例外**（render / lifecycle / hook 拋錯）；API 錯誤一律走 toast，不觸發 Error Boundary
+- Command Palette 採 **`cmdk`** 套件（shadcn Command 預設底層），不自製
+- 主題切換套件 **暫不裝**（`next-themes` 留到 10-G-2 真正做主題切換時再裝）；10-G-1 僅提供前述 4 種元件
+
+**新增 / 修改檔案：**
+
+| 檔案 | 動作 | 說明 |
+|:---|:---|:---|
+| `web/package.json` | 修改 | 新增 `sonner` 與 `cmdk`，移除 `@radix-ui/react-toast` |
+| `web/src/components/providers.tsx` | 新增 | 全局 Provider wrapper（Sonner `<Toaster>` + CommandPalette mount + Theme provider 預留位） |
+| `web/src/app/layout.tsx` | 修改 | 用 `<Providers>` 包住整個 app 樹 |
+| `web/src/hooks/use-toast.ts` | 新增 | 封裝 `sonner` 為 `{ success, error, info, dismiss }` 介面（與 10-E 規格 [開發設計方針.md:6930](開發設計方針.md:6930) 對齊） |
+| `web/src/components/error-boundary.tsx` | 新增 | React class 元件，接 `fallback` prop；附預設 fallback UI `<DefaultErrorFallback />` |
+| `web/src/components/skeletons/index.tsx` | 新增 | 匯出 `CardSkeleton` / `ChartSkeleton` / `TableSkeleton` 三個 shadcn `Skeleton` 變體 |
+| `web/src/components/command-palette.tsx` | 新增 | Command Palette 主元件（cmdk 包裝），Ctrl+K / Cmd+K 開啟、Esc 關閉、↑↓ 導航、Enter 觸發 |
+| `web/src/hooks/use-command-palette.ts` | 新增 | 提供 `useCommandPaletteEntry({ id, label, action, group? })` hook（mount 時註冊、unmount 自動清除）與內部 store |
+| `web/src/components/data/data-page-client.tsx` | 修改 | 把 10-C-2「全部更新 / 全部重建 / 新增 / 動作欄·更新 / DELETE」5 處 banner / inline 訊息全部改為 `useToast()` 呼叫 |
+| `web/src/components/sidebar.tsx` | 修改 | 註冊 5 個頁面跳轉的 Command Palette entry（個股分析 / 資料管理 / 回測 / AI 問答 / 設定） |
+| `web/src/components/stock-selector.tsx` | 修改 | 註冊「股票搜尋」群組 entry（資料來源走 `/api/data/symbols`） |
+| `tests/test_api/` | （無新增） | 10-G-1 不動後端 |
+
+**移除：**
+- `@radix-ui/react-toast`（10-D 時為 Radix Tooltip 連帶裝入；Tooltip 在 `@radix-ui/react-tooltip` 不受影響）
+
+**`useToast()` 介面合約：**
+
+```typescript
+// web/src/hooks/use-toast.ts
+import { toast } from "sonner";
+
+export type ToastApi = {
+  success: (message: string, opts?: { duration?: number }) => void;
+  error:   (message: string, opts?: { duration?: number }) => void;
+  info:    (message: string, opts?: { duration?: number }) => void;
+  dismiss: (id?: string | number) => void;
+};
+
+export function useToast(): ToastApi {
+  return {
+    success: (msg, opts) => toast.success(msg, { duration: opts?.duration ?? 3000 }),
+    error:   (msg, opts) => toast.error(msg,   { duration: opts?.duration ?? 3000 }),
+    info:    (msg, opts) => toast.info(msg,    { duration: opts?.duration ?? 3000 }),
+    dismiss: (id) => toast.dismiss(id),
+  };
+}
+```
+
+**`<Toaster>` 設定：** `position="bottom-right"`、`duration={3000}`、`richColors`、`closeButton`。
+
+**Error Boundary 行為：**
+- 接 React render / lifecycle / hook 例外
+- 不接：fetch 失敗、SSE 中斷、Promise rejection（這些走 toast）
+- fallback UI 含「重置」按鈕，按下後呼叫 `resetErrorBoundary` 並 `router.refresh()`
+- 開發模式下顯示 `error.stack`；production 只顯示 `error.message`
+
+**Command Palette 規格：**
+- 觸發：`Ctrl+K`（Windows / Linux）、`Cmd+K`（macOS）；Esc 關閉
+- 內建 entries：
+  - **頁面群組**：個股分析 / 資料管理 / 回測 / AI 問答 / 設定（由 Sidebar 在 mount 時註冊）
+  - **股票搜尋群組**：使用者打字時 debounce 200ms 後查 `GET /api/data/symbols?market={current}&q={input}`（若後端不支援 `q`，則 client-side filter），最多顯示 10 筆，Enter 跳轉 `/dashboard?symbol={selected}`
+- `useCommandPaletteEntry` lifecycle：mount 時 push、unmount 時 pop；同一 page mount 多次以 `id` 去重
+- 視覺：shadcn Dialog overlay + Command 主體；fuzzy 比對用 cmdk 內建
+
+**鍵盤快捷鍵約定：**
+- `Ctrl+K` / `Cmd+K`：開啟 Command Palette
+- `/`：聚焦 Command Palette（先開啟、自動 focus input）—— **採用「開啟並 focus」而非「聚焦頁內某個搜尋框」**；目前各頁的 StockSelector 不會被 `/` 觸發
+- `Esc`：關閉 Command Palette / 關閉 Dialog（沿用 Radix 既有行為）
+
+**驗收條件：**
+1. 觸發 `useToast().success("測試")` 後右下角出現 3 秒綠色 toast
+2. Provider 樹包住整個 app（任何 client component 都能呼叫 `useToast`）
+3. React 元件刻意 throw 後 Error Boundary 顯示 fallback UI；點「重置」後頁面回正常
+4. `CardSkeleton` / `ChartSkeleton` / `TableSkeleton` 三變體可獨立 import 並渲染
+5. `Ctrl+K` 開啟 Palette；輸入頁面關鍵字後 ↑↓ 選擇、Enter 跳轉
+6. `/` 開啟 Palette 並 focus input
+7. 股票搜尋群組可搜到當前 market 的 symbol、Enter 跳轉 dashboard
+8. 10-C-2 既有 5 處 banner 完全替換為 toast，inline banner 元件不再出現於 `data-page-client.tsx`（grep 確認）
+9. `@radix-ui/react-toast` 從 `package.json` 移除；`pnpm install` 後 `node_modules` 不再含此套件
+10. `web/` `tsc --noEmit` 0 errors；`pnpm test` 全綠（既有 + 10-G-1 新增測試）
+
+**10-G-1 結束後尚未實作的 10-G-2 範圍：**
+- API Key write-only UI 與 secrets 狀態顯示
+- 策略 preset CRUD UI + 後端 `POST /api/config/strategies` / `DELETE /api/config/strategies/{name}` / `POST /api/config/strategies/restore`
+- 主題切換 Dark↔Light（接 `next-themes`）
+- AI toggle disabled + tooltip
+- AI off 時 `/api/config` PUT 強制 `ai.enabled=false` 的 whitelist 加固
+
+##### 10-G-2：設定頁主功能（API Key / 策略 preset / 主題 / AI toggle）
+
+**前置：** 10-G-1 已驗收完成。
+
+**範圍：** 把 [web/src/app/settings/page.tsx](web/src/app/settings/page.tsx) 從 placeholder 改為四分區的完整設定頁，並補上後端策略 preset 寫入端點。
+
+**新增 / 修改檔案：**
+
+| 檔案 | 動作 | 說明 |
+|:---|:---|:---|
+| `api/routers/config.py` | 修改 | 新增 `POST /api/config/strategies`（upsert by name）、`DELETE /api/config/strategies/{name}`、`POST /api/config/strategies/restore`；既有 GET 不變 |
+| `src/services/config_service.py` | 修改 | 新增 `delete_strategy_preset_by_name(name)` 給端點用（既有 `upsert_strategy_preset` / `restore_strategy_defaults` 可直接重用） |
+| `web/package.json` | 修改 | 新增 `next-themes` |
+| `web/src/components/providers.tsx` | 修改 | 加入 `<ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>` |
+| `web/src/app/settings/page.tsx` | 修改 | 完整四分區設定頁實作 |
+| `web/src/components/settings/secrets-section.tsx` | 新增 | API Key 區（5 個 provider：openai / anthropic / gemini / finmind / google） |
+| `web/src/components/settings/strategy-presets-section.tsx` | 新增 | 策略 preset 列表 + 新增 / 編輯 / 刪除 Dialog + 重置預設按鈕 |
+| `web/src/components/settings/theme-section.tsx` | 新增 | Dark / Light 切換 toggle（搭配 `next-themes`） |
+| `web/src/components/settings/ai-toggle-section.tsx` | 新增 | AI 開關 toggle（`disabled` 視 secrets 狀態 + 10-F-2 是否完成而定；目前永遠 disabled + tooltip「AI 功能尚未開放」） |
+| `web/src/hooks/use-config.ts` | 新增 | SWR hook：讀 `/api/config`、`/api/config/secrets/status`、`/api/config/strategies` |
+| `tests/test_api/test_config_api.py` | 修改 | 補 strategy preset 端點測試（POST upsert / DELETE by name / POST restore） |
+| `tests/test_services/test_config_svc.py` | 修改 | 補 `delete_strategy_preset_by_name` 測試（含 name 不存在 idempotent） |
+
+**主題系統收斂（與規格 [3438-3440](量化交易系統規格書_shellpig版.md:3438) 一致）：**
+- 從舊 Streamlit 6 套主題收斂為 **Dark / Light 二選一**（不移植 6 套）
+- shadcn/ui 原生 dark/light 雙模式，透過 `class="dark"` 切換
+- K 線圖顏色依市場動態切換 CSS 變數 `--chart-up` / `--chart-down`（10-D 已實作，不變）
+- 預設 `dark`；不接 `system` 自動偵測（`enableSystem={false}`），避免使用者 OS 主題切換時 K 線顏色閃動
+
+**策略 preset 端點規格：**
+
+| 方法 | 路徑 | Request Body | Response | 行為 |
+|:---|:---|:---|:---|:---|
+| GET | `/api/config/strategies` | — | `{ data: [{name, strategy, params, market}, ...], meta: {count: N} }` | 既有，不變 |
+| POST | `/api/config/strategies` | `{ "preset": { name, strategy, params, market } }` | `201 { data: { upserted: true, name }, meta: {} }` | upsert by name；name 已存在則覆蓋 |
+| DELETE | `/api/config/strategies/{name}` | — | `204` | idempotent；name 不存在仍回 204 |
+| POST | `/api/config/strategies/restore` | — | `200 { data: { count: N }, meta: {} }` | 復原為 `DEFAULT_STRATEGY_PRESETS` |
+
+**策略 preset JSON schema 範例：**
+
+```json
+{
+  "name": "MA 20/60 台積電",
+  "strategy": "moving_average_cross",
+  "params": { "short_window": 20, "long_window": 60 },
+  "market": "tw"
+}
+```
+
+`strategy` 欄位接受值：`moving_average_cross` / `rsi` / `kd_cross` / `macd_cross` / `bollinger_band` / `bias` / `donchian_breakout` / `dollar_cost_averaging`（沿用 [src/core/strategy_config.py](src/core/strategy_config.py) 既有定義）。
+
+**錯誤碼：**
+
+| Code | HTTP | 觸發 |
+|:---|:---|:---|
+| `INVALID_PRESET` | 422 | `normalize_strategy_preset` 拋例外（缺欄、參數型別錯、strategy 不在 enum） |
+| `UNKNOWN_PROVIDER` | 422 | `PUT /api/config/secrets` 帶不認得的 provider 名（既有錯誤碼，不變） |
+| `WHITELIST_REJECTED` | 422 | `PUT /api/config` 帶不在 whitelist 的 key（既有，不變） |
+
+**設定頁分區結構：**
+
+```
+SettingsPage
+├── SecretsSection           — API Key 5 個 provider（openai/anthropic/gemini/finmind/google）
+│   ├── 顯示「已設定 / 未設定」狀態
+│   ├── 輸入框永遠為空（重新填寫即覆寫）
+│   └── 「儲存」按鈕觸發 PUT /api/config/secrets
+├── StrategyPresetsSection   — 策略 preset 列表
+│   ├── 顯示既有 preset（name / strategy / params summary / market）
+│   ├── 「新增」按鈕 → Dialog 輸入 preset → POST upsert
+│   ├── 「編輯」按鈕 → Dialog 預填 → POST upsert 覆蓋
+│   ├── 「刪除」按鈕 → 二次確認 → DELETE by name
+│   └── 「重置預設」按鈕 → 二次確認 → POST restore
+├── ThemeSection             — Dark / Light 切換
+│   └── `next-themes` toggle（即時生效）
+└── AiToggleSection          — AI 開關
+    ├── `<Switch disabled>` + Tooltip「AI 功能尚未開放（等待 10-F-2）」
+    └── 顯示目前後端 ai.enabled 狀態（read-only）
+```
+
+**API key 安全規則重申：**
+- GET `/api/config` 回傳的 ai 區塊永遠 mask 為 `"***configured***"` 或不出現
+- 前端 secrets 輸入框預設值為空字串、`autocomplete="off"`、`type="password"`
+- 提交時送 `PUT /api/config/secrets`，後端寫 `.env`，**永不回傳 key 值**
+- 狀態顯示透過 `GET /api/config/secrets/status` 得 boolean
+
+**驗收條件：**
+1. SettingsPage 顯示 4 個分區
+2. **Secrets**：5 個 provider 輸入框與「已設定 / 未設定」狀態顯示；輸入後「儲存」觸發 PUT；toast「API Key 已更新」
+3. **Strategy Preset**：列表顯示既有 preset；「新增」Dialog 輸入後 POST，toast「已新增策略：{name}」；「編輯」覆蓋同 name；「刪除」二次確認後 DELETE，toast「已刪除策略：{name}」；「重置預設」二次確認後 POST restore，toast「已重置為預設 8 組策略」
+4. **Theme**：Dark / Light toggle 即時生效；切換時 toast 不出現（靜默切換）
+5. **AI toggle**：永遠 disabled + tooltip「AI 功能尚未開放」；後端 `ai.enabled` 狀態顯示為 read-only chip
+6. 後端 `POST /api/config/strategies` 帶 `preset.name = "MA 20/60"` 後 GET 可看到；再 POST 同 name 不同 params 是覆蓋而非新增
+7. 後端 `DELETE /api/config/strategies/不存在` 仍回 204
+8. 後端 `POST /api/config/strategies/restore` 回 200 並把 `config.yaml` `strategies` 段還原為 `DEFAULT_STRATEGY_PRESETS`
+9. 後端 `POST /api/config/strategies` 帶不合法 preset（如 strategy 不在 enum）回 422 + `INVALID_PRESET`
+10. API key 任何時候不出現在 GET 回傳；瀏覽器 DevTools network 無 key 明文
+11. `web/` `tsc --noEmit` 0 errors；`pnpm test` 全綠；後端 `pytest tests/test_api/test_config_api.py tests/test_services/test_config_svc.py` 全綠
+
+**10-G-2 結束後的範圍邊界：**
+- 不做：i18n / 字體大小 / 緊湊模式 / 自訂主題色 / 鍵盤快捷鍵自訂
+- 不做：策略 preset 拖曳排序、複製、匯入匯出（直接編 `config.yaml` 即可）
 
 #### 10-H：舊 UI 移除與收尾
 
