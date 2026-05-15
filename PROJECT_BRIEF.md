@@ -219,7 +219,7 @@ risk:
 | 10-A | ✅ 完成 | 服務層抽離 + FastAPI 後端骨架：`src/services/` 4 個 service、`api/` FastAPI app + CORS + health + config + data/symbols + Job manager（write lock、TTL）；舊 Streamlit UI 改呼叫 services 行為不變；服務層 44 passed + API 17 passed + 全專案 508 passed |
 | 10-B | ✅ 完成 | Next.js 前端骨架：`web/` Next.js 15.3 + React 19 + TS 5 + Tailwind v4 + SWR + Lightweight Charts；Sidebar 5 頁導航（PC 左側 240px / Mobile 底部 Tab Bar）、Dark/Light 主題、api-client、市場切換、股票選擇器、4 型別檔、formatters；Vitest 33 passed + 全專案 508 passed；手動驗收 10-B-1~6 全數通過 |
 | 10-C-1 | ✅ 完成 | 資料管理頁 stage-1（列表 + DELETE）：DataTable 顯示 **6 欄**（代碼 / 名稱 / 區間 / K 棒數 / 狀態 / 動作；「大小」欄已從規格移除）、單步確認 Dialog、三態 badge（fresh/stale/missing，基於 ISO-week businessDaysBetween）、美股 raw+adj 標記 + callout。stage-2 按鈕（全部更新/全部重建/動作欄·更新/+ 新增標的）皆 disabled + tooltip「Phase 10-C-2 開發中」。tsc 0 errors + vitest 61 pass（+27：StatusBadge 4 + DeleteConfirmDialog 8 + trading-calendar 13 + 既有 34）+ pytest 39 pass（+14：test_data_api.py）。**Known limitation**：「名稱」欄目前 fallback 至 symbol code（後端 `list_symbols` 暫不補 name 欄；若需中文名稱另議） |
-| 10-C-2 | 📋 規格已定，待實作 | 資料管理頁 stage-2（更新/重建/新增）：擴充 `api/job_manager.py` dispatcher 支援 `data_update` / `data_rebuild` job type、單檔 + 批次模式、SSE 進度推送（progress + result event）、單檔失敗不中斷整批；前端「全部更新」單一進度條、「全部重建」二次確認 Dialog、「+ 新增標的」彈窗（複用 StockSelector）、批次失敗 toast 報告 |
+| 10-C-2 | ✅ 完成 | 資料管理頁 stage-2（更新/重建/新增）：擴充 `api/routers/jobs.py` dispatcher 支援 `data_update` / `data_rebuild` job type（單檔 + all 批次模式、SSE progress + result event、單檔失敗不中斷整批、write lock 互斥）；前端 ProgressBar 全局進度條、RebuildConfirmDialog 二次確認、AddSymbolDialog（複用 StockSelector）、完成後 banner 列出 succeeded / failed 清單。tsc 0 errors + vitest **11 files / 87 tests pass**（10-C-2 補 3 檔 / 26 cases）+ pytest **52 passed**（+13 in `test_data_jobs_api.py`）。**邊界決定**：失敗清單用 banner 取代 toast，toast 系統留待 10-G 全局整合 |
 | 10-D | ✅ 完成 | 個股分析儀表板（Lightweight Charts）：3 輪驗收完成（round-3 13 項基本修正 + round-4 6 項緊湊化 + round-5 三欄佈局 50:25:25）；K 線 + MA + KD/RSI/MACD 副圖、crosshair tooltip、S/R 壓力支撐線、Pattern 長描述 tooltip、Radix Tooltip；tsc 0 errors + vitest 34 pass + pytest 25 pass |
 | 10-E~H | 📋 規格已定，待實作 | 10-E 回測工作台（Job + SSE）、10-F AI 問答（SSE 串流）、10-G 設定 + 全局整合、10-H 舊 UI 移除（測試遷移檢查表不可跳過） |
 
@@ -227,7 +227,7 @@ risk:
 
 見 `驗證後已知問題.md`（每次必讀）。
 
-主線：Phase 9 全部完成。Phase 10-A 服務層 + FastAPI 骨架、10-B Next.js 前端骨架、**10-C-1 資料管理頁列表 + DELETE**、**10-D 個股分析儀表板（3 輪驗收完成）** 均已完成。10-C-2（更新/重建/新增，需擴充 Job dispatcher）規格已定、待實作；10-E~H 規格已定，待實作。
+主線：Phase 9 全部完成。Phase 10-A 服務層 + FastAPI 骨架、10-B Next.js 前端骨架、**10-C-1 資料管理頁列表 + DELETE**、**10-C-2 資料管理頁更新/重建/新增（SSE + Job dispatcher）**、**10-D 個股分析儀表板（3 輪驗收完成）** 均已完成。**Phase 10-C 全段落結束**；10-E~H 規格已定，待實作。
 
 2026-05-14 狀態：
 - 最新 commit 請以 `git log --oneline -1` 為準；本 brief 已改為不硬寫最新 hash，避免文件在 commit 後立即失真。
