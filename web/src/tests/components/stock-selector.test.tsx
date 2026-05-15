@@ -4,6 +4,10 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { describe, it, expect, vi } from "vitest";
 import { StockSelector } from "@/components/stock-selector";
 
+vi.mock("@/hooks/use-command-palette", () => ({
+  useCommandPaletteStockSource: () => undefined,
+}));
+
 describe("StockSelector", () => {
   it("renders with TW placeholder by default", () => {
     render(

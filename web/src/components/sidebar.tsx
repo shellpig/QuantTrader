@@ -5,7 +5,7 @@
 // Mobile (<lg): fixed bottom tab bar with 5 icons
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   BarChart3,
   TrendingUp,
@@ -14,6 +14,7 @@ import {
   Settings,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useCommandPaletteEntry } from "@/hooks/use-command-palette";
 
 interface NavItem {
   label: string;
@@ -32,6 +33,38 @@ const NAV_ITEMS: NavItem[] = [
 
 export function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
+
+  useCommandPaletteEntry({
+    id: "nav-dashboard",
+    group: "pages",
+    label: "個股分析",
+    action: () => router.push("/dashboard"),
+  });
+  useCommandPaletteEntry({
+    id: "nav-data",
+    group: "pages",
+    label: "資料管理",
+    action: () => router.push("/data"),
+  });
+  useCommandPaletteEntry({
+    id: "nav-backtest",
+    group: "pages",
+    label: "回測研究",
+    action: () => router.push("/backtest"),
+  });
+  useCommandPaletteEntry({
+    id: "nav-ai",
+    group: "pages",
+    label: "AI 問答",
+    action: () => router.push("/ai"),
+  });
+  useCommandPaletteEntry({
+    id: "nav-settings",
+    group: "pages",
+    label: "設定",
+    action: () => router.push("/settings"),
+  });
 
   return (
     <>

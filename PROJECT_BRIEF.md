@@ -2,7 +2,7 @@
 
 本文件供新 session 快速了解專案全貌，取代逐份閱讀全部規格文件。需要深入某區段時，按行號索引讀取對應文件。
 
-最後更新：2026-05-15
+最後更新：2026-05-16
 
 ---
 
@@ -227,7 +227,7 @@ risk:
 | 10-E-4 | 📋 規格已定，待實作 | Walk-Forward：Summary / Window / Stability 三表 + 巢狀 SSE 進度（window × IS sweep）+ 雙 CSV 匯出（window + stability） |
 | 10-F-1 | ✅ 完成 | AI 問答頁 UI shell + 後端 lock（**不接 LLM**）：完整 chat UI、免責聲明 gate（localStorage `ai_chat.disclaimer_accepted_v1`）、`react-markdown` + remark-gfm、Mock 逐字串流（25ms / char）、訊息歷史刷新即清；`GET /api/ai/status` 回 `feature_locked`、`POST /api/ai/chat` 回 503；Sidebar AI 入口加灰色「後續開放」徽章；package version py + web + FastAPI 三處同步 bump 至 `0.2.0`；文件 V2.4。tsc 0 errors + vitest **17 files / 124 tests pass**（+31：disclaimer-gate 5 / message-bubble 10 / chat-page-client 8 / use-ai-status 3 / sidebar 5）+ pytest **test_api 59 passed**（+7 in `test_ai_api.py`） |
 | 10-F-2 | ⏸ 延後 | AI 問答頁接 LLM：補 `AIAdvisor.stream_chat()` 三 adapter（Anthropic / OpenAI / Gemini）+ 真實 SSE token 串流；**不卡 10-G / 10-H** |
-| 10-G-1 | 📋 規格已定，待實作 | 基礎設施先行：`sonner` toast + 10-C-2 banner 遷移、React Error Boundary（只接 render/lifecycle/hook 例外）、`CardSkeleton` / `ChartSkeleton` / `TableSkeleton`、`cmdk` Command Palette（頁面跳轉 + 股票搜尋）；10-E 4 段前置 |
+| 10-G-1 | ✅ 完成 | 基礎設施先行：新增 `sonner` toast + 10-C-2 banner 遷移、React Error Boundary（只接 render/lifecycle/hook 例外）、`CardSkeleton` / `ChartSkeleton` / `TableSkeleton`、`cmdk` Command Palette（頁面跳轉 + 股票搜尋）；移除 `@radix-ui/react-toast`；補 7 檔前端測試與單檔更新/新增失敗 toast regression。tsc 0 errors + vitest **24 files / 148 tests passed** |
 | 10-G-2 | 📋 規格已定，待實作（10-E 後） | 設定頁主功能：API key write-only UI（5 provider）、策略 preset CRUD（upsert/delete/restore by name）、Dark↔Light 主題切換（`next-themes`、不接 system）、AI toggle disabled + tooltip |
 | 10-H | 📋 規格已定，待實作 | 舊 Streamlit UI 移除（測試遷移檢查表不可跳過；`src/ai/advisor.py` 必須保留供 10-F-2 與 dashboard analysis 使用） |
 
@@ -235,10 +235,11 @@ risk:
 
 見 `驗證後已知問題.md`（每次必讀）。
 
-主線：Phase 9 全部完成（含 9-F 手動驗收）。Phase 10-A 服務層 + FastAPI 骨架、10-B Next.js 前端骨架、**10-C-1 資料管理頁列表 + DELETE**、**10-C-2 資料管理頁更新/重建/新增（SSE + Job dispatcher）**、**10-D 個股分析儀表板（3 輪驗收完成）**、**10-F-1 AI 問答頁 UI shell + 後端 lock** 均已完成。**Phase 10-C 全段落結束**；10-F 已拆成 10-F-1（已完成）與 10-F-2（接 LLM、延後且不卡 10-G / 10-H）。**10-E 已拆成 10-E-1 / 10-E-2 / 10-E-3 / 10-E-4 四段，10-G 已拆成 10-G-1 / 10-G-2（規格 V2.6 已記載）**。**實作順序：10-G-1（基礎設施先行）→ 10-E-1 → 10-E-2 → 10-E-3 → 10-E-4 → 10-G-2（設定頁主功能）→ 10-H**；10-E 4 段都依賴 10-G-1 的 Toast / Error Boundary / Loading Skeleton / Command Palette。下一步預計實作 10-G-1。
+主線：Phase 9 全部完成（含 9-F 手動驗收）。Phase 10-A 服務層 + FastAPI 骨架、10-B Next.js 前端骨架、**10-C-1 資料管理頁列表 + DELETE**、**10-C-2 資料管理頁更新/重建/新增（SSE + Job dispatcher）**、**10-D 個股分析儀表板（3 輪驗收完成）**、**10-F-1 AI 問答頁 UI shell + 後端 lock**、**10-G-1 全局基礎設施（toast / error boundary / skeleton / command palette）** 均已完成。**Phase 10-C 全段落結束**；10-F 已拆成 10-F-1（已完成）與 10-F-2（接 LLM、延後且不卡 10-G / 10-H）。**10-E 已拆成 10-E-1 / 10-E-2 / 10-E-3 / 10-E-4 四段，10-G 已拆成 10-G-1 / 10-G-2（規格 V2.6 已記載）**。**後續實作順序：10-E-1 → 10-E-2 → 10-E-3 → 10-E-4 → 10-G-2（設定頁主功能）→ 10-H**；10-E 4 段共用 10-G-1 的 Toast / Error Boundary / Loading Skeleton / Command Palette。下一步預計實作 10-E-1。
 
 2026-05-15 狀態：
 - 最新 commit 請以 `git log --oneline -1` 為準。
+- **10-G-1 實作 + 驗證完成**：新增 `web/src/components/providers.tsx`、`error-boundary.tsx`、`command-palette.tsx`、`skeletons/index.tsx`、`hooks/use-toast.ts`、`hooks/use-command-palette.ts`；`layout.tsx` 接入 Providers；Sidebar 註冊 5 個頁面 command entry；StockSelector 註冊股票搜尋來源；資料管理頁 10-C-2 完成/錯誤 banner 改 toast，並補單檔更新失敗與新增標的失敗 toast regression。驗證：`.\node_modules\.bin\tsc.CMD --noEmit` 通過；`pnpm test` 為 **24 files / 148 tests passed**；聚焦 `data-page-client.test.tsx` 為 **7 passed**。
 - **10-E 規格拆分為 4 段（V2.5，V2.6 收斂合約）**：10-E-1（單次）/ 10-E-2（批次）/ 10-E-3（掃描）/ 10-E-4（WFA），規格、設計方針、測試指南三份文件已同步更新。明確不做老 Streamlit「歷史結果」tab；10-E-2 比較表定為 **10 欄**；Heatmap 採排名表 + 2D 自製 CSS Grid（僅 2 參數時）；多策略 equity 疊圖用 lightweight-charts 多 LineSeries；WFA 雙 CSV（window + stability）由後端產 blob、前端 `<a download>` 下載；不引入新前端套件（無 Recharts / nivo / heatmap-grid）。取消後 job status 保持 `cancelled`，但 partial result 可由 `GET /api/jobs/{id}/result` 讀取；CSV 匯出 query 由 `api/routers/jobs.py` 的既有 result endpoint 處理；fetch / SSE / invalid JSON 走 toast + 頁內 error panel，不交給 Error Boundary。
 - **10-G 規格拆分為 2 段（V2.6）**：10-G-1（基礎設施先行：`sonner` toast + 10-C-2 banner 遷移、Error Boundary、Loading Skeleton、Command Palette）與 10-G-2（設定頁主功能：API key write-only UI、策略 preset CRUD by name、Dark↔Light 主題切換、AI toggle disabled + tooltip）。執行順序為 **10-G-1 → 10-E-1 → 10-E-2 → 10-E-3 → 10-E-4 → 10-G-2 → 10-H**。10-G-1 不裝 `next-themes`，10-G-2 才裝；Error Boundary 只接 React render / lifecycle / hook 例外；API 錯誤一律走 toast。
 - **9-F 手動驗收完成**：9-F-1~9-F-12 全數通過，Phase 9 全階段（含手動驗收）正式收束。

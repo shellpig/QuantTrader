@@ -4,8 +4,13 @@
 import { render, screen } from "@testing-library/react";
 import { describe, it, expect, vi } from "vitest";
 
-// Mock next/navigation (usePathname)
-vi.mock("next/navigation", () => ({ usePathname: () => "/dashboard" }));
+const mockPush = vi.fn();
+
+// Mock next/navigation (usePathname + useRouter)
+vi.mock("next/navigation", () => ({
+  usePathname: () => "/dashboard",
+  useRouter: () => ({ push: mockPush }),
+}));
 
 // Mock next/link
 vi.mock("next/link", () => ({
@@ -15,6 +20,10 @@ vi.mock("next/link", () => ({
 }));
 
 import { Sidebar } from "@/components/sidebar";
+
+vi.mock("@/hooks/use-command-palette", () => ({
+  useCommandPaletteEntry: () => undefined,
+}));
 
 describe("Sidebar", () => {
   it("renders all 5 nav items", () => {

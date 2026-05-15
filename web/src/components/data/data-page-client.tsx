@@ -4,8 +4,8 @@
 // 10-C-1: symbol list, status badges, DELETE with single-step dialog
 // 10-C-2: 全部更新 / 全部重建 / 動作欄·更新 (all via Job+SSE) / + 新增標的
 
-import { useState, useMemo, useCallback } from "react";
-import { Search, Plus, RefreshCw, Hammer, AlertTriangle, CheckCircle, XCircle } from "lucide-react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
+import { Search, Plus, RefreshCw, Hammer, AlertTriangle } from "lucide-react";
 import { MarketSwitcher } from "@/components/market-switcher";
 import { DataTable } from "@/components/data/DataTable";
 import { DeleteConfirmDialog } from "@/components/data/DeleteConfirmDialog";
@@ -17,19 +17,28 @@ import { useDataJob } from "@/lib/hooks/useDataJob";
 import { apiDelete } from "@/lib/api-client";
 import type { SymbolRow } from "@/types/data";
 import type { Market } from "@/types/market";
+import { useToast } from "@/hooks/use-toast";
+
+type DataJobIntent =
+  | { type: "update_all" }
+  | { type: "rebuild_all" }
+  | { type: "add_symbol"; symbol: string }
+  | { type: "update_symbol"; symbol: string };
 
 export function DataPageClient() {
+  const toast = useToast();
   const [market, setMarket] = useState<Market>("tw");
   const [search, setSearch] = useState("");
 
   // DELETE state
   const [deleteRow, setDeleteRow] = useState<SymbolRow | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   // Dialog toggles
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [showRebuildDialog, setShowRebuildDialog] = useState(false);
+  const [jobIntent, setJobIntent] = useState<DataJobIntent | null>(null);
+  const notifyKeyRef = useRef<string | null>(null);
 
   const { rows, isLoading, error: listError, mutate } = useDataList(market);
 
@@ -60,13 +69,13 @@ export function DataPageClient() {
   async function handleDeleteConfirm() {
     if (!deleteRow) return;
     setIsDeleting(true);
-    setDeleteError(null);
     try {
       await apiDelete(`/api/data/${deleteRow.market}/${deleteRow.symbol}`);
       setDeleteRow(null);
       mutate();
+      toast.success(`已刪除：${deleteRow.symbol}`);
     } catch (e) {
-      setDeleteError(e instanceof Error ? e.message : "刪除失敗，請稍後再試");
+      toast.error(e instanceof Error ? e.message : "刪除失敗，請稍後再試");
     } finally {
       setIsDeleting(false);
     }
@@ -75,13 +84,13 @@ export function DataPageClient() {
   function handleDeleteClose() {
     if (isDeleting) return;
     setDeleteRow(null);
-    setDeleteError(null);
   }
 
   // ── UPDATE (single symbol) ────────────────────────────────────────────────
 
   const handleUpdateSymbol = useCallback(
     async (row: SymbolRow) => {
+      setJobIntent({ type: "update_symbol", symbol: row.symbol });
       await startJob("data_update", { market: row.market, symbols: [row.symbol] });
     },
     [startJob],
@@ -90,6 +99,7 @@ export function DataPageClient() {
   // ── BATCH UPDATE (全部更新) ────────────────────────────────────────────────
 
   async function handleUpdateAll() {
+    setJobIntent({ type: "update_all" });
     await startJob("data_update", { market, all: true });
   }
 
@@ -97,18 +107,82 @@ export function DataPageClient() {
 
   async function handleRebuildConfirm() {
     setShowRebuildDialog(false);
+    setJobIntent({ type: "rebuild_all" });
     await startJob("data_rebuild", { market, all: true });
   }
 
   // ── ADD SYMBOL (+ 新增標的) ────────────────────────────────────────────────
 
   async function handleAddSubmit(symbol: string) {
+    setJobIntent({ type: "add_symbol", symbol });
     await startJob("data_update", { market, symbols: [symbol] });
   }
 
-  // ── Job result banner dismiss ─────────────────────────────────────────────
+  // ── Job complete/error toast ──────────────────────────────────────────────
 
-  const jobDone = jobStatus === "complete" || jobStatus === "error";
+  useEffect(() => {
+    if (jobStatus === "complete") {
+      const failedSymbols = failed.map((item) => item.symbol);
+      const completeKey = `complete:${jobIntent?.type ?? "none"}:${succeeded.join(",")}:${failedSymbols.join(",")}`;
+      if (notifyKeyRef.current === completeKey) {
+        return;
+      }
+
+      const matchSymbol = (value: string, target: string) =>
+        value.trim().toUpperCase() === target.trim().toUpperCase();
+      const getFailedReason = (target: string) =>
+        failed.find((item) => matchSymbol(item.symbol, target))?.error;
+
+      if (jobIntent?.type === "add_symbol") {
+        const symbol = jobIntent.symbol.toUpperCase();
+        const ok = succeeded.some((item) => matchSymbol(item, symbol));
+        if (ok) {
+          toast.success(`已新增標的：${symbol}`);
+        } else {
+          const reason = getFailedReason(symbol);
+          toast.error(reason ? `新增失敗：${symbol}（${reason}）` : `新增失敗：${symbol}`);
+        }
+      } else if (jobIntent?.type === "update_symbol") {
+        const symbol = jobIntent.symbol.toUpperCase();
+        const ok = succeeded.some((item) => matchSymbol(item, symbol));
+        if (ok) {
+          toast.success(`已更新：${symbol}`);
+        } else {
+          const reason = getFailedReason(symbol);
+          toast.error(reason ? `更新失敗：${symbol}（${reason}）` : `更新失敗：${symbol}`);
+        }
+      } else {
+        const actionLabel = jobIntent?.type === "rebuild_all" ? "重建" : "更新";
+        if (failed.length === 0) {
+          toast.success(`${actionLabel}完成：${succeeded.length} 個成功`);
+        } else {
+          if (succeeded.length > 0) {
+            toast.success(`${actionLabel}完成：${succeeded.length} 個成功`);
+          }
+          toast.error(
+            `${actionLabel}失敗：${failed.length} 檔（${failedSymbols.join("、")}）`,
+          );
+        }
+      }
+
+      notifyKeyRef.current = completeKey;
+      setJobIntent(null);
+      resetJob();
+      return;
+    }
+
+    if (jobStatus === "error" && jobError) {
+      const errorKey = `error:${jobIntent?.type ?? "none"}:${jobError}`;
+      if (notifyKeyRef.current !== errorKey) {
+        toast.error(jobError);
+        notifyKeyRef.current = errorKey;
+      }
+      setJobIntent(null);
+      resetJob();
+    }
+  }, [failed, jobError, jobIntent, jobStatus, resetJob, succeeded, toast]);
+
+  // ── Main render ───────────────────────────────────────────────────────────
 
   return (
     <div className="flex flex-col gap-4">
@@ -201,40 +275,10 @@ export function DataPageClient() {
         </div>
       )}
 
-      {/* ── Job result banner ── */}
-      {jobDone && jobStatus === "complete" && (
-        <div className="flex items-center justify-between rounded-md border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm">
-          <span className="flex items-center gap-2 text-emerald-300">
-            <CheckCircle className="h-4 w-4 shrink-0" />
-            完成：{succeeded.length} 個成功
-            {failed.length > 0 && `、${failed.length} 個失敗（${failed.map((f) => f.symbol).join("、")}）`}
-          </span>
-          <button onClick={resetJob} className="text-xs text-emerald-400 hover:text-emerald-200">
-            關閉
-          </button>
-        </div>
-      )}
-      {jobDone && jobStatus === "error" && jobError && (
-        <div className="flex items-center justify-between rounded-md border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm">
-          <span className="flex items-center gap-2 text-rose-300">
-            <XCircle className="h-4 w-4 shrink-0" />
-            {jobError}
-          </span>
-          <button onClick={resetJob} className="text-xs text-rose-400 hover:text-rose-200">
-            關閉
-          </button>
-        </div>
-      )}
-
       {/* ── List fetch error ── */}
       {listError && (
         <div className="rounded-md border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-300">
           讀取失敗：{listError.message ?? "無法連線至後端 API"}
-        </div>
-      )}
-      {deleteError && (
-        <div className="rounded-md border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-300">
-          刪除失敗：{deleteError}
         </div>
       )}
 

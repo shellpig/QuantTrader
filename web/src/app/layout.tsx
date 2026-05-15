@@ -5,6 +5,7 @@ import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { Sidebar } from "@/components/sidebar";
 import { ThemeProvider } from "@/components/theme-provider";
+import { Providers } from "@/components/providers";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-sans" });
 const mono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-mono" });
@@ -23,15 +24,17 @@ export default function RootLayout({
     <html lang="zh-TW" suppressHydrationWarning>
       <body className={`${inter.variable} ${mono.variable}`}>
         <ThemeProvider defaultTheme="dark">
-          <div className="min-h-screen flex">
-            <Sidebar />
-            {/* Main content — offset left on PC, bottom padding on mobile */}
-            <main className="flex-1 lg:pl-32 pb-16 lg:pb-0">
-              <div className="px-4 py-6">
-                {children}
-              </div>
-            </main>
-          </div>
+          <Providers>
+            <div className="min-h-screen flex">
+              <Sidebar />
+              {/* Main content — offset left on PC, bottom padding on mobile */}
+              <main className="flex-1 lg:pl-32 pb-16 lg:pb-0">
+                <div className="px-4 py-6">
+                  {children}
+                </div>
+              </main>
+            </div>
+          </Providers>
         </ThemeProvider>
       </body>
     </html>

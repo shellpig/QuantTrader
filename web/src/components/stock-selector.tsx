@@ -7,6 +7,7 @@
 import { useEffect, useState } from "react";
 import type { Market } from "@/types/market";
 import { cn } from "@/lib/utils";
+import { useCommandPaletteStockSource } from "@/hooks/use-command-palette";
 
 interface StockSelectorProps {
   market: Market;
@@ -28,6 +29,7 @@ export function StockSelector({
   className,
 }: StockSelectorProps) {
   const [inputValue, setInputValue] = useState(value);
+  useCommandPaletteStockSource(market);
 
   useEffect(() => {
     setInputValue(value);
