@@ -6,12 +6,13 @@ No Streamlit calls are made here.
 
 from __future__ import annotations
 
+import datetime
 from dataclasses import dataclass
 from typing import Any
 
 import pandas as pd
 
-from src.core.config import get_config
+from src.core.config import get_config, get_data_dir
 from src.core.market import normalize_market
 from src.data.cleaner import DataCleaner
 from src.data.fetcher import FinMindFetcher, IDataFetcher, YFinanceFetcher
@@ -57,6 +58,51 @@ class DataServiceError:
 
 
 # ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+_STOCK_INFO_CACHE_TTL_DAYS = 7
+
+
+def _load_symbol_names(market: str) -> dict[str, str]:
+    """Return {symbol: name} for the given market.
+
+    TW: lazy-loads from FinMind TaiwanStockInfo, caches to
+    ``data/stock_info_tw.parquet`` with a 7-day TTL.
+    US: returns an empty dict (yfinance lookup deferred to a future phase).
+    All errors are swallowed — callers fall back to symbol as name.
+    """
+    if market != "tw":
+        return {}
+
+    cache_path = get_data_dir() / "stock_info_tw.parquet"
+
+    # Try warm cache first
+    if cache_path.exists():
+        try:
+            mtime = datetime.datetime.fromtimestamp(cache_path.stat().st_mtime)
+            age_days = (datetime.datetime.now() - mtime).days
+            if age_days < _STOCK_INFO_CACHE_TTL_DAYS:
+                df = pd.read_parquet(cache_path)
+                if {"symbol", "name"}.issubset(df.columns):
+                    return dict(zip(df["symbol"].astype(str), df["name"].astype(str)))
+        except Exception:  # noqa: BLE001
+            pass
+
+    # Cache miss or stale — fetch from FinMind
+    try:
+        fetcher = FinMindFetcher()
+        df = fetcher.fetch_stock_info()
+        if not df.empty:
+            df[["symbol", "name"]].to_parquet(cache_path, index=False)
+            return dict(zip(df["symbol"].astype(str), df["name"].astype(str)))
+    except Exception:  # noqa: BLE001
+        pass
+
+    return {}
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -64,7 +110,8 @@ class DataServiceError:
 def list_symbols(market: str = "tw") -> list[dict[str, Any]]:
     """Return metadata rows for the given market from DuckDB.
 
-    Returns an empty list on error (callers may surface the error separately).
+    Each row includes a ``name`` field (Chinese stock name for TW, symbol
+    fallback for US).  Returns an empty list on error.
     """
     normalized_market = normalize_market(market)
     try:
@@ -81,10 +128,22 @@ def list_symbols(market: str = "tw") -> list[dict[str, Any]]:
     if "market" in df.columns:
         df = df[df["market"] == normalized_market].copy()
 
+    # Bug 1 fix: de-duplicate by symbol so each ticker appears only once
+    if not df.empty:
+        df = df.drop_duplicates(subset=["symbol"], keep="first")
+
     if df.empty:
         return []
 
-    return df.to_dict(orient="records")
+    rows = df.to_dict(orient="records")
+
+    # Bug 2 fix: attach human-readable names
+    names = _load_symbol_names(normalized_market)
+    for row in rows:
+        sym = str(row.get("symbol", ""))
+        row["name"] = names.get(sym, sym)
+
+    return rows
 
 
 def get_symbol_status(symbol: str, market: str = "tw") -> list[SymbolStatus]:

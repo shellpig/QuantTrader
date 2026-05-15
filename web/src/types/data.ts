@@ -19,13 +19,14 @@ export interface SymbolStatusResponse {
 }
 
 export interface SymbolsListResponse {
-  data: Array<{ symbol: string; market: string; [key: string]: unknown }>;
+  data: Array<{ symbol: string; market: string; name?: string; [key: string]: unknown }>;
   meta: { market: string; count: number };
 }
 
 export interface SymbolRow {
   symbol: string;
   market: "tw" | "us";
+  name?: string;
   firstDate: string | null;
   lastDate: string | null;
   bars: number;

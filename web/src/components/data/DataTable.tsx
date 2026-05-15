@@ -55,9 +55,9 @@ export function DataTable({ rows, onDelete, onUpdate, isJobRunning = false }: Da
               {row.symbol}
             </div>
 
-            {/* 名稱 (fallback to symbol; raw+adj badge for US) */}
+            {/* 名稱 (name from backend; fallback to symbol; raw+adj badge for US) */}
             <div className="text-slate-100 truncate">
-              {row.symbol}
+              {row.name ?? row.symbol}
               {row.market === "us" && (
                 <span className="ml-2 text-[10px] uppercase tracking-wider text-slate-500">
                   raw+adj

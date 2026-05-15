@@ -10,10 +10,14 @@ import type { TradingMarket } from "@/lib/trading-calendar";
 async function fetchDataList(market: TradingMarket): Promise<SymbolRow[]> {
   const listResp = await apiFetch<SymbolsListResponse>(`/api/data/symbols?market=${market}`);
 
-  // list_symbols returns dict records; extract the symbol field
-  const symbols: string[] = listResp.data.map((row) =>
-    typeof row === "string" ? row : (row as { symbol: string }).symbol,
-  );
+  // list_symbols returns dict records; extract symbol + optional name
+  const nameMap: Record<string, string> = {};
+  const symbols: string[] = listResp.data.map((row) => {
+    if (typeof row === "string") return row;
+    const r = row as { symbol: string; name?: string };
+    if (r.name) nameMap[r.symbol] = r.name;
+    return r.symbol;
+  });
 
   if (symbols.length === 0) return [];
 
@@ -41,6 +45,7 @@ async function fetchDataList(market: TradingMarket): Promise<SymbolRow[]> {
       return {
         symbol,
         market,
+        name: nameMap[symbol] ?? undefined,
         firstDate: startDate && startDate !== "-" ? startDate : null,
         lastDate: endDate && endDate !== "-" ? endDate : null,
         bars,

@@ -65,6 +65,67 @@ def test_list_symbols_returns_empty_on_error(mock_meta_cls: MagicMock) -> None:
     assert result == []
 
 
+@patch("src.services.data_service._load_symbol_names", return_value={})
+@patch("src.services.data_service.DuckDBMeta")
+def test_list_symbols_deduplicates_by_symbol(
+    mock_meta_cls: MagicMock, _mock_names: MagicMock
+) -> None:
+    """Bug 1 fix: same symbol appearing in multiple freq rows must be de-duped."""
+    mock_meta = MagicMock()
+    # 0050 appears in daily + institutional + margin (three freq rows for same symbol+market)
+    mock_meta.list_all.return_value = pd.DataFrame(
+        {
+            "symbol": ["0050", "0050", "0050", "2330"],
+            "market": ["tw", "tw", "tw", "tw"],
+            "freq": ["daily", "institutional", "margin", "daily"],
+        }
+    )
+    mock_meta_cls.return_value = mock_meta
+
+    result = list_symbols(market="tw")
+    symbols = [r["symbol"] for r in result]
+    assert symbols.count("0050") == 1, "0050 must appear only once after de-dup"
+    assert symbols.count("2330") == 1
+    assert len(result) == 2
+
+
+@patch("src.services.data_service._load_symbol_names", return_value={"0050": "元大台灣50", "2330": "台積電"})
+@patch("src.services.data_service.DuckDBMeta")
+def test_list_symbols_includes_name_field(
+    mock_meta_cls: MagicMock, _mock_names: MagicMock
+) -> None:
+    """Bug 2 fix: list_symbols must include a 'name' field from the names cache."""
+    mock_meta = MagicMock()
+    mock_meta.list_all.return_value = pd.DataFrame(
+        {
+            "symbol": ["0050", "2330"],
+            "market": ["tw", "tw"],
+        }
+    )
+    mock_meta_cls.return_value = mock_meta
+
+    result = list_symbols(market="tw")
+    by_symbol = {r["symbol"]: r for r in result}
+    assert by_symbol["0050"]["name"] == "元大台灣50"
+    assert by_symbol["2330"]["name"] == "台積電"
+
+
+@patch("src.services.data_service._load_symbol_names", return_value={})
+@patch("src.services.data_service.DuckDBMeta")
+def test_list_symbols_name_fallback_to_symbol(
+    mock_meta_cls: MagicMock, _mock_names: MagicMock
+) -> None:
+    """When name lookup returns nothing, name field should equal symbol."""
+    mock_meta = MagicMock()
+    mock_meta.list_all.return_value = pd.DataFrame(
+        {"symbol": ["AAPL"], "market": ["us"]}
+    )
+    mock_meta_cls.return_value = mock_meta
+
+    result = list_symbols(market="us")
+    assert result[0]["name"] == "AAPL"
+
+
 # ---------------------------------------------------------------------------
 # get_symbol_status
 # ---------------------------------------------------------------------------
