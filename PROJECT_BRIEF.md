@@ -214,7 +214,7 @@ risk:
 | 9-C | ✅ 完成 | 美股回測支援：回測頁市場切換（單次/批次/參數掃描/WFA）、USD、1 股單位、`USCostCalculator`、DCA 不支援碎股 warning、台美 K 線顏色慣例 |
 | 9-D | ✅ 完成 | 美股技術分析儀表板：市場切換、adjusted daily、技術面/K線/型態/AI 劇本；停用即時與籌碼；shares 顯示、紐約日期、AI 強制繁中輸出 |
 | 9-E | ✅ 完成 | 資料管理頁美股支援：市場切換、yfinance 日 K 更新/重建、BRK.B 正規化、raw/adjusted 狀態、停用分 K 與籌碼 |
-| 9-F | ⚠️ 自動驗證完成，手動驗收待做 | Phase 9 整合回歸與文件收束：全專案自動測試 428 passed；手動驗收 9-F-1~9-F-12 待使用者執行 |
+| 9-F | ✅ 完成 | Phase 9 整合回歸與文件收束：全專案自動測試 428 passed；手動驗收 9-F-1~9-F-12 全數通過 |
 | 9-G | ✅ 完成 | 美股 yfinance 1m intraday 盤中快照與分 K 圖：專用 `fetch_us_intraday` API、最新 1 分 K raw close 作為近似盤中價、漲跌對前一紐約交易日 raw close、今日判斷以紐約日期為準、成交量為今日 1m volume 加總、分 K 圖放日 K 圖前 |
 | 10-A | ✅ 完成 | 服務層抽離 + FastAPI 後端骨架：`src/services/` 4 個 service、`api/` FastAPI app + CORS + health + config + data/symbols + Job manager（write lock、TTL）；舊 Streamlit UI 改呼叫 services 行為不變；服務層 44 passed + API 17 passed + 全專案 508 passed |
 | 10-B | ✅ 完成 | Next.js 前端骨架：`web/` Next.js 15.3 + React 19 + TS 5 + Tailwind v4 + SWR + Lightweight Charts；Sidebar 5 頁導航（PC 左側 240px / Mobile 底部 Tab Bar）、Dark/Light 主題、api-client、市場切換、股票選擇器、4 型別檔、formatters；Vitest 33 passed + 全專案 508 passed；手動驗收 10-B-1~6 全數通過 |
@@ -222,7 +222,7 @@ risk:
 | 10-C-2 | ✅ 完成 | 資料管理頁 stage-2（更新/重建/新增）：擴充 `api/routers/jobs.py` dispatcher 支援 `data_update` / `data_rebuild` job type（單檔 + all 批次模式、SSE progress + result event、單檔失敗不中斷整批、write lock 互斥）；前端 ProgressBar 全局進度條、RebuildConfirmDialog 二次確認、AddSymbolDialog（複用 StockSelector）、完成後 banner 列出 succeeded / failed 清單。tsc 0 errors + vitest **11 files / 87 tests pass**（10-C-2 補 3 檔 / 26 cases）+ pytest **52 passed**（+13 in `test_data_jobs_api.py`）。**邊界決定**：失敗清單用 banner 取代 toast，toast 系統留待 10-G 全局整合 |
 | 10-D | ✅ 完成 | 個股分析儀表板（Lightweight Charts）：3 輪驗收完成（round-3 13 項基本修正 + round-4 6 項緊湊化 + round-5 三欄佈局 50:25:25）；K 線 + MA + KD/RSI/MACD 副圖、crosshair tooltip、S/R 壓力支撐線、Pattern 長描述 tooltip、Radix Tooltip；tsc 0 errors + vitest 34 pass + pytest 25 pass |
 | 10-E | 📋 規格已定，待實作 | 回測研究工作台（Job + SSE 進度 / 單次 / 批次 / 掃描 / WFA / K 線 + signal overlay） |
-| 10-F-1 | 📋 規格已定，待實作 | AI 問答頁 UI shell + 後端 lock（**不接 LLM**）：完整 chat UI、免責聲明 gate（localStorage 持久）、`react-markdown` + remark-gfm、Mock 逐字串流（20-40ms / char）、訊息歷史刷新即清；`GET /api/ai/status` 回 `feature_locked`、`POST /api/ai/chat` 回 503；Sidebar AI 入口加灰色「後續開放」徽章；package version py + web 雙雙 bump 至 `0.2.0`；文件 V2.4 |
+| 10-F-1 | ✅ 完成 | AI 問答頁 UI shell + 後端 lock（**不接 LLM**）：完整 chat UI、免責聲明 gate（localStorage `ai_chat.disclaimer_accepted_v1`）、`react-markdown` + remark-gfm、Mock 逐字串流（25ms / char）、訊息歷史刷新即清；`GET /api/ai/status` 回 `feature_locked`、`POST /api/ai/chat` 回 503；Sidebar AI 入口加灰色「後續開放」徽章；package version py + web + FastAPI 三處同步 bump 至 `0.2.0`；文件 V2.4。tsc 0 errors + vitest **17 files / 124 tests pass**（+31：disclaimer-gate 5 / message-bubble 10 / chat-page-client 8 / use-ai-status 3 / sidebar 5）+ pytest **test_api 59 passed**（+7 in `test_ai_api.py`） |
 | 10-F-2 | ⏸ 延後 | AI 問答頁接 LLM：補 `AIAdvisor.stream_chat()` 三 adapter（Anthropic / OpenAI / Gemini）+ 真實 SSE token 串流；**不卡 10-G / 10-H** |
 | 10-G | 📋 規格已定，待實作 | 設定頁 + 全局整合（Command Palette、Toast 系統、Error Boundary、AI toggle disabled + tooltip） |
 | 10-H | 📋 規格已定，待實作 | 舊 Streamlit UI 移除（測試遷移檢查表不可跳過；`src/ai/advisor.py` 必須保留供 10-F-2 與 dashboard analysis 使用） |
@@ -231,7 +231,18 @@ risk:
 
 見 `驗證後已知問題.md`（每次必讀）。
 
-主線：Phase 9 全部完成。Phase 10-A 服務層 + FastAPI 骨架、10-B Next.js 前端骨架、**10-C-1 資料管理頁列表 + DELETE**、**10-C-2 資料管理頁更新/重建/新增（SSE + Job dispatcher）**、**10-D 個股分析儀表板（3 輪驗收完成）** 均已完成。**Phase 10-C 全段落結束**。10-F 已**拆成 10-F-1（UI shell + lock）與 10-F-2（接 LLM、延後）**，下一步預計實作 10-F-1（規格、設計方針、測試指南、文件版本 V2.4 已記載）。10-E / 10-F-1 / 10-G / 10-H 規格已定，待實作；10-F-2 延後且不卡 10-G / 10-H。
+主線：Phase 9 全部完成（含 9-F 手動驗收）。Phase 10-A 服務層 + FastAPI 骨架、10-B Next.js 前端骨架、**10-C-1 資料管理頁列表 + DELETE**、**10-C-2 資料管理頁更新/重建/新增（SSE + Job dispatcher）**、**10-D 個股分析儀表板（3 輪驗收完成）**、**10-F-1 AI 問答頁 UI shell + 後端 lock** 均已完成。**Phase 10-C 全段落結束**；10-F 已拆成 10-F-1（已完成）與 10-F-2（接 LLM、延後且不卡 10-G / 10-H）。下一步可實作 10-E / 10-G / 10-H（規格已定）。
+
+2026-05-15 狀態：
+- 最新 commit 請以 `git log --oneline -1` 為準。
+- **9-F 手動驗收完成**：9-F-1~9-F-12 全數通過，Phase 9 全階段（含手動驗收）正式收束。
+- **10-F-1 實作 + 驗收完成**：AI 問答頁 UI shell + 後端 lock（不接 LLM）。
+  - 後端：`GET /api/ai/status` 回 `{ available: false, reason: "feature_locked" }`、`POST /api/ai/chat` 回 503 + `AI_DISABLED`；既有 `/api/ai/analyze` 不變。
+  - 前端：disclaimer-gate（localStorage `ai_chat.disclaimer_accepted_v1` 持久）、message-bubble（`react-markdown` + `remark-gfm`、空內容顯示閃爍 cursor）、chat-input（Enter 送、空字串不送）、chat-page-client、use-mock-chat（25ms / char 逐字串流）、use-ai-status；Sidebar AI 入口加灰色「後續開放」徽章；Header「AI · 未啟用」灰 chip；訊息歷史純 React state 刷新即清。
+  - 版號：`pyproject.toml` `0.1.0`→`0.2.0`、`web/package.json` `0.10.0`→`0.2.0`、`api/main.py` FastAPI `version` `0.10.0`→`0.2.0`，文件 V2.4。
+  - 自動驗證：`tests/test_api/` 59 passed（+7 in `test_ai_api.py`）、`web/` `tsc --noEmit` 0 errors、`web/` vitest **17 files / 124 tests pass**（+31 cases：disclaimer-gate 5 / message-bubble 10 / chat-page-client 8 / use-ai-status 3 / sidebar 5）。
+  - 手動驗收：10-F-1-1~10-F-1-8 全數通過。
+- 10-F-2（接 LLM、SSE token 串流）延後實作，不卡 10-G / 10-H。
 
 2026-05-14 狀態：
 - 最新 commit 請以 `git log --oneline -1` 為準；本 brief 已改為不硬寫最新 hash，避免文件在 commit 後立即失真。
