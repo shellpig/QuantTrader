@@ -8,23 +8,26 @@
 
 ## 專案概述
 
-台股量化交易研究工具（個人版），運行於 Windows 11 本機。聚焦研究與回測，不接實盤。三大核心功能：自動化台股資料管道、回測引擎（向量化 + 事件驅動）、AI 技術分析問答。
+台股 / 美股 US-1 量化交易研究工具（個人版），運行於 Windows 11 本機。聚焦資料管線、研究、回測與 AI 分析，不接實盤。
 
 2026-05-14 Phase 10 規格已完成並寫入正式文件：前端架構從 Streamlit 遷移至 Next.js (React) + FastAPI，拆為 10-A~10-H 八個子階段。新增 `src/services/`（服務層）、`api/`（FastAPI 後端）、`web/`（Next.js 前端）。核心演算法不重寫。Phase 9-G（美股 intraday）為前置條件。
 
-Phase 9 狀態：9-A~9-F 自動化驗證全部完成（428 passed）。9-F 手動驗收 12 項待使用者執行。9-G 規格已定，待實作。
+- Phase 9 全部完成（含美股 US-1 / 9-G intraday）。
+- Phase 10-A / 10-B / 10-C / 10-D / 10-E-1 / 10-E-2 / 10-F-1 / 10-G-1 已完成。
+- Phase 10-F-2（AI 問答接 LLM）延後，不卡主線。
+- 後續順序：10-E-3 → 10-E-4 → 10-G-2 → 10-H。
 
 ## 技術棧
 
-- Python 3.12+、套件管理 `uv`（`pyproject.toml`）
-- 資料處理 pandas、技術指標 pandas-ta
-- 台股資料 FinMind API + yfinance 備援；美股日 K 使用 yfinance（Phase 9-B）；9-G 規格追加美股 yfinance 1m intraday 盤中快照與分 K 圖
-- 儲存 DuckDB + Parquet（零伺服器）
-- UI Streamlit（Phase 10-H 移除後由 Next.js 取代）、圖表 Plotly（Phase 10 由 Lightweight Charts 取代）
-- Phase 10 新增：Next.js 15+ / React 19+ / TypeScript 5+ / Tailwind CSS v4 / shadcn/ui / Lightweight Charts / SWR
-- Phase 10 新增：FastAPI ≥0.115 / uvicorn / sse-starlette（後端 API 層）
-- AI LLM（OpenAI / Anthropic / Gemini，provider-neutral）
-- 測試 pytest、虛擬環境 `.venv\Scripts\python.exe`；Phase 10 前端測試 Vitest + Playwright
+- **語言 / 套件管理：** Python 3.12+、uv（`pyproject.toml`）
+- **資料處理：** pandas、pandas-ta
+- **資料來源：** 台股 FinMind API + yfinance 備援；美股日 K / 1m intraday 使用 yfinance
+- **儲存：** DuckDB + Parquet（零伺服器）
+- **後端：** FastAPI、uvicorn、httpx；SSE 以 FastAPI `StreamingResponse` 實作
+- **前端：** Next.js 15+、React 19+、TypeScript 5+、Tailwind CSS v4、SWR、Lightweight Charts、Radix UI、sonner、cmdk、shadcn/ui pattern
+- **舊 UI：** Streamlit + Plotly（Phase 10-H 前保留，Phase 10-H 移除）
+- **AI：** OpenAI / Anthropic / Gemini（provider-neutral）
+- **測試：** pytest（固定 `.venv\Scripts\python.exe`）、Vitest、Playwright
 
 ## 目錄結構
 

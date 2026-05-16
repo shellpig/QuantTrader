@@ -39,12 +39,6 @@ Trigger rules:
 
 Only modify files when user explicitly requests fix, implement, or commit. Verify/diagnose = report only.
 
-## 目前主線
-
-- Phase 9 全部完成（含美股 US-1 / 9-G intraday）。
-- Phase 10-A / 10-B / 10-C / 10-D / 10-E-1 / 10-E-2 / 10-F-1 / 10-G-1 已完成。
-- Phase 10-F-2（AI 問答接 LLM）延後，不卡主線。
-- 後續順序：10-E-3 → 10-E-4 → 10-G-2 → 10-H。
 
 ## 文件
 - `PROJECT_BRIEF.md` — **專案簡報（新 session 入口）**
@@ -57,16 +51,7 @@ Only modify files when user explicitly requests fix, implement, or commit. Verif
 - `web/_design/` — Phase 10 視覺設計稿；只作參考，不可 import 進 build
 - `run_api.bat` / `run_web.bat` / `run_dev.bat` / `run_quanttraderV2.bat` — Phase 10 本機啟動腳本
 
-## 技術棧
-- **語言：** Python 3.12+（核心資料 / 回測 / API）
-- **資料：** pandas, pandas-ta, FinMind API, yfinance
-- **儲存：** DuckDB + Parquet（零伺服器）
-- **後端：** FastAPI, uvicorn, httpx
-- **前端：** Next.js 15+, React 19+, TypeScript 5+, Tailwind CSS v4, SWR, Lightweight Charts, Radix UI, sonner, cmdk
-- **舊 UI：** Streamlit + Plotly（Phase 10-H 前保留）
-- **AI：** OpenAI / Anthropic / Gemini（provider-neutral）
-- **套件管理：** uv
-- **測試：** pytest, Vitest, Playwright
+目前主線與技術棧只維護在 `PROJECT_BRIEF.md`，避免雙份內容漂移。
 
 
 ## 驗證模式規則
