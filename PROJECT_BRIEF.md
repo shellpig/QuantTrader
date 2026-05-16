@@ -235,9 +235,10 @@ risk:
 
 見 `驗證後已知問題.md`（每次必讀）。
 
-主線：Phase 9 全部完成（含 9-F 手動驗收）。Phase 10-A 服務層 + FastAPI 骨架、10-B Next.js 前端骨架、**10-C-1 資料管理頁列表 + DELETE**、**10-C-2 資料管理頁更新/重建/新增（SSE + Job dispatcher）**、**10-D 個股分析儀表板（3 輪驗收完成）**、**10-F-1 AI 問答頁 UI shell + 後端 lock**、**10-G-1 全局基礎設施（toast / error boundary / skeleton / command palette）** 均已完成。**Phase 10-C 全段落結束**；10-F 已拆成 10-F-1（已完成）與 10-F-2（接 LLM、延後且不卡 10-G / 10-H）。**10-E 已拆成 10-E-1 / 10-E-2 / 10-E-3 / 10-E-4 四段，10-G 已拆成 10-G-1 / 10-G-2（規格 V2.6 已記載）**。**後續實作順序：10-E-1 → 10-E-2 → 10-E-3 → 10-E-4 → 10-G-2（設定頁主功能）→ 10-H**；10-E 4 段共用 10-G-1 的 Toast / Error Boundary / Loading Skeleton / Command Palette。下一步預計實作 10-E-1。
+主線：Phase 9 全部完成（含 9-F 手動驗收）。Phase 10-A 服務層 + FastAPI 骨架、10-B Next.js 前端骨架、**10-C-1 資料管理頁列表 + DELETE**、**10-C-2 資料管理頁更新/重建/新增（SSE + Job dispatcher）**、**10-D 個股分析儀表板（3 輪驗收完成）**、**10-F-1 AI 問答頁 UI shell + 後端 lock**、**10-G-1 全局基礎設施（toast / error boundary / skeleton / command palette）** 均已完成。**Phase 10-C 全段落結束**；10-F 已拆成 10-F-1（已完成）與 10-F-2（接 LLM、延後且不卡 10-G / 10-H）。**10-E 已拆成 10-E-1 / 10-E-2 / 10-E-3 / 10-E-4 四段，10-G 已拆成 10-G-1 / 10-G-2（規格 V2.6 已記載）**。**後續實作順序：10-E-1 → 10-E-2 → 10-E-3 → 10-E-4 → 10-G-2（設定頁主功能）→ 10-H**；10-E 4 段共用 10-G-1 的 Toast / Error Boundary / Loading Skeleton / Command Palette。**10-E-1 已完成**，下一步預計實作 10-E-2。
 
 2026-05-16 狀態：
+- **10-E-1 實作 + 驗證完成**：後端 `job_manager.py` 新增 `finish_cancelled_job()` + 修正 `cancel_job()` race condition；`backtest_service.py` 新增 `initial_capital` 參數 + DCA 序列化；`jobs.py` 新增 `backtest_run` dispatcher + cancelled partial result 回傳。前端新增 `BacktestPageClient`（4-tab 框架，僅 Single 啟用）、`SingleRunTab`（表單 + 結果顯示）、`TearsheetCards` / `CandleChartWithMarkers` / `EquityCurveChart` / `TradesTable` / `StrategyPresetSelect` / `DateRangePicker` / `EngineSelect` / `BacktestProgressBar` 共 10 個元件；`use-backtest-job` hook（SSE + cancel + toast）。驗證：pytest **9/9 passed**（`test_backtest_api.py`）；vitest **31 files / 202 tests passed**（含 7 個 backtest 測試檔 53 cases）；`tsc --noEmit` 通過。
 - **10-E 規格審查完成（V2.7 補丁）**：三份文件同步補充以下 12 項缺口，規格、設計方針、測試指南已更新：
   1. `JobManager.finish_cancelled_job()` 方法需在 10-E-1 開工前新增（目前缺失）
   2. `cancel_job()` 需修改為只設 status、不關 queue（避免 partial result 推送失敗的 race condition）
