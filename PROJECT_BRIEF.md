@@ -13,9 +13,9 @@
 2026-05-14 Phase 10 規格已完成並寫入正式文件：前端架構從 Streamlit 遷移至 Next.js (React) + FastAPI，拆為 10-A~10-H 八個子階段。新增 `src/services/`（服務層）、`api/`（FastAPI 後端）、`web/`（Next.js 前端）。核心演算法不重寫。Phase 9-G（美股 intraday）為前置條件。
 
 - Phase 9 全部完成（含美股 US-1 / 9-G intraday）。
-- Phase 10-A / 10-B / 10-C / 10-D / 10-E-1 / 10-E-2 / 10-E-3 / 10-E-4 / 10-F-1 / 10-G-1 / 10-G-2 已完成。
+- Phase 10-A / 10-B / 10-C / 10-D / 10-E-1 / 10-E-2 / 10-E-3 / 10-E-4 / 10-F-1 / 10-G-1 / 10-G-2 / 10-H-1 已完成。
 - Phase 10-F-2（AI 問答接 LLM）延後，不卡主線。
-- 後續順序：10-H-1 → 10-H-2（V2.8 將 10-H 拆為前置補強 + 實際移除兩段）。
+- 後續順序：10-H-2（實際移除 `src/ui/` + streamlit 套件 + 7 個舊測試檔 + 文件更新 + 全專案回歸）。
 
 ## 技術棧
 
@@ -232,14 +232,17 @@ risk:
 | 10-F-2 | ⏸ 延後 | AI 問答頁接 LLM：補 `AIAdvisor.stream_chat()` 三 adapter（Anthropic / OpenAI / Gemini）+ 真實 SSE token 串流；**不卡 10-G / 10-H** |
 | 10-G-1 | ✅ 完成 | 基礎設施先行：新增 `sonner` toast + 10-C-2 banner 遷移、React Error Boundary（只接 render/lifecycle/hook 例外）、`CardSkeleton` / `ChartSkeleton` / `TableSkeleton`、`cmdk` Command Palette（頁面跳轉 + 股票搜尋）；移除 `@radix-ui/react-toast`；補 7 檔前端測試與單檔更新/新增失敗 toast regression。tsc 0 errors + vitest **24 files / 148 tests passed** |
 | 10-G-2 | ✅ 完成 | 設定頁 4 分區：API key write-only UI（5 provider）、策略 preset CRUD（`POST/DELETE/restore` 三端點 + Dialog）、Dark↔Light 主題切換（沿用既有自製 `theme-provider.tsx`，**未引入 `next-themes`**，等價支援 `class="dark"` + localStorage）、AI toggle disabled + Radix Tooltip；pytest `test_config_api.py + test_config_svc.py` 28 passed（+6 strategy endpoints / +3 `delete_strategy_preset_by_name`）+ vitest **46 files / 290 tests passed**（+5 settings 元件測試 + use-config hook）+ tsc 0 errors |
-| 10-H-1 | 📋 規格已定，待實作 | 收尾前置補強：Playwright E2E smoke（desktop + mobile）、手機 <768px 底部 Tab Bar、`test_themes.py` → Vitest CSS 變數測試；測試遷移檢查表 7 行必須全部打勾後才能進入 10-H-2 |
+| 10-H-1 | ✅ 完成 | 收尾前置補強：Playwright E2E smoke 5 spec（desktop + mobile 兩 project、共 48 case）、手機 <768px 底部 Tab Bar（`sidebar.tsx` 拆 Desktop / Mobile + `pb-14`）、`web/src/tests/lib/theme-vars.test.ts` 補 `test_themes.py` CSS 變數驗證；測試遷移檢查表 7 行全部打勾。順手 bug fix：`backtest_service.py` `load_backtest_data` tz-aware filter、`StrategyPresetSelect.tsx` API URL 加 `NEXT_PUBLIC_API_URL` 前綴、`uv.lock` 同步 0.2.0。Gate：pytest 588 passed / vitest 48 files / 307 tests / tsc 0 errors / Playwright 48 tests pass |
 | 10-H-2 | 📋 規格已定，待實作 | 實際移除與全專案回歸：刪 `src/ui/`、`run_quanttrader.bat`、`pyproject.toml` streamlit 三套件、7 個 Streamlit pytest 檔；`src/ai/advisor.py` **保留**（10-F-2 + dashboard analysis 仍使用） |
 
 ## 當前待辦
 
 見 `驗證後已知問題.md`（每次必讀）。
 
-主線：Phase 9 全部完成（含 9-F 手動驗收）。Phase 10-A 服務層 + FastAPI 骨架、10-B Next.js 前端骨架、**10-C-1 / 10-C-2 資料管理頁**、**10-D 個股分析儀表板**、**10-E-1 / 10-E-2 / 10-E-3 / 10-E-4 回測工作台四段**、**10-F-1 AI 問答頁 UI shell + 後端 lock**、**10-G-1 全局基礎設施**、**10-G-2 設定頁主功能** 均已完成。10-F-2（接 LLM、延後且不卡 10-H）。**後續：10-H（舊 Streamlit UI 移除 + 測試遷移檢查表）**。
+主線：Phase 9 全部完成（含 9-F 手動驗收）。Phase 10-A 服務層 + FastAPI 骨架、10-B Next.js 前端骨架、**10-C-1 / 10-C-2 資料管理頁**、**10-D 個股分析儀表板**、**10-E-1 / 10-E-2 / 10-E-3 / 10-E-4 回測工作台四段**、**10-F-1 AI 問答頁 UI shell + 後端 lock**、**10-G-1 全局基礎設施**、**10-G-2 設定頁主功能**、**10-H-1 收尾前置補強（Playwright E2E + 手機 Tab Bar + theme-vars）** 均已完成。10-F-2（接 LLM、延後且不卡 10-H-2）。**後續：10-H-2 實際移除舊 Streamlit UI + 全專案回歸**。
+
+2026-05-16 狀態（10-H-1）：
+- **10-H-1 實作 + 驗證完成**：實作於 worktree `claude/peaceful-dewdney-33117e`，驗證通過後以 fast-forward 合進 main（commit `e7c6af2` + `e5c8a09`），uv.lock 同步 0.2.0 以 cherry-pick 進 main（`d346d49`）。新增 `web/playwright.config.ts`（desktop-chromium 1280×800 + mobile-chromium Pixel 5 兩 project）；新增 5 個 e2e spec（`navigation` / `backtest-single` / `backtest-cancel` / `csv-download` / `mobile-tabbar`）；新增 `web/src/tests/lib/theme-vars.test.ts` + `web/src/tests/components/mobile-tabbar.test.tsx`；`web/src/components/sidebar.tsx` 拆 `DesktopSidebar` + `MobileTabBar`（fixed bottom h-14 + grid-cols-5）；`web/src/app/layout.tsx` 加 `pb-14 lg:pb-0`；`web/src/app/globals.css` 補 `--chart-up` / `--chart-down` 與 `.light` class。順手修：`load_backtest_data` tz-aware filter、`StrategyPresetSelect` API URL 加絕對前綴。驗證：pytest **588 passed**、vitest **48 files / 307 tests pass**、tsc 0 errors、Playwright **48 tests pass**（24 desktop + 24 mobile）。測試遷移檢查表 7 行全打勾（見 `驗證後已知問題.md` [P10-H-1]）。
 
 2026-05-16 狀態：
 - **10-E-3 實作 + 驗證完成**：後端 `backtest_sweep` dispatcher + `run_param_sweep_job()` + sweep CSV blob + progress throttle（>50 combos）+ `OVER_MAX_COMBOS` 422 + `sample_warning`（total_trades < 3）；前端新增 `SweepTab` / `ParamGridForm` / `SweepRankingTable` / `SweepHeatmap`（僅 2 參數時自製 CSS Grid 2D）+ `sweep-types` / `sweep-helpers` / `sweep-constants`；commit `4b39120`。驗證：pytest 6 個 sweep case 全綠（含 throttle / over_max / 非整數參數 / sample_warning / CSV blob）。
