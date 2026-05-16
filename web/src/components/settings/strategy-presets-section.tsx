@@ -18,6 +18,12 @@ function formatParamsSummary(params: Record<string, number>): string {
     .join(", ");
 }
 
+function formatMarketLabel(market: StrategyPreset["market"]): string {
+  if (market === "tw") return "TW";
+  if (market === "us") return "US";
+  return "未指定";
+}
+
 export function StrategyPresetsSection() {
   const { presets, isLoading, mutate } = useStrategyPresets();
   const toast = useToast();
@@ -25,8 +31,13 @@ export function StrategyPresetsSection() {
   const [editPreset, setEditPreset] = useState<StrategyPreset | null>(null);
 
   async function handleSave(preset: StrategyPreset, isNew: boolean) {
+    const originalName = !isNew ? editPreset?.name.trim() : "";
+    const newName = preset.name.trim();
     try {
       await upsertStrategyPreset(preset);
+      if (originalName && originalName !== newName) {
+        await deleteStrategyPreset(originalName);
+      }
       await mutate();
       toast.success(
         isNew ? `已新增策略：${preset.name}` : `已更新策略：${preset.name}`,
@@ -111,6 +122,12 @@ export function StrategyPresetsSection() {
                   {p.name}
                 </span>
                 <span className="ml-2 text-xs text-slate-500">{p.type}</span>
+                <span
+                  data-testid={`preset-market-${p.name}`}
+                  className="ml-2 rounded border border-slate-700 px-1.5 py-0.5 text-[10px] text-slate-300"
+                >
+                  {formatMarketLabel(p.market)}
+                </span>
                 <p
                   data-testid={`preset-summary-${p.name}`}
                   className="mt-1 text-xs text-slate-400"

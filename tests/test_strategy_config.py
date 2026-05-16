@@ -19,6 +19,7 @@ def test_missing_strategies_uses_default_ma_preset() -> None:
     assert len(presets) == 1
     assert presets[0]["name"] == "MA20_MA60"
     assert presets[0]["type"] == "moving_average_cross"
+    assert presets[0]["market"] == "tw"
     assert presets[0]["params"]["short_window"] == 20
     assert presets[0]["params"]["long_window"] == 60
 
@@ -30,6 +31,7 @@ def test_uses_existing_strategies_list_without_disk_write() -> None:
                 "name": "MA10_30",
                 "type": "moving_average_cross",
                 "params": {"short_window": 10, "long_window": 30},
+                "market": "us",
             },
             {
                 "name": "Monthly_DCA",
@@ -49,6 +51,7 @@ def test_uses_existing_strategies_list_without_disk_write() -> None:
 
     assert len(presets) == 2
     assert presets[0]["name"] == "MA10_30"
+    assert presets[0]["market"] == "us"
     assert presets[1]["type"] == "dollar_cost_averaging"
     assert config["strategies"][0]["name"] == "MA10_30"
 
@@ -68,6 +71,7 @@ def test_legacy_strategy_block_is_converted_in_memory() -> None:
     assert presets[0]["name"] == "LegacyMA"
     assert presets[0]["type"] == "moving_average_cross"
     assert presets[0]["params"] == {"short_window": 8, "long_window": 21}
+    assert "market" not in presets[0]
 
 
 def test_invalid_strategies_fall_back_to_default() -> None:
@@ -212,6 +216,22 @@ def test_default_strategy_presets_all_valid() -> None:
         result = normalize_strategy_preset(preset)
         assert result["name"] == preset["name"]
         assert result["type"] == preset["type"]
+        assert result["market"] == preset["market"]
+
+
+def test_invalid_market_in_upsert_payload_rejected() -> None:
+    from src.core.strategy_config import normalize_strategy_preset
+    import pytest
+
+    with pytest.raises(ValueError, match="market"):
+        normalize_strategy_preset(
+            {
+                "name": "BadMarket",
+                "type": "moving_average_cross",
+                "params": {"short_window": 20, "long_window": 60},
+                "market": "jp",
+            }
+        )
 
 
 def test_strategy_type_labels_include_chinese_metadata() -> None:

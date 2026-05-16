@@ -114,16 +114,17 @@ STRATEGY_META: dict[str, StrategyMeta] = {
 
 
 SUPPORTED_STRATEGY_TYPES: list[str] = list(STRATEGY_META.keys())
+_SUPPORTED_MARKETS: set[str] = {"tw", "us"}
 
 DEFAULT_STRATEGY_PRESETS: list[dict[str, Any]] = [
-    {"name": "MA20_MA60", "type": "moving_average_cross", "params": {"short_window": 20, "long_window": 60}},
-    {"name": "定期定額", "type": "dollar_cost_averaging", "params": {"monthly_day": 5, "monthly_amount": 10000.0, "min_buy_unit": 1, "non_trading_day_policy": "next_trading_day", "buy_price_field": "close"}},
-    {"name": "RSI_14", "type": "rsi", "params": {"period": 14, "oversold": 30.0, "overbought": 70.0}},
-    {"name": "KD_Cross", "type": "kd_cross", "params": {"k_period": 9, "d_period": 3, "smooth_k": 3}},
-    {"name": "MACD_Cross", "type": "macd_cross", "params": {"fast": 12, "slow": 26, "signal": 9}},
-    {"name": "BB_20", "type": "bollinger_band", "params": {"period": 20, "std_dev": 2.0}},
-    {"name": "BIAS_20", "type": "bias", "params": {"ma_period": 20, "buy_bias": -10.0, "sell_bias": 10.0}},
-    {"name": "Donchian_20_10", "type": "donchian_breakout", "params": {"entry_period": 20, "exit_period": 10}},
+    {"name": "MA20_MA60", "type": "moving_average_cross", "params": {"short_window": 20, "long_window": 60}, "market": "tw"},
+    {"name": "定期定額", "type": "dollar_cost_averaging", "params": {"monthly_day": 5, "monthly_amount": 10000.0, "min_buy_unit": 1, "non_trading_day_policy": "next_trading_day", "buy_price_field": "close"}, "market": "tw"},
+    {"name": "RSI_14", "type": "rsi", "params": {"period": 14, "oversold": 30.0, "overbought": 70.0}, "market": "tw"},
+    {"name": "KD_Cross", "type": "kd_cross", "params": {"k_period": 9, "d_period": 3, "smooth_k": 3}, "market": "tw"},
+    {"name": "MACD_Cross", "type": "macd_cross", "params": {"fast": 12, "slow": 26, "signal": 9}, "market": "tw"},
+    {"name": "BB_20", "type": "bollinger_band", "params": {"period": 20, "std_dev": 2.0}, "market": "tw"},
+    {"name": "BIAS_20", "type": "bias", "params": {"ma_period": 20, "buy_bias": -10.0, "sell_bias": 10.0}, "market": "tw"},
+    {"name": "Donchian_20_10", "type": "donchian_breakout", "params": {"entry_period": 20, "exit_period": 10}, "market": "tw"},
 ]
 
 
@@ -145,9 +146,15 @@ def normalize_strategy_preset(raw: dict[str, Any]) -> dict[str, Any]:
     name = str(raw.get("name", "")).strip()
     if not name:
         raise ValueError("策略名稱不可為空。")
+
+    market_raw = raw.get("market")
+    if market_raw not in (None, "") and _normalize_market(market_raw) is None:
+        raise ValueError("market 僅支援 tw / us。")
+
     result = _normalize_one_preset(raw, fallback_name=name)
     if result is None:
-        raise ValueError(f"策略參數無效：{raw.get('type', '')} — {raw.get('params', {})}")
+        strategy_field = raw.get("type", raw.get("strategy", ""))
+        raise ValueError(f"策略參數無效：{strategy_field} — {raw.get('params', {})}")
     return result
 
 
@@ -199,6 +206,7 @@ def _default_moving_average_preset() -> dict[str, Any]:
     return {
         "name": _DEFAULT_MA_NAME,
         "type": "moving_average_cross",
+        "market": "tw",
         "params": {
             "short_window": 20,
             "long_window": 60,
@@ -229,6 +237,7 @@ def _normalize_legacy_strategy(raw: Any) -> dict[str, Any] | None:
     candidate = {
         "name": str(raw.get("name", "")).strip() or _DEFAULT_MA_NAME,
         "type": str(raw.get("type", "moving_average_cross")).strip().lower(),
+        "market": raw.get("market"),
         "params": raw.get("params", {}),
     }
     return _normalize_one_preset(candidate, fallback_name=_DEFAULT_MA_NAME)
@@ -239,7 +248,8 @@ def _normalize_one_preset(raw: Any, *, fallback_name: str) -> dict[str, Any] | N
         return None
 
     name = str(raw.get("name", "")).strip() or fallback_name
-    strategy_type = str(raw.get("type", "")).strip().lower()
+    strategy_type = str(raw.get("type", raw.get("strategy", ""))).strip().lower()
+    market = _normalize_market(raw.get("market"))
     params = raw.get("params", {})
     if not isinstance(params, dict):
         params = {}
@@ -259,18 +269,35 @@ def _normalize_one_preset(raw: Any, *, fallback_name: str) -> dict[str, Any] | N
         norm_params = _normalizers[strategy_type](params)
         if norm_params is None:
             return None
-        return {"name": name, "type": strategy_type, "params": norm_params}
+        normalized: dict[str, Any] = {"name": name, "type": strategy_type, "params": norm_params}
+        if market is not None:
+            normalized["market"] = market
+        return normalized
 
     if not strategy_type:
         return None
 
     # Keep unsupported strategy types as-is to avoid destructive data loss
     # when users already have future presets in config.
-    return {
+    normalized = {
         "name": name,
         "type": strategy_type,
         "params": deepcopy(params),
     }
+    if market is not None:
+        normalized["market"] = market
+    return normalized
+
+
+def _normalize_market(raw: Any) -> str | None:
+    if raw is None:
+        return None
+    market = str(raw).strip().lower()
+    if not market:
+        return None
+    if market not in _SUPPORTED_MARKETS:
+        return None
+    return market
 
 
 # ---------------------------------------------------------------------------

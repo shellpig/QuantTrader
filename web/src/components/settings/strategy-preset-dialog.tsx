@@ -17,6 +17,7 @@ const STRATEGY_TYPES = [
 ] as const;
 
 type StrategyTypeValue = (typeof STRATEGY_TYPES)[number]["value"];
+type StrategyMarket = "tw" | "us";
 
 interface ParamSpec {
   key: string;
@@ -85,6 +86,7 @@ export function StrategyPresetDialog({
   const isNew = initialPreset === null;
   const [name, setName] = useState("");
   const [type, setType] = useState<StrategyTypeValue>("moving_average_cross");
+  const [market, setMarket] = useState<StrategyMarket | "">("tw");
   const [params, setParams] = useState<Record<string, number>>(
     defaultParams("moving_average_cross"),
   );
@@ -95,10 +97,12 @@ export function StrategyPresetDialog({
         setName(initialPreset.name);
         const t = initialPreset.type as StrategyTypeValue;
         setType(t);
+        setMarket(initialPreset.market ?? "");
         setParams({ ...defaultParams(t), ...initialPreset.params });
       } else {
         setName("");
         setType("moving_average_cross");
+        setMarket("tw");
         setParams(defaultParams("moving_average_cross"));
       }
     }
@@ -111,7 +115,11 @@ export function StrategyPresetDialog({
 
   function handleSubmit() {
     if (!name.trim()) return;
-    onSave({ name: name.trim(), type, params }, isNew);
+    const payload: StrategyPreset = { name: name.trim(), type, params };
+    if (market) {
+      payload.market = market;
+    }
+    onSave(payload, isNew);
   }
 
   return (
@@ -145,6 +153,20 @@ export function StrategyPresetDialog({
                 placeholder="策略名稱"
                 className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 placeholder:text-slate-500"
               />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs text-slate-400">市場</label>
+              <select
+                data-testid="preset-market-select"
+                value={market}
+                onChange={(e) => setMarket(e.target.value as StrategyMarket | "")}
+                className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100"
+              >
+                <option value="">未指定</option>
+                <option value="tw">台股 (TW)</option>
+                <option value="us">美股 (US)</option>
+              </select>
             </div>
 
             <div>

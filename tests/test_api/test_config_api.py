@@ -120,6 +120,28 @@ def test_get_secrets_status_never_returns_key_values(mock_status: MagicMock) -> 
 
 
 # ---------------------------------------------------------------------------
+# GET /api/config/strategies — includes market field
+# ---------------------------------------------------------------------------
+
+
+@patch("api.routers.config.get_strategy_presets_config")
+def test_get_strategies_returns_market_when_present(mock_get: MagicMock) -> None:
+    mock_get.return_value = [
+        {
+            "name": "MA20_MA60",
+            "type": "moving_average_cross",
+            "params": {"short_window": 20, "long_window": 60},
+            "market": "tw",
+        }
+    ]
+    response = client.get("/api/config/strategies")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["meta"]["count"] == 1
+    assert body["data"][0]["market"] == "tw"
+
+
+# ---------------------------------------------------------------------------
 # POST /api/config/strategies — upsert (Phase 10-G-2)
 # ---------------------------------------------------------------------------
 

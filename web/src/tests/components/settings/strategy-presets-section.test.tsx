@@ -14,10 +14,12 @@ const mockUpsert = vi.fn();
 const mockDelete = vi.fn();
 const mockRestore = vi.fn();
 
-let mockPresets = [
-  { name: "MA Cross", type: "moving_average_cross", params: { short_window: 20, long_window: 60 } },
-  { name: "RSI_14", type: "rsi", params: { period: 14, oversold: 30, overbought: 70 } },
+const defaultMockPresets = [
+  { name: "MA Cross", type: "moving_average_cross", params: { short_window: 20, long_window: 60 }, market: "tw" as const },
+  { name: "RSI_14", type: "rsi", params: { period: 14, oversold: 30, overbought: 70 }, market: "us" as const },
 ];
+
+let mockPresets = defaultMockPresets;
 
 vi.mock("@/hooks/use-config", () => ({
   useStrategyPresets: () => ({
@@ -39,9 +41,9 @@ vi.mock("@/components/settings/strategy-preset-dialog", () => ({
     onSave,
   }: {
     open: boolean;
-    initialPreset: null | { name: string; type: string; params: Record<string, number> };
+    initialPreset: null | { name: string; type: string; params: Record<string, number>; market?: "tw" | "us" };
     onClose: () => void;
-    onSave: (p: { name: string; type: string; params: Record<string, number> }, isNew: boolean) => void;
+    onSave: (p: { name: string; type: string; params: Record<string, number>; market?: "tw" | "us" }, isNew: boolean) => void;
   }) =>
     open ? (
       <div data-testid="mock-preset-dialog">
@@ -54,6 +56,7 @@ vi.mock("@/components/settings/strategy-preset-dialog", () => ({
                 name: "New Strategy",
                 type: "rsi",
                 params: { period: 14, oversold: 30, overbought: 70 },
+                market: "tw",
               },
               !initialPreset,
             )
@@ -61,6 +64,24 @@ vi.mock("@/components/settings/strategy-preset-dialog", () => ({
         >
           Save
         </button>
+        {initialPreset ? (
+          <button
+            data-testid="mock-dialog-save-renamed"
+            onClick={() =>
+              onSave(
+                {
+                  name: "MA20_MA60",
+                  type: initialPreset.type,
+                  params: { short_window: 20, long_window: 60 },
+                  market: initialPreset.market,
+                },
+                false,
+              )
+            }
+          >
+            Save Renamed
+          </button>
+        ) : null}
         <button data-testid="mock-dialog-close" onClick={onClose}>
           Close
         </button>
@@ -73,6 +94,7 @@ import { StrategyPresetsSection } from "@/components/settings/strategy-presets-s
 describe("StrategyPresetsSection", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockPresets = defaultMockPresets;
     mockMutate.mockResolvedValue(undefined);
   });
 
@@ -90,6 +112,12 @@ describe("StrategyPresetsSection", () => {
     expect(screen.getByTestId("preset-summary-RSI_14")).toHaveTextContent(
       "period=14, oversold=30, overbought=70",
     );
+  });
+
+  it("renders market badge in each row", () => {
+    render(<StrategyPresetsSection />);
+    expect(screen.getByTestId("preset-market-MA Cross")).toHaveTextContent("TW");
+    expect(screen.getByTestId("preset-market-RSI_14")).toHaveTextContent("US");
   });
 
   it("opens dialog on add-preset-btn click", () => {
@@ -125,10 +153,42 @@ describe("StrategyPresetsSection", () => {
         name: "MA Cross",
         type: "moving_average_cross",
         params: { short_window: 20, long_window: 60 },
+        market: "tw",
       }),
     );
     await waitFor(() =>
       expect(mockToastSuccess).toHaveBeenCalledWith("已更新策略：MA Cross"),
+    );
+  });
+
+  it("deletes old preset name after editing a preset name", async () => {
+    mockPresets = [
+      {
+        name: "MA20_MA50",
+        type: "moving_average_cross",
+        params: { short_window: 20, long_window: 50 },
+        market: "tw",
+      },
+    ];
+    mockUpsert.mockResolvedValueOnce({ name: "MA20_MA60" });
+    mockDelete.mockResolvedValueOnce(undefined);
+
+    render(<StrategyPresetsSection />);
+    fireEvent.click(screen.getByTestId("edit-preset-MA20_MA50"));
+    fireEvent.click(screen.getByTestId("mock-dialog-save-renamed"));
+
+    await waitFor(() =>
+      expect(mockUpsert).toHaveBeenCalledWith({
+        name: "MA20_MA60",
+        type: "moving_average_cross",
+        params: { short_window: 20, long_window: 60 },
+        market: "tw",
+      }),
+    );
+    await waitFor(() => expect(mockDelete).toHaveBeenCalledWith("MA20_MA50"));
+    expect(mockMutate).toHaveBeenCalledTimes(1);
+    await waitFor(() =>
+      expect(mockToastSuccess).toHaveBeenCalledWith("已更新策略：MA20_MA60"),
     );
   });
 

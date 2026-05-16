@@ -7,6 +7,7 @@ export interface StrategyPreset {
   name: string;
   type: string;
   params: Record<string, number>;
+  market?: "tw" | "us";
 }
 
 export const SECRETS_SWR_KEY = "/api/config/secrets/status";

@@ -79,7 +79,7 @@ describe("useStrategyPresets", () => {
 
   it("returns presets from API", async () => {
     mockApiFetch.mockResolvedValueOnce({
-      data: [{ name: "MA Cross", type: "moving_average_cross", params: { short_window: 20, long_window: 60 } }],
+      data: [{ name: "MA Cross", type: "moving_average_cross", params: { short_window: 20, long_window: 60 }, market: "tw" }],
     });
 
     const { result } = renderHook(() => useStrategyPresets(), { wrapper: freshWrapper });
@@ -87,6 +87,7 @@ describe("useStrategyPresets", () => {
     await waitFor(() => expect(result.current.isLoading).toBe(false));
     expect(result.current.presets).toHaveLength(1);
     expect(result.current.presets[0].name).toBe("MA Cross");
+    expect(result.current.presets[0].market).toBe("tw");
   });
 
   it("defaults to empty array on error", async () => {
@@ -125,12 +126,15 @@ describe("upsertStrategyPreset", () => {
       name: "TestMA",
       type: "moving_average_cross",
       params: { short_window: 20, long_window: 60 },
+      market: "us",
     });
 
     expect(result.name).toBe("TestMA");
     expect(mockApiPost).toHaveBeenCalledWith(
       "/api/config/strategies",
-      expect.objectContaining({ preset: expect.objectContaining({ name: "TestMA" }) }),
+      expect.objectContaining({
+        preset: expect.objectContaining({ name: "TestMA", market: "us" }),
+      }),
     );
   });
 });

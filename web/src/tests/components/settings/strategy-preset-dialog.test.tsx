@@ -14,7 +14,15 @@ global.ResizeObserver = vi.fn().mockImplementation(() => ({
 const mockOnSave = vi.fn();
 const mockOnClose = vi.fn();
 
-function renderDialog(open = true, initialPreset = null as null | { name: string; type: string; params: Record<string, number> }) {
+function renderDialog(
+  open = true,
+  initialPreset = null as null | {
+    name: string;
+    type: string;
+    params: Record<string, number>;
+    market?: "tw" | "us";
+  },
+) {
   return render(
     <StrategyPresetDialog
       open={open}
@@ -34,6 +42,7 @@ describe("StrategyPresetDialog", () => {
     renderDialog();
     expect(screen.getByTestId("preset-dialog")).toBeInTheDocument();
     expect(screen.getByTestId("preset-name-input")).toBeInTheDocument();
+    expect(screen.getByTestId("preset-market-select")).toBeInTheDocument();
     expect(screen.getByTestId("preset-type-select")).toBeInTheDocument();
   });
 
@@ -63,8 +72,27 @@ describe("StrategyPresetDialog", () => {
     });
     fireEvent.click(screen.getByTestId("preset-dialog-submit"));
     expect(mockOnSave).toHaveBeenCalledWith(
-      expect.objectContaining({ name: "My MA", type: "moving_average_cross" }),
+      expect.objectContaining({
+        name: "My MA",
+        type: "moving_average_cross",
+        market: "tw",
+      }),
       true, // isNew
+    );
+  });
+
+  it("supports selecting US market", () => {
+    renderDialog();
+    fireEvent.change(screen.getByTestId("preset-market-select"), {
+      target: { value: "us" },
+    });
+    fireEvent.change(screen.getByTestId("preset-name-input"), {
+      target: { value: "US MA" },
+    });
+    fireEvent.click(screen.getByTestId("preset-dialog-submit"));
+    expect(mockOnSave).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "US MA", market: "us" }),
+      true,
     );
   });
 
@@ -106,11 +134,14 @@ describe("StrategyPresetDialog", () => {
       name: "Existing RSI",
       type: "rsi",
       params: { period: 21, oversold: 25, overbought: 75 },
+      market: "us",
     });
     const nameInput = screen.getByTestId("preset-name-input") as HTMLInputElement;
     expect(nameInput.value).toBe("Existing RSI");
     const periodInput = screen.getByTestId("param-period") as HTMLInputElement;
     expect(periodInput.value).toBe("21");
+    const marketSelect = screen.getByTestId("preset-market-select") as HTMLSelectElement;
+    expect(marketSelect.value).toBe("us");
   });
 
   it("calls onClose when cancel button clicked", () => {
