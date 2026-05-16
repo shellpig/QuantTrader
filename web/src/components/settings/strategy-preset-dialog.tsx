@@ -7,6 +7,7 @@ import type { StrategyPreset } from "@/hooks/use-config";
 
 const STRATEGY_TYPES = [
   { value: "moving_average_cross", label: "均線交叉" },
+  { value: "dollar_cost_averaging", label: "定期定額" },
   { value: "rsi", label: "RSI 超買超賣" },
   { value: "kd_cross", label: "KD 交叉" },
   { value: "macd_cross", label: "MACD 交叉" },
@@ -27,6 +28,10 @@ const PARAM_SPECS: Record<StrategyTypeValue, ParamSpec[]> = {
   moving_average_cross: [
     { key: "short_window", label: "短均線週期", defaultValue: 20 },
     { key: "long_window", label: "長均線週期", defaultValue: 60 },
+  ],
+  dollar_cost_averaging: [
+    { key: "monthly_day", label: "每月幾號買入", defaultValue: 5 },
+    { key: "monthly_amount", label: "每月投入金額", defaultValue: 10000 },
   ],
   rsi: [
     { key: "period", label: "RSI 週期", defaultValue: 14 },

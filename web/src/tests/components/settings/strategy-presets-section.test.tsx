@@ -34,21 +34,28 @@ vi.mock("@/hooks/use-config", () => ({
 vi.mock("@/components/settings/strategy-preset-dialog", () => ({
   StrategyPresetDialog: ({
     open,
+    initialPreset,
     onClose,
     onSave,
   }: {
     open: boolean;
+    initialPreset: null | { name: string; type: string; params: Record<string, number> };
     onClose: () => void;
     onSave: (p: { name: string; type: string; params: Record<string, number> }, isNew: boolean) => void;
   }) =>
     open ? (
       <div data-testid="mock-preset-dialog">
+        <div data-testid="mock-dialog-mode">{initialPreset ? "edit" : "new"}</div>
         <button
           data-testid="mock-dialog-save"
           onClick={() =>
             onSave(
-              { name: "New Strategy", type: "rsi", params: { period: 14, oversold: 30, overbought: 70 } },
-              true,
+              initialPreset ?? {
+                name: "New Strategy",
+                type: "rsi",
+                params: { period: 14, oversold: 30, overbought: 70 },
+              },
+              !initialPreset,
             )
           }
         >
@@ -75,6 +82,16 @@ describe("StrategyPresetsSection", () => {
     expect(screen.getByTestId("preset-row-RSI_14")).toBeInTheDocument();
   });
 
+  it("renders params summary in each row", () => {
+    render(<StrategyPresetsSection />);
+    expect(screen.getByTestId("preset-summary-MA Cross")).toHaveTextContent(
+      "short_window=20, long_window=60",
+    );
+    expect(screen.getByTestId("preset-summary-RSI_14")).toHaveTextContent(
+      "period=14, oversold=30, overbought=70",
+    );
+  });
+
   it("opens dialog on add-preset-btn click", () => {
     render(<StrategyPresetsSection />);
     fireEvent.click(screen.getByTestId("add-preset-btn"));
@@ -91,6 +108,27 @@ describe("StrategyPresetsSection", () => {
     await waitFor(() => expect(mockUpsert).toHaveBeenCalledTimes(1));
     await waitFor(() =>
       expect(mockToastSuccess).toHaveBeenCalledWith("已新增策略：New Strategy"),
+    );
+  });
+
+  it("opens dialog in edit mode and updates existing preset", async () => {
+    mockUpsert.mockResolvedValueOnce({ name: "MA Cross" });
+
+    render(<StrategyPresetsSection />);
+    fireEvent.click(screen.getByTestId("edit-preset-MA Cross"));
+    expect(screen.getByTestId("mock-dialog-mode")).toHaveTextContent("edit");
+
+    fireEvent.click(screen.getByTestId("mock-dialog-save"));
+
+    await waitFor(() =>
+      expect(mockUpsert).toHaveBeenCalledWith({
+        name: "MA Cross",
+        type: "moving_average_cross",
+        params: { short_window: 20, long_window: 60 },
+      }),
+    );
+    await waitFor(() =>
+      expect(mockToastSuccess).toHaveBeenCalledWith("已更新策略：MA Cross"),
     );
   });
 

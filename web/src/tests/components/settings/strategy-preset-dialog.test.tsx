@@ -79,6 +79,28 @@ describe("StrategyPresetDialog", () => {
     expect(screen.queryByTestId("param-short_window")).not.toBeInTheDocument();
   });
 
+  it("shows eight strategy options including dollar_cost_averaging", () => {
+    renderDialog();
+    const select = screen.getByTestId("preset-type-select") as HTMLSelectElement;
+    expect(select.options).toHaveLength(8);
+    expect(
+      Array.from(select.options).some(
+        (option) => option.value === "dollar_cost_averaging",
+      ),
+    ).toBe(true);
+  });
+
+  it("shows monthly_day and monthly_amount fields for DCA type", () => {
+    renderDialog();
+    fireEvent.change(screen.getByTestId("preset-type-select"), {
+      target: { value: "dollar_cost_averaging" },
+    });
+
+    expect(screen.getByTestId("param-monthly_day")).toBeInTheDocument();
+    expect(screen.getByTestId("param-monthly_amount")).toBeInTheDocument();
+    expect(screen.queryByTestId("param-short_window")).not.toBeInTheDocument();
+  });
+
   it("pre-fills form when editing existing preset", () => {
     renderDialog(true, {
       name: "Existing RSI",

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Trash2, Plus, RotateCcw } from "lucide-react";
+import { Trash2, Plus, RotateCcw, Pencil } from "lucide-react";
 import {
   useStrategyPresets,
   upsertStrategyPreset,
@@ -11,6 +11,12 @@ import {
 import type { StrategyPreset } from "@/hooks/use-config";
 import { useToast } from "@/hooks/use-toast";
 import { StrategyPresetDialog } from "./strategy-preset-dialog";
+
+function formatParamsSummary(params: Record<string, number>): string {
+  return Object.entries(params)
+    .map(([key, value]) => `${key}=${value}`)
+    .join(", ");
+}
 
 export function StrategyPresetsSection() {
   const { presets, isLoading, mutate } = useStrategyPresets();
@@ -94,22 +100,49 @@ export function StrategyPresetsSection() {
             <div
               key={p.name}
               data-testid={`preset-row-${p.name}`}
-              className="flex items-center justify-between rounded border border-slate-800 bg-slate-900 px-4 py-3"
+              onClick={() => {
+                setEditPreset(p);
+                setDialogOpen(true);
+              }}
+              className="flex cursor-pointer items-center justify-between rounded border border-slate-800 bg-slate-900 px-4 py-3 hover:border-slate-700"
             >
               <div>
                 <span className="text-sm font-medium text-slate-100">
                   {p.name}
                 </span>
                 <span className="ml-2 text-xs text-slate-500">{p.type}</span>
+                <p
+                  data-testid={`preset-summary-${p.name}`}
+                  className="mt-1 text-xs text-slate-400"
+                >
+                  {formatParamsSummary(p.params)}
+                </p>
               </div>
-              <button
-                data-testid={`delete-preset-${p.name}`}
-                onClick={() => handleDelete(p.name)}
-                className="rounded p-1 text-slate-500 hover:text-rose-400"
-                aria-label={`刪除 ${p.name}`}
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
+              <div className="flex items-center gap-1">
+                <button
+                  data-testid={`edit-preset-${p.name}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setEditPreset(p);
+                    setDialogOpen(true);
+                  }}
+                  className="rounded p-1 text-slate-500 hover:text-sky-400"
+                  aria-label={`編輯 ${p.name}`}
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  data-testid={`delete-preset-${p.name}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleDelete(p.name);
+                  }}
+                  className="rounded p-1 text-slate-500 hover:text-rose-400"
+                  aria-label={`刪除 ${p.name}`}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
             </div>
           ))}
         </div>
