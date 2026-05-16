@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -138,28 +139,65 @@ async def stream_job_events(
 @router.get("/{job_id}/result")
 def get_job_result(
     job_id: str,
+    format: str | None = None,
+    part: str | None = None,
     manager: JobManager = Depends(get_manager),
-) -> dict[str, Any]:
+) -> Any:
     job = manager.get_job(job_id)
     if job is None:
         raise HTTPException(
             status_code=404,
             detail={"error": {"code": "JOB_NOT_FOUND", "message": f"Job {job_id} not found"}},
         )
-    # Allow "complete" and "cancelled with partial result"
+
+    has_result = (job.status == "complete") or (job.status == "cancelled" and job.result is not None)
+    if not has_result:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": {
+                    "code": "JOB_NOT_COMPLETE",
+                    "message": f"Job status is '{job.status}', not 'complete'",
+                }
+            },
+        )
+
+    if format == "csv":
+        if job.result is None:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": {
+                        "code": "JOB_NOT_COMPLETE",
+                        "message": f"Job status is '{job.status}', not 'complete'",
+                    }
+                },
+            )
+        if job.type == "backtest_batch":
+            from src.services.backtest_service import build_batch_csv_blob
+
+            symbol = str(job.result.get("symbol", "symbol"))
+            ts = datetime.now().strftime("%Y%m%dT%H%M%S")
+            filename = f"batch_{symbol}_{ts}.csv"
+            blob = build_batch_csv_blob(job.result)
+            return StreamingResponse(
+                iter([blob.getvalue()]),
+                media_type="text/csv; charset=utf-8",
+                headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            )
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": {
+                    "code": "CSV_UNSUPPORTED",
+                    "message": f"CSV export is not supported for job type '{job.type}'",
+                }
+            },
+        )
+
     if job.status == "complete":
         return {"data": job.result or {}, "meta": {"job_id": job_id, "status": job.status}}
-    if job.status == "cancelled" and job.result is not None:
-        return {"data": job.result, "meta": {"job_id": job_id, "status": "cancelled"}}
-    raise HTTPException(
-        status_code=409,
-        detail={
-            "error": {
-                "code": "JOB_NOT_COMPLETE",
-                "message": f"Job status is '{job.status}', not 'complete'",
-            }
-        },
-    )
+    return {"data": job.result, "meta": {"job_id": job_id, "status": "cancelled"}}
 
 
 @router.post("/{job_id}/cancel")
@@ -201,6 +239,8 @@ async def _run_job(manager: JobManager, job: Job, params: dict[str, Any]) -> Non
             await _run_data_job(manager, job, params)
         elif job.type == "backtest_run":
             await _run_backtest_run_job(manager, job, params)
+        elif job.type == "backtest_batch":
+            await _run_backtest_batch_job(manager, job, params)
         elif job.type == "dummy":
             await _run_dummy_job(manager, job)
         else:
@@ -364,6 +404,135 @@ async def _run_backtest_run_job(
     payload = serialize_backtest_result(result)
     manager.push_event(job.id, "result", payload)
 
+    current = manager.get_job(job.id)
+    if current and current.status == "cancelled":
+        manager.finish_cancelled_job(job.id, result=payload)
+    else:
+        manager.complete_job(job.id, result=payload)
+
+
+async def _run_backtest_batch_job(
+    manager: JobManager, job: Job, params: dict[str, Any]
+) -> None:
+    """Runner for backtest_batch job type (Phase 10-E-2)."""
+    import pandas as pd
+
+    from src.services.backtest_service import (
+        BacktestServiceError,
+        list_strategy_presets,
+        run_batch_backtest_job,
+    )
+
+    presets = list_strategy_presets()
+    raw_indices = params.get("strategy_preset_indices")
+    selected_indices: list[int]
+    if raw_indices is None:
+        selected_indices = list(range(len(presets)))
+    elif isinstance(raw_indices, list):
+        selected_indices = []
+        for item in raw_indices:
+            if not isinstance(item, int) or item < 0 or item >= len(presets):
+                manager.fail_job(
+                    job.id,
+                    error={"code": "INVALID_PARAMS", "message": "strategy_preset_indices out of range"},
+                )
+                return
+            if item not in selected_indices:
+                selected_indices.append(item)
+    else:
+        manager.fail_job(
+            job.id,
+            error={"code": "INVALID_PARAMS", "message": "strategy_preset_indices must be a list"},
+        )
+        return
+
+    if not selected_indices:
+        manager.fail_job(
+            job.id,
+            error={"code": "INVALID_PARAMS", "message": "No strategy selected"},
+        )
+        return
+
+    total = len(selected_indices)
+    summaries: list[dict[str, Any]] = []
+    shared_price_data: list[dict[str, Any]] = []
+
+    symbol = str(params.get("symbol", ""))
+    market = str(params.get("market", "tw"))
+    start_date = str(params.get("start_date", "2020-01-01"))
+    end_date = str(params.get("end_date", "2024-12-31"))
+    initial_capital = float(params.get("initial_capital", 1_000_000))
+
+    for i, preset_index in enumerate(selected_indices, 1):
+        current = manager.get_job(job.id)
+        if current and current.status == "cancelled":
+            break
+
+        preset = presets[preset_index]
+        manager.push_event(job.id, "progress", {
+            "current": i,
+            "total": total,
+            "preset_index": preset_index,
+            "preset_name": str(preset.get("name", "")),
+            "status": "running",
+        })
+        manager.update_job(
+            job.id,
+            progress=(i - 0.5) / total,
+            message=f"策略比較中：{preset.get('name', '')}",
+        )
+
+        partial = await asyncio.to_thread(
+            run_batch_backtest_job,
+            symbol=symbol,
+            start_ts=pd.Timestamp(start_date),
+            end_exclusive=pd.Timestamp(end_date) + pd.Timedelta(days=1),
+            presets=[preset],
+            market=market,
+            initial_capital=initial_capital,
+        )
+
+        if isinstance(partial, BacktestServiceError):
+            manager.fail_job(
+                job.id,
+                error={"code": partial.code, "message": partial.message},
+            )
+            return
+
+        if not shared_price_data:
+            shared_price_data = partial.get("price_data", [])
+
+        summary = (partial.get("summaries") or [{}])[0]
+        summary["preset_index"] = preset_index
+        summaries.append(summary)
+
+        manager.push_event(job.id, "progress", {
+            "current": i,
+            "total": total,
+            "preset_index": preset_index,
+            "preset_name": str(preset.get("name", "")),
+            "status": "done",
+            "error": summary.get("error"),
+        })
+
+    success_count = len([s for s in summaries if not s.get("error")])
+    failed_count = len(summaries) - success_count
+    payload = {
+        "symbol": symbol,
+        "market": market,
+        "currency": "USD" if str(market).lower() == "us" else "TWD",
+        "engine": "vectorized",
+        "start_date": start_date,
+        "end_date": end_date,
+        "total_presets": total,
+        "completed_presets": len(summaries),
+        "success_count": success_count,
+        "failed_count": failed_count,
+        "price_data": shared_price_data,
+        "summaries": summaries,
+    }
+
+    manager.push_event(job.id, "result", payload)
     current = manager.get_job(job.id)
     if current and current.status == "cancelled":
         manager.finish_cancelled_job(job.id, result=payload)

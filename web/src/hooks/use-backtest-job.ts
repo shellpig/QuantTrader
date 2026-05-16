@@ -18,6 +18,7 @@ export interface BacktestJobError {
 }
 
 export interface UseBacktestJobReturn<TResult> {
+  jobId: string | null;
   status: BacktestJobStatus;
   progress: BacktestProgress | null;
   result: TResult | null;
@@ -27,9 +28,21 @@ export interface UseBacktestJobReturn<TResult> {
   reset: () => void;
 }
 
+export interface UseBacktestJobOptions<TResult> {
+  disableDefaultToasts?: boolean;
+  onProgress?: (progress: BacktestProgress) => void;
+  onResult?: (result: TResult) => void;
+  onComplete?: (result: TResult | null) => void;
+  onCancelled?: (result: TResult | null) => void;
+  onError?: (error: BacktestJobError) => void;
+}
+
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
-export function useBacktestJob<TResult = unknown>(): UseBacktestJobReturn<TResult> {
+export function useBacktestJob<TResult = unknown>(
+  options?: UseBacktestJobOptions<TResult>,
+): UseBacktestJobReturn<TResult> {
+  const [jobId, setJobId] = useState<string | null>(null);
   const [status, setStatus] = useState<BacktestJobStatus>("idle");
   const [progress, setProgress] = useState<BacktestProgress | null>(null);
   const [result, setResult] = useState<TResult | null>(null);
@@ -37,6 +50,7 @@ export function useBacktestJob<TResult = unknown>(): UseBacktestJobReturn<TResul
 
   const jobIdRef = useRef<string | null>(null);
   const esRef = useRef<EventSource | null>(null);
+  const resultRef = useRef<TResult | null>(null);
   const toast = useToast();
 
   const _closeStream = useCallback(() => {
@@ -57,8 +71,10 @@ export function useBacktestJob<TResult = unknown>(): UseBacktestJobReturn<TResul
     setStatus("idle");
     setProgress(null);
     setResult(null);
+    resultRef.current = null;
     setError(null);
     jobIdRef.current = null;
+    setJobId(null);
   }, [_closeStream]);
 
   const start = useCallback(
@@ -67,6 +83,7 @@ export function useBacktestJob<TResult = unknown>(): UseBacktestJobReturn<TResul
       setStatus("running");
       setProgress(null);
       setResult(null);
+      resultRef.current = null;
       setError(null);
 
       let jobId: string;
@@ -79,19 +96,28 @@ export function useBacktestJob<TResult = unknown>(): UseBacktestJobReturn<TResul
         if (!resp.ok) {
           const body = await resp.json().catch(() => ({}));
           const msg = body?.detail?.error?.message ?? `HTTP ${resp.status}`;
+          const err = { code: "HTTP_ERROR", message: msg } satisfies BacktestJobError;
           setStatus("error");
-          setError({ code: "HTTP_ERROR", message: msg });
-          toast.error(`回測失敗：${msg}`);
+          setError(err);
+          if (!options?.disableDefaultToasts) {
+            toast.error(`回測失敗：${msg}`);
+          }
+          options?.onError?.(err);
           return;
         }
         const body = await resp.json();
         jobId = body.job_id;
         jobIdRef.current = jobId;
+        setJobId(jobId);
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
+        const err = { code: "NETWORK_ERROR", message: msg } satisfies BacktestJobError;
         setStatus("error");
-        setError({ code: "NETWORK_ERROR", message: msg });
-        toast.error(`回測失敗：${msg}`);
+        setError(err);
+        if (!options?.disableDefaultToasts) {
+          toast.error(`回測失敗：${msg}`);
+        }
+        options?.onError?.(err);
         return;
       }
 
@@ -101,12 +127,14 @@ export function useBacktestJob<TResult = unknown>(): UseBacktestJobReturn<TResul
       es.addEventListener("progress", (evt) => {
         try {
           const data = JSON.parse(evt.data);
-          setProgress({
+          const nextProgress = {
             current: data.current,
             total: data.total,
             phase: data.phase,
             meta: data,
-          });
+          };
+          setProgress(nextProgress);
+          options?.onProgress?.(nextProgress);
         } catch {
           // ignore parse errors
         }
@@ -116,6 +144,8 @@ export function useBacktestJob<TResult = unknown>(): UseBacktestJobReturn<TResul
         try {
           const data = JSON.parse(evt.data) as TResult;
           setResult(data);
+          resultRef.current = data;
+          options?.onResult?.(data);
         } catch {
           // result parse error handled by error event or onerror
         }
@@ -127,12 +157,19 @@ export function useBacktestJob<TResult = unknown>(): UseBacktestJobReturn<TResul
           const err: BacktestJobError = { code: data.code ?? "UNKNOWN", message: data.message ?? "未知錯誤" };
           setStatus("error");
           setError(err);
-          toast.error(`回測失敗：${err.message}`);
+          if (!options?.disableDefaultToasts) {
+            toast.error(`回測失敗：${err.message}`);
+          }
+          options?.onError?.(err);
           _closeStream();
         } catch {
+          const err = { code: "PARSE_ERROR", message: "SSE 事件解析失敗" } satisfies BacktestJobError;
           setStatus("error");
-          setError({ code: "PARSE_ERROR", message: "SSE 事件解析失敗" });
-          toast.error("回測失敗：SSE 事件解析失敗");
+          setError(err);
+          if (!options?.disableDefaultToasts) {
+            toast.error("回測失敗：SSE 事件解析失敗");
+          }
+          options?.onError?.(err);
           _closeStream();
         }
       });
@@ -146,29 +183,46 @@ export function useBacktestJob<TResult = unknown>(): UseBacktestJobReturn<TResul
             const s = body.status as BacktestJobStatus;
             if (s === "complete") {
               setStatus("complete");
-              toast.success("回測完成");
+              if (!options?.disableDefaultToasts) {
+                toast.success("回測完成");
+              }
+              options?.onComplete?.(resultRef.current);
             } else if (s === "cancelled") {
               setStatus("cancelled");
-              toast.info("回測已取消");
+              if (!options?.disableDefaultToasts) {
+                toast.info("回測已取消");
+              }
+              options?.onCancelled?.(resultRef.current);
             } else if (s === "error") {
               setStatus("error");
               const msg = body.message ?? "執行失敗";
-              setError({ code: "JOB_ERROR", message: msg });
-              toast.error(`回測失敗：${msg}`);
+              const err = { code: "JOB_ERROR", message: msg } satisfies BacktestJobError;
+              setError(err);
+              if (!options?.disableDefaultToasts) {
+                toast.error(`回測失敗：${msg}`);
+              }
+              options?.onError?.(err);
             } else {
               // still running? retry a bit later — shouldn't happen
               setStatus("complete");
-              toast.success("回測完成");
+              if (!options?.disableDefaultToasts) {
+                toast.success("回測完成");
+              }
+              options?.onComplete?.(resultRef.current);
             }
           })
           .catch(() => {
+            const err = { code: "POLL_ERROR", message: "無法取得回測結果" } satisfies BacktestJobError;
             setStatus("error");
-            setError({ code: "POLL_ERROR", message: "無法取得回測結果" });
-            toast.error("回測失敗：無法取得結果");
+            setError(err);
+            if (!options?.disableDefaultToasts) {
+              toast.error("回測失敗：無法取得結果");
+            }
+            options?.onError?.(err);
           });
       };
     },
-    [_closeStream, toast],
+    [_closeStream, options, toast],
   );
 
   const cancel = useCallback(async (): Promise<void> => {
@@ -181,5 +235,5 @@ export function useBacktestJob<TResult = unknown>(): UseBacktestJobReturn<TResul
     }
   }, []);
 
-  return { status, progress, result, error, start, cancel, reset };
+  return { jobId, status, progress, result, error, start, cancel, reset };
 }

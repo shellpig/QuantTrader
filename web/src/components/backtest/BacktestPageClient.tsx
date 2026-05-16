@@ -7,12 +7,13 @@ import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { SingleRunTab } from "./SingleRunTab";
+import { BatchCompareTab } from "./BatchCompareTab";
 
 type Tab = "single" | "batch" | "sweep" | "wfa";
 
 const TABS: { id: Tab; label: string; phase?: string }[] = [
   { id: "single", label: "單次回測" },
-  { id: "batch", label: "策略比較", phase: "10-E-2" },
+  { id: "batch", label: "策略比較" },
   { id: "sweep", label: "參數掃描", phase: "10-E-3" },
   { id: "wfa", label: "Walk-Forward", phase: "10-E-4" },
 ];
@@ -84,7 +85,7 @@ export function BacktestPageClient() {
       {/* Tab content */}
       <ErrorBoundary>
         {activeTab === "single" && <SingleRunTab />}
-        {activeTab === "batch" && <DisabledTabContent phase="10-E-2" />}
+        {activeTab === "batch" && <BatchCompareTab />}
         {activeTab === "sweep" && <DisabledTabContent phase="10-E-3" />}
         {activeTab === "wfa" && <DisabledTabContent phase="10-E-4" />}
       </ErrorBoundary>

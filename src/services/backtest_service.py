@@ -6,11 +6,13 @@ No Streamlit calls are made here.
 
 from __future__ import annotations
 
+import io
 from dataclasses import dataclass, field
 from typing import Any
 
 import pandas as pd
 
+from src.backtest.batch import StrategyRunSummary, run_strategy_batch
 from src.backtest.cost import create_cost_calculator
 from src.backtest.dca import DcaBacktestResult, run_dca_backtest
 from src.backtest.engine_event import EventDrivenBacktester
@@ -322,6 +324,102 @@ def list_strategy_presets() -> list[dict[str, Any]]:
     return get_strategy_presets(get_config())
 
 
+def run_batch_backtest_job(
+    *,
+    symbol: str,
+    start_ts: pd.Timestamp,
+    end_exclusive: pd.Timestamp,
+    presets: list[dict[str, Any]],
+    market: str = "tw",
+    initial_capital: float = 1_000_000,
+) -> dict[str, Any] | BacktestServiceError:
+    """Run batch strategy comparison and return JSON-safe payload.
+
+    Notes:
+    - price_data is returned once at the top-level.
+    - each summary may carry a `detail` payload for row expansion.
+    """
+    normalized_market = normalize_market(market)
+    market_spec = get_market_spec(normalized_market)
+
+    data = load_backtest_data(
+        symbol,
+        start_ts,
+        end_exclusive,
+        market=normalized_market,
+        require_adjusted=True,
+    )
+    if isinstance(data, BacktestServiceError):
+        return data
+
+    batch_result = run_strategy_batch(
+        data=data,
+        symbol=symbol,
+        start_date=str(start_ts.date()),
+        end_date=str((end_exclusive - pd.Timedelta(days=1)).date()),
+        presets=presets,
+        initial_capital=initial_capital,
+        cost_calculator=create_cost_calculator(market=normalized_market),
+    )
+
+    summaries: list[dict[str, Any]] = []
+    for idx, (preset, summary) in enumerate(zip(presets, batch_result.summaries, strict=False)):
+        summaries.append(
+            _serialize_batch_summary(
+                preset_index=idx,
+                preset=preset,
+                summary=summary,
+                symbol=symbol,
+                market=normalized_market,
+                currency=market_spec.currency,
+            )
+        )
+
+    return {
+        "symbol": symbol,
+        "market": normalized_market,
+        "currency": market_spec.currency,
+        "engine": "vectorized",
+        "start_date": str(start_ts.date()),
+        "end_date": str((end_exclusive - pd.Timedelta(days=1)).date()),
+        "price_data": _serialize_price_data(data),
+        "summaries": summaries,
+    }
+
+
+def build_batch_csv_blob(batch_payload: dict[str, Any]) -> io.StringIO:
+    """Build in-memory CSV blob for backtest_batch result."""
+    summaries = batch_payload.get("summaries", [])
+    rows: list[dict[str, Any]] = []
+
+    for s in summaries:
+        total_return = s.get("total_return")
+        annual_return = s.get("annual_return")
+        max_drawdown = s.get("max_drawdown")
+        sharpe_ratio = s.get("sharpe_ratio")
+        win_rate = s.get("win_rate")
+        profit_factor = s.get("profit_factor")
+        total_trades = s.get("total_trades")
+
+        rows.append({
+            "策略名稱": s.get("preset_name", ""),
+            "策略類型": s.get("strategy_type", ""),
+            "總報酬": _fmt_pct(total_return),
+            "年化報酬": _fmt_pct(annual_return),
+            "最大回撤": _fmt_pct(max_drawdown),
+            "Sharpe": _fmt_num(sharpe_ratio, 2),
+            "勝率": _fmt_pct(win_rate),
+            "Profit Factor": _fmt_profit_factor(profit_factor),
+            "交易次數": int(total_trades or 0),
+            "錯誤": s.get("error") or "",
+        })
+
+    buffer = io.StringIO()
+    pd.DataFrame(rows).to_csv(buffer, index=False)
+    buffer.seek(0)
+    return buffer
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
@@ -527,6 +625,51 @@ def _signals_from_trades(trades_df: pd.DataFrame) -> list[dict[str, Any]]:
     return signals
 
 
+def _serialize_batch_summary(
+    *,
+    preset_index: int,
+    preset: dict[str, Any],
+    summary: StrategyRunSummary,
+    symbol: str,
+    market: str,
+    currency: str,
+) -> dict[str, Any]:
+    strategy_params = preset.get("params", {}) if isinstance(preset.get("params"), dict) else {}
+    detail: dict[str, Any] | None = None
+
+    if summary.result is not None and summary.error is None:
+        detail_payload = serialize_backtest_result(
+            BacktestJobResult(
+                symbol=symbol,
+                market=market,
+                strategy_type=summary.strategy_type,
+                strategy_params=strategy_params,
+                currency=currency,
+                engine="vectorized",
+                result=summary.result,
+                data=pd.DataFrame(),
+            )
+        )
+        detail_payload.pop("price_data", None)
+        detail = detail_payload
+
+    return {
+        "preset_index": preset_index,
+        "preset_name": summary.preset_name,
+        "strategy_type": summary.strategy_type,
+        "strategy_params": strategy_params,
+        "total_return": round(float(summary.total_return), 6) if summary.error is None else None,
+        "annual_return": round(float(summary.annual_return), 6) if summary.error is None else None,
+        "max_drawdown": round(float(summary.max_drawdown), 6) if summary.error is None else None,
+        "sharpe_ratio": round(float(summary.sharpe_ratio), 4) if summary.error is None else None,
+        "win_rate": round(float(summary.win_rate), 4) if summary.error is None else None,
+        "profit_factor": round(float(summary.profit_factor), 4) if summary.error is None else None,
+        "total_trades": int(summary.total_trades),
+        "error": summary.error,
+        "detail": detail,
+    }
+
+
 def _dca_equity_curve(transactions: pd.DataFrame, price_data: pd.DataFrame) -> list[dict[str, Any]]:
     """Derive daily equity curve from DCA transactions + price data."""
     if price_data is None or price_data.empty:
@@ -562,6 +705,27 @@ def _dca_equity_curve(transactions: pd.DataFrame, price_data: pd.DataFrame) -> l
         result.append({"date": str(day.date()), "value": value})
 
     return result
+
+
+def _fmt_pct(value: Any) -> str:
+    if value is None:
+        return ""
+    return f"{float(value) * 100:.2f}%"
+
+
+def _fmt_num(value: Any, digits: int) -> str:
+    if value is None:
+        return ""
+    return f"{float(value):.{digits}f}"
+
+
+def _fmt_profit_factor(value: Any) -> str:
+    if value is None:
+        return ""
+    pf = float(value)
+    if pf >= 999.0:
+        return "N/A"
+    return f"{pf:.2f}"
 
 
 def _build_fetchers_from_config(market: str = "tw") -> list[tuple[str, IDataFetcher]]:

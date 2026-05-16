@@ -73,6 +73,74 @@ _MOCK_RESULT_PAYLOAD = {
     "dca_warning": None,
 }
 
+_MOCK_BATCH_PAYLOAD = {
+    "symbol": "2330",
+    "market": "tw",
+    "currency": "TWD",
+    "engine": "vectorized",
+    "start_date": "2020-01-01",
+    "end_date": "2024-12-31",
+    "total_presets": 2,
+    "completed_presets": 2,
+    "success_count": 1,
+    "failed_count": 1,
+    "price_data": [{"date": "2020-01-02", "open": 330, "high": 335, "low": 328, "close": 333, "volume": 10000}],
+    "summaries": [
+        {
+            "preset_index": 0,
+            "preset_name": "MA20_MA60",
+            "strategy_type": "moving_average_cross",
+            "strategy_params": {"short_window": 20, "long_window": 60},
+            "total_return": 0.2,
+            "annual_return": 0.05,
+            "max_drawdown": 0.1,
+            "sharpe_ratio": 0.8,
+            "win_rate": 0.6,
+            "profit_factor": 1.5,
+            "total_trades": 5,
+            "error": None,
+            "detail": {
+                "symbol": "2330",
+                "market": "tw",
+                "currency": "TWD",
+                "engine": "vectorized",
+                "strategy_type": "moving_average_cross",
+                "strategy_params": {"short_window": 20, "long_window": 60},
+                "metrics": {
+                    "total_trades": 5,
+                    "total_return": 0.2,
+                    "annual_return": 0.05,
+                    "max_drawdown": 0.1,
+                    "max_drawdown_start": "2022-01-01",
+                    "max_drawdown_end": "2022-06-01",
+                    "sharpe_ratio": 0.8,
+                    "win_rate": 0.6,
+                    "profit_factor": 1.5,
+                },
+                "equity_curve": [{"date": "2020-01-02", "value": 1000000}],
+                "trades": [],
+                "signals": [],
+                "dca_warning": None,
+            },
+        },
+        {
+            "preset_index": 1,
+            "preset_name": "定期定額",
+            "strategy_type": "dollar_cost_averaging",
+            "strategy_params": {"monthly_day": 5, "monthly_amount": 10000},
+            "total_return": None,
+            "annual_return": None,
+            "max_drawdown": None,
+            "sharpe_ratio": None,
+            "win_rate": None,
+            "profit_factor": None,
+            "total_trades": 0,
+            "error": "DCA 不支援批次比較（請至單次回測使用）",
+            "detail": None,
+        },
+    ],
+}
+
 
 def _reset_manager() -> None:
     import api.job_manager as jm
@@ -90,6 +158,17 @@ def _wait_for_job(job_id: str, timeout: float = 5.0) -> dict:
             return body
         time.sleep(0.05)
     return client.get(f"/api/jobs/{job_id}").json()
+
+
+def _wait_for_result(job_id: str, timeout: float = 5.0):
+    deadline = time.time() + timeout
+    last = None
+    while time.time() < deadline:
+        last = client.get(f"/api/jobs/{job_id}/result")
+        if last.status_code == 200:
+            return last
+        time.sleep(0.05)
+    return last
 
 
 # ---------------------------------------------------------------------------
@@ -323,3 +402,178 @@ def test_finish_cancelled_job_closes_queue() -> None:
         assert retrieved.result == partial
 
     asyncio.run(_run())
+
+
+# ---------------------------------------------------------------------------
+# 10-E-2 backtest_batch tests
+# ---------------------------------------------------------------------------
+
+
+def test_backtest_batch_creates_job_and_returns_summaries() -> None:
+    _reset_manager()
+    with (
+        patch("src.services.backtest_service.list_strategy_presets", return_value=_MINIMAL_PRESETS),
+        patch("src.services.backtest_service.run_batch_backtest_job", return_value=_MOCK_BATCH_PAYLOAD),
+    ):
+        resp = client.post("/api/jobs", json={
+            "type": "backtest_batch",
+            "params": {
+                "market": "tw",
+                "symbol": "2330",
+                "start_date": "2020-01-01",
+                "end_date": "2024-12-31",
+                "strategy_preset_indices": [0],
+            },
+        })
+        assert resp.status_code == 201
+        job_id = resp.json()["job_id"]
+        final = _wait_for_job(job_id)
+        assert final["status"] == "complete"
+        result = client.get(f"/api/jobs/{job_id}/result")
+        assert result.status_code == 200
+        data = result.json()["data"]
+        assert "summaries" in data
+        assert isinstance(data["summaries"], list)
+        assert len(data["summaries"]) == 1
+
+
+def test_backtest_batch_dca_summary_has_error() -> None:
+    _reset_manager()
+    manager = get_job_manager()
+
+    payload = dict(_MOCK_BATCH_PAYLOAD)
+
+    async def _setup() -> str:
+        job = await manager.create_job("backtest_batch", {})
+        manager.complete_job(job.id, result=payload)
+        return job.id
+
+    job_id = asyncio.run(_setup())
+    result = client.get(f"/api/jobs/{job_id}/result")
+    assert result.status_code == 200
+    summaries = result.json()["data"]["summaries"]
+    dca_rows = [s for s in summaries if s["strategy_type"] == "dollar_cost_averaging"]
+    assert len(dca_rows) == 1
+    assert dca_rows[0]["error"] is not None
+
+
+def test_backtest_batch_cancel_keeps_partial_result() -> None:
+    _reset_manager()
+    manager = get_job_manager()
+
+    partial = dict(_MOCK_BATCH_PAYLOAD)
+    partial["completed_presets"] = 3
+    partial["total_presets"] = 8
+    partial["summaries"] = partial["summaries"][:1]
+
+    async def _setup() -> str:
+        job = await manager.create_job("backtest_batch", {})
+        job.status = "cancelled"
+        manager.finish_cancelled_job(job.id, result=partial)
+        return job.id
+
+    job_id = asyncio.run(_setup())
+    result = client.get(f"/api/jobs/{job_id}/result")
+    assert result.status_code == 200
+    body = result.json()
+    assert body["meta"]["status"] == "cancelled"
+    assert body["data"]["completed_presets"] == 3
+    assert body["data"]["total_presets"] == 8
+
+
+def test_backtest_batch_csv_export_returns_blob() -> None:
+    _reset_manager()
+    with (
+        patch("src.services.backtest_service.list_strategy_presets", return_value=_MINIMAL_PRESETS),
+        patch("src.services.backtest_service.run_batch_backtest_job", return_value=_MOCK_BATCH_PAYLOAD),
+    ):
+        create = client.post("/api/jobs", json={
+            "type": "backtest_batch",
+            "params": {
+                "market": "tw",
+                "symbol": "2330",
+                "start_date": "2020-01-01",
+                "end_date": "2024-12-31",
+                "strategy_preset_indices": [0],
+            },
+        })
+        job_id = create.json()["job_id"]
+        _wait_for_job(job_id)
+        csv_resp = client.get(f"/api/jobs/{job_id}/result?format=csv")
+
+    assert csv_resp.status_code == 200
+    assert "text/csv" in csv_resp.headers.get("content-type", "")
+    disposition = csv_resp.headers.get("content-disposition", "")
+    assert "attachment" in disposition
+    assert "batch_2330_" in disposition
+
+
+def test_backtest_batch_sse_progress_per_preset() -> None:
+    _reset_manager()
+    presets = [
+        {"name": "MA20_MA60", "type": "moving_average_cross", "params": {"short_window": 20, "long_window": 60}},
+        {"name": "RSI_14", "type": "rsi", "params": {"period": 14, "oversold": 30, "overbought": 70}},
+    ]
+
+    def _one_preset_payload(*, presets: list[dict], **_: object) -> dict:
+        p = presets[0]
+        return {
+            "symbol": "2330",
+            "market": "tw",
+            "currency": "TWD",
+            "engine": "vectorized",
+            "start_date": "2020-01-01",
+            "end_date": "2024-12-31",
+            "price_data": [],
+            "summaries": [{
+                "preset_index": 0,
+                "preset_name": p["name"],
+                "strategy_type": p["type"],
+                "strategy_params": p["params"],
+                "total_return": 0.1,
+                "annual_return": 0.03,
+                "max_drawdown": 0.1,
+                "sharpe_ratio": 0.7,
+                "win_rate": 0.5,
+                "profit_factor": 1.2,
+                "total_trades": 3,
+                "error": None,
+                "detail": None,
+            }],
+        }
+
+    with (
+        patch("src.services.backtest_service.list_strategy_presets", return_value=presets),
+        patch("src.services.backtest_service.run_batch_backtest_job", side_effect=_one_preset_payload),
+    ):
+        create = client.post("/api/jobs", json={
+            "type": "backtest_batch",
+            "params": {
+                "market": "tw",
+                "symbol": "2330",
+                "start_date": "2020-01-01",
+                "end_date": "2024-12-31",
+                "strategy_preset_indices": [0, 1],
+            },
+        })
+        job_id = create.json()["job_id"]
+        _wait_for_job(job_id, timeout=8.0)
+
+        progress_payloads: list[dict] = []
+        with client.stream("GET", f"/api/jobs/{job_id}/events") as stream:
+            current_event: str | None = None
+            for line in stream.iter_lines():
+                if not line:
+                    continue
+                if line.startswith("event:"):
+                    current_event = line.split(":", 1)[1].strip()
+                    continue
+                if line.startswith("data:"):
+                    raw = line.split(":", 1)[1].strip()
+                    if current_event == "progress":
+                        import json
+                        progress_payloads.append(json.loads(raw))
+
+        assert len(progress_payloads) >= 2
+        assert all("current" in p and "total" in p for p in progress_payloads)
+        assert {p["preset_name"] for p in progress_payloads if "preset_name" in p} >= {"MA20_MA60", "RSI_14"}

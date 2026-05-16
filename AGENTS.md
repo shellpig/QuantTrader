@@ -12,15 +12,16 @@ At conversation start, read in this layered order. Ignore `舊文件/`.
 1. `AGENTS.md` (this file)
 2. `PROJECT_BRIEF.md` (architecture, progress, spec index)
 3. `驗證後已知問題.md` (current todos and known gaps)
-4. `git log --oneline -15` (recent commits)
+4. `git log --oneline -10` (recent commits)
 
 **Layer 2 — Expand per current task (targeted sections only):**
-- Use line-number index in `PROJECT_BRIEF.md` to read only relevant sections of `開發設計方針.md` / `測試指南.md`. Don't read entire files.
+- Use line-number index in `PROJECT_BRIEF.md` to read only relevant sections of `量化交易系統規格書_shellpig版.md` / `開發設計方針.md` / `測試指南.md`. Don't read entire files.
 
 **Layer 3 — Reference during implementation:**
-- `Sandbox_Dating_Sim_初始設定_v1.2.md` — field definitions, default options, UI specs
-- `Sandbox_Dating_Sim_Dev_正式規格_v1.2.md` — system architecture, DSL syntax
-- `Sandbox_Dating_Sim_文件管線規格_v1.1.md` — document format specs
+- `量化交易系統規格書_shellpig版.md` — 
+- `開發設計方針.md` — 
+- `測試指南.md` — 
+- `驗證後已知問題.md` —
 - Source code: read as needed per task
 
 Report to user: current progress, and any issues with their scope of impact.
@@ -41,7 +42,7 @@ Only modify files when user explicitly requests fix, implement, or commit. Verif
 - `量化交易系統規格書_shellpig版.md` — 個人版規格書（純 Python、台股、DuckDB、AI 問答）
 - `開發設計方針.md` — 實作指引（檔案清單、類別簽名、資料契約）
 - `測試指南.md` — 測試流程與驗收標準
-- `已知問題.md` — 驗收問題追蹤（每次必讀）
+- `驗證後已知問題.md` — 驗收問題追蹤（每次必讀）
 - `未涵蓋資料項目.md` — 目前不抓不存的資料項目
 
 ## 技術棧
