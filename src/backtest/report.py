@@ -187,15 +187,6 @@ class TearsheetReport:
     def _apply_theme(self, fig: go.Figure) -> go.Figure:
         return fig
 
-        for trace in fig.data:
-            if hasattr(trace, "header") and hasattr(trace.header, "update"):
-                trace.header.update(fill_color=palette["surface"])
-                trace.header.font.update(color=palette["text"])
-                trace.cells.update(fill_color=palette["background"])
-                trace.cells.font.update(color=palette["text"])
-
-        return fig
-
     @staticmethod
     def _format_percent(value: float) -> str:
         return f"{value * 100:.2f}%"
