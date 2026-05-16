@@ -95,7 +95,7 @@ describe("useBacktestJob", () => {
     mockFetch.mockResolvedValueOnce({
       ok: false,
       status: 409,
-      json: async () => ({ detail: { error: { message: "Lock busy" } } }),
+      json: async () => ({ detail: { error: { code: "WRITE_LOCK_BUSY", message: "Lock busy" } } }),
     });
 
     const { result } = renderHook(() => useBacktestJob());
@@ -104,7 +104,7 @@ describe("useBacktestJob", () => {
     });
 
     expect(result.current.status).toBe("error");
-    expect(result.current.error?.code).toBe("HTTP_ERROR");
+    expect(result.current.error?.code).toBe("WRITE_LOCK_BUSY");
     expect(mockToastError).toHaveBeenCalledTimes(1);
   });
 
@@ -198,5 +198,36 @@ describe("useBacktestJob", () => {
     expect(result.current.status).toBe("idle");
     expect(result.current.result).toBeNull();
     expect(result.current.error).toBeNull();
+  });
+
+  it("uses job.error details when polling ends with status=error", async () => {
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ job_id: "job-poll-error" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          status: "error",
+          message: "錯誤",
+          error: { code: "OVER_MAX_COMBOS", message: "合法組合數 225 超過上限 200" },
+        }),
+      });
+
+    const { result } = renderHook(() => useBacktestJob());
+    await act(async () => {
+      await result.current.start("backtest_sweep", {});
+    });
+
+    const es = MockEventSource.instances[0];
+    await act(async () => {
+      es.onerror?.(new Event("error"));
+      await Promise.resolve();
+    });
+
+    expect(result.current.status).toBe("error");
+    expect(result.current.error?.code).toBe("OVER_MAX_COMBOS");
+    expect(result.current.error?.message).toContain("超過上限 200");
   });
 });

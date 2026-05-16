@@ -1,20 +1,21 @@
 "use client";
 
-// Backtest page client — 4-tab framework (Phase 10-E-1)
-// Tabs: 單次（active）/ 策略比較（disabled）/ 參數掃描（disabled）/ Walk-Forward（disabled）
+// Backtest page client — 4-tab framework (Phase 10-E)
+// Tabs: 單次 / 策略比較 / 參數掃描 / Walk-Forward（開發中）
 
 import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { SingleRunTab } from "./SingleRunTab";
 import { BatchCompareTab } from "./BatchCompareTab";
+import { SweepTab } from "./SweepTab";
 
 type Tab = "single" | "batch" | "sweep" | "wfa";
 
 const TABS: { id: Tab; label: string; phase?: string }[] = [
   { id: "single", label: "單次回測" },
   { id: "batch", label: "策略比較" },
-  { id: "sweep", label: "參數掃描", phase: "10-E-3" },
+  { id: "sweep", label: "參數掃描" },
   { id: "wfa", label: "Walk-Forward", phase: "10-E-4" },
 ];
 
@@ -86,7 +87,7 @@ export function BacktestPageClient() {
       <ErrorBoundary>
         {activeTab === "single" && <SingleRunTab />}
         {activeTab === "batch" && <BatchCompareTab />}
-        {activeTab === "sweep" && <DisabledTabContent phase="10-E-3" />}
+        {activeTab === "sweep" && <SweepTab />}
         {activeTab === "wfa" && <DisabledTabContent phase="10-E-4" />}
       </ErrorBoundary>
     </div>

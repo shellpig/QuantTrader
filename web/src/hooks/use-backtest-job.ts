@@ -96,7 +96,8 @@ export function useBacktestJob<TResult = unknown>(
         if (!resp.ok) {
           const body = await resp.json().catch(() => ({}));
           const msg = body?.detail?.error?.message ?? `HTTP ${resp.status}`;
-          const err = { code: "HTTP_ERROR", message: msg } satisfies BacktestJobError;
+          const code = body?.detail?.error?.code ?? "HTTP_ERROR";
+          const err = { code, message: msg } satisfies BacktestJobError;
           setStatus("error");
           setError(err);
           if (!options?.disableDefaultToasts) {
@@ -195,8 +196,9 @@ export function useBacktestJob<TResult = unknown>(
               options?.onCancelled?.(resultRef.current);
             } else if (s === "error") {
               setStatus("error");
-              const msg = body.message ?? "執行失敗";
-              const err = { code: "JOB_ERROR", message: msg } satisfies BacktestJobError;
+              const msg = body?.error?.message ?? body?.message ?? "執行失敗";
+              const code = body?.error?.code ?? "JOB_ERROR";
+              const err = { code, message: msg } satisfies BacktestJobError;
               setError(err);
               if (!options?.disableDefaultToasts) {
                 toast.error(`回測失敗：${msg}`);

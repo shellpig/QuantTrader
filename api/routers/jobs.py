@@ -39,6 +39,7 @@ def _job_to_response(job: Job) -> dict[str, Any]:
         "status": job.status,
         "progress": job.progress,
         "message": job.message,
+        "error": job.error,
         "created_at": job.created_at.isoformat(),
     }
 
@@ -58,6 +59,26 @@ async def create_job(
     Write-type jobs require the write lock — returns 409 if locked.
     The background runner releases the lock when done.
     """
+    if request.type == "backtest_sweep":
+        from src.services.backtest_service import BacktestServiceError, validate_sweep_request
+
+        validated = validate_sweep_request(
+            strategy_type=str(request.params.get("strategy_type", "")),
+            param_candidates=request.params.get("param_candidates", {}),
+        )
+        if isinstance(validated, BacktestServiceError):
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error": {
+                        "code": validated.code,
+                        "message": validated.message,
+                    }
+                },
+            )
+        request.params["strategy_type"] = validated["strategy_type"]
+        request.params["param_candidates"] = validated["param_candidates"]
+
     is_write = request.type in _WRITE_JOB_TYPES
     if is_write:
         acquired = await manager.acquire_write_lock()
@@ -185,6 +206,18 @@ def get_job_result(
                 media_type="text/csv; charset=utf-8",
                 headers={"Content-Disposition": f'attachment; filename="{filename}"'},
             )
+        if job.type == "backtest_sweep":
+            from src.services.backtest_service import build_sweep_csv_blob
+
+            symbol = str(job.result.get("symbol", "symbol"))
+            ts = datetime.now().strftime("%Y%m%dT%H%M%S")
+            filename = f"sweep_{symbol}_{ts}.csv"
+            blob = build_sweep_csv_blob(job.result)
+            return StreamingResponse(
+                iter([blob.getvalue()]),
+                media_type="text/csv; charset=utf-8",
+                headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            )
         raise HTTPException(
             status_code=422,
             detail={
@@ -241,6 +274,8 @@ async def _run_job(manager: JobManager, job: Job, params: dict[str, Any]) -> Non
             await _run_backtest_run_job(manager, job, params)
         elif job.type == "backtest_batch":
             await _run_backtest_batch_job(manager, job, params)
+        elif job.type == "backtest_sweep":
+            await _run_backtest_sweep_job(manager, job, params)
         elif job.type == "dummy":
             await _run_dummy_job(manager, job)
         else:
@@ -531,6 +566,74 @@ async def _run_backtest_batch_job(
         "price_data": shared_price_data,
         "summaries": summaries,
     }
+
+    manager.push_event(job.id, "result", payload)
+    current = manager.get_job(job.id)
+    if current and current.status == "cancelled":
+        manager.finish_cancelled_job(job.id, result=payload)
+    else:
+        manager.complete_job(job.id, result=payload)
+
+
+async def _run_backtest_sweep_job(
+    manager: JobManager, job: Job, params: dict[str, Any]
+) -> None:
+    """Runner for backtest_sweep job type (Phase 10-E-3)."""
+    import pandas as pd
+
+    from src.services.backtest_service import (
+        BacktestServiceError,
+        run_sweep_job,
+    )
+
+    strategy_type = str(params.get("strategy_type", "")).strip().lower()
+    raw_candidates = params.get("param_candidates")
+    if not isinstance(raw_candidates, dict):
+        manager.fail_job(
+            job.id,
+            error={"code": "INVALID_PARAMS", "message": "param_candidates must be an object"},
+        )
+        return
+
+    manager.update_job(job.id, progress=0.02, message="參數掃描啟動中…")
+
+    def _on_progress(current: int, total: int, current_params: dict[str, Any]) -> None:
+        manager.push_event(job.id, "progress", {
+            "current": current,
+            "total": total,
+            "current_params": current_params,
+            "status": "running",
+        })
+        manager.update_job(
+            job.id,
+            progress=max(0.02, current / total) if total > 0 else 0.02,
+            message=f"參數掃描中：{current}/{total}",
+        )
+
+    def _should_cancel() -> bool:
+        current = manager.get_job(job.id)
+        return bool(current and current.status == "cancelled")
+
+    payload = await asyncio.to_thread(
+        run_sweep_job,
+        symbol=str(params.get("symbol", "")),
+        start_ts=pd.Timestamp(str(params.get("start_date", "2020-01-01"))),
+        end_exclusive=pd.Timestamp(str(params.get("end_date", "2024-12-31")))
+        + pd.Timedelta(days=1),
+        strategy_type=strategy_type,
+        param_candidates=raw_candidates,
+        market=str(params.get("market", "tw")),
+        initial_capital=float(params.get("initial_capital", 1_000_000)),
+        on_progress=_on_progress,
+        should_cancel=_should_cancel,
+    )
+
+    if isinstance(payload, BacktestServiceError):
+        manager.fail_job(
+            job.id,
+            error={"code": payload.code, "message": payload.message},
+        )
+        return
 
     manager.push_event(job.id, "result", payload)
     current = manager.get_job(job.id)

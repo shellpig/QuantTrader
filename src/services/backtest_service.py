@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import io
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 import pandas as pd
 
@@ -18,6 +18,7 @@ from src.backtest.dca import DcaBacktestResult, run_dca_backtest
 from src.backtest.engine_event import EventDrivenBacktester
 from src.backtest.engine_vec import VectorizedBacktester
 from src.backtest.metrics import BacktestResult
+from src.backtest.sweep import MAX_COMBOS, SWEEP_PARAM_SPECS, generate_param_grid
 from src.core.config import get_config
 from src.core.exceptions import FetcherError
 from src.core.market import get_market_spec, normalize_market, normalize_symbol
@@ -46,6 +47,26 @@ _SUPPORTED_TYPES = {
     "bollinger_band",
     "bias",
     "donchian_breakout",
+}
+
+_SWEEP_PARAM_TYPES: dict[str, str] = {
+    "short_window": "int",
+    "long_window": "int",
+    "period": "int",
+    "oversold": "float",
+    "overbought": "float",
+    "k_period": "int",
+    "d_period": "int",
+    "smooth_k": "int",
+    "fast": "int",
+    "slow": "int",
+    "signal": "int",
+    "std_dev": "float",
+    "ma_period": "int",
+    "buy_bias": "float",
+    "sell_bias": "float",
+    "entry_period": "int",
+    "exit_period": "int",
 }
 
 
@@ -420,6 +441,175 @@ def build_batch_csv_blob(batch_payload: dict[str, Any]) -> io.StringIO:
     return buffer
 
 
+def run_sweep_job(
+    *,
+    symbol: str,
+    start_ts: pd.Timestamp,
+    end_exclusive: pd.Timestamp,
+    strategy_type: str,
+    param_candidates: dict[str, list[Any]],
+    market: str = "tw",
+    initial_capital: float = 1_000_000,
+    on_progress: Callable[[int, int, dict[str, Any]], None] | None = None,
+    should_cancel: Callable[[], bool] | None = None,
+) -> dict[str, Any] | BacktestServiceError:
+    """Run parameter sweep and return JSON-safe payload for 10-E-3."""
+    normalized_market = normalize_market(market)
+    market_spec = get_market_spec(normalized_market)
+    validated = validate_sweep_request(
+        strategy_type=strategy_type,
+        param_candidates=param_candidates,
+    )
+    if isinstance(validated, BacktestServiceError):
+        return validated
+
+    strategy_type = validated["strategy_type"]
+    normalized_candidates = validated["param_candidates"]
+    total_combos = validated["total_combos"]
+    valid_list = validated["valid_params_list"]
+    valid_combos = validated["valid_combos"]
+
+    data = load_backtest_data(
+        symbol,
+        start_ts,
+        end_exclusive,
+        market=normalized_market,
+        require_adjusted=True,
+    )
+    if isinstance(data, BacktestServiceError):
+        return data
+
+    calculator = create_cost_calculator(market=normalized_market)
+    results: list[dict[str, Any]] = []
+
+    for idx, params in enumerate(valid_list, start=1):
+        if should_cancel is not None and should_cancel():
+            break
+
+        if _should_emit_sweep_progress(idx, valid_combos):
+            on_progress and on_progress(idx, valid_combos, params)
+
+        strategy_obj = build_strategy(strategy_type, params)
+        if isinstance(strategy_obj, BacktestServiceError):
+            results.append({
+                "params": params,
+                "total_return": None,
+                "annual_return": None,
+                "max_drawdown": None,
+                "sharpe_ratio": None,
+                "win_rate": None,
+                "profit_factor": None,
+                "total_trades": 0,
+                "error": strategy_obj.message,
+                "sample_warning": False,
+            })
+            continue
+
+        engine = VectorizedBacktester(
+            initial_capital=initial_capital,
+            cost_calculator=calculator,
+        )
+        try:
+            bt = engine.run(strategy=strategy_obj, data=data)  # type: ignore[arg-type]
+            results.append({
+                "params": params,
+                "total_return": round(float(bt.total_return), 6),
+                "annual_return": round(float(bt.annual_return), 6),
+                "max_drawdown": round(float(bt.max_drawdown), 6),
+                "sharpe_ratio": round(float(bt.sharpe_ratio), 4),
+                "win_rate": round(float(bt.win_rate), 4),
+                "profit_factor": round(float(bt.profit_factor), 4),
+                "total_trades": int(bt.total_trades),
+                "error": None,
+                "sample_warning": int(bt.total_trades) < 3,
+            })
+        except Exception as exc:  # noqa: BLE001
+            results.append({
+                "params": params,
+                "total_return": None,
+                "annual_return": None,
+                "max_drawdown": None,
+                "sharpe_ratio": None,
+                "win_rate": None,
+                "profit_factor": None,
+                "total_trades": 0,
+                "error": str(exc),
+                "sample_warning": False,
+            })
+
+    return {
+        "symbol": symbol,
+        "market": normalized_market,
+        "currency": market_spec.currency,
+        "strategy_type": strategy_type,
+        "start_date": str(start_ts.date()),
+        "end_date": str((end_exclusive - pd.Timedelta(days=1)).date()),
+        "total_combos": int(total_combos),
+        "valid_combos": int(valid_combos),
+        "max_combos_limit": int(MAX_COMBOS),
+        "results": results,
+    }
+
+
+def validate_sweep_request(
+    *,
+    strategy_type: str,
+    param_candidates: dict[str, list[Any]],
+) -> dict[str, Any] | BacktestServiceError:
+    """Validate and normalize sweep request before creating/running jobs."""
+    normalized_type = str(strategy_type).strip().lower()
+    if normalized_type not in SWEEP_PARAM_SPECS:
+        return BacktestServiceError(
+            code="UNSUPPORTED_STRATEGY",
+            message=f"不支援參數掃描的策略類型：{strategy_type}",
+        )
+
+    normalized_candidates = _normalize_sweep_candidates(normalized_type, param_candidates)
+    if isinstance(normalized_candidates, BacktestServiceError):
+        return normalized_candidates
+
+    total_combos, valid_list = generate_param_grid(normalized_type, normalized_candidates)
+    valid_combos = len(valid_list)
+    if valid_combos > MAX_COMBOS:
+        return BacktestServiceError(
+            code="OVER_MAX_COMBOS",
+            message=f"合法組合數 {valid_combos} 超過上限 {MAX_COMBOS}，請縮小參數範圍。",
+        )
+
+    return {
+        "strategy_type": normalized_type,
+        "param_candidates": normalized_candidates,
+        "total_combos": int(total_combos),
+        "valid_combos": int(valid_combos),
+        "valid_params_list": valid_list,
+    }
+
+
+def build_sweep_csv_blob(sweep_payload: dict[str, Any]) -> io.StringIO:
+    """Build in-memory CSV blob for backtest_sweep result."""
+    rows: list[dict[str, Any]] = []
+    for item in sweep_payload.get("results", []):
+        params = item.get("params", {})
+        row = {
+            **(params if isinstance(params, dict) else {}),
+            "總報酬": _fmt_pct(item.get("total_return")) if item.get("error") is None else "—",
+            "年化報酬": _fmt_pct(item.get("annual_return")) if item.get("error") is None else "—",
+            "最大回撤": _fmt_pct(item.get("max_drawdown")) if item.get("error") is None else "—",
+            "Sharpe": _fmt_num(item.get("sharpe_ratio"), 2) if item.get("error") is None else "—",
+            "勝率": _fmt_pct(item.get("win_rate")) if item.get("error") is None else "—",
+            "Profit Factor": _fmt_profit_factor(item.get("profit_factor")) if item.get("error") is None else "—",
+            "交易次數": int(item.get("total_trades", 0)) if item.get("error") is None else "—",
+            "sample_warning": bool(item.get("sample_warning", False)),
+            "錯誤": item.get("error") or "",
+        }
+        rows.append(row)
+
+    buffer = io.StringIO()
+    pd.DataFrame(rows).to_csv(buffer, index=False)
+    buffer.seek(0)
+    return buffer
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
@@ -726,6 +916,65 @@ def _fmt_profit_factor(value: Any) -> str:
     if pf >= 999.0:
         return "N/A"
     return f"{pf:.2f}"
+
+
+def _should_emit_sweep_progress(current: int, total: int) -> bool:
+    if total <= 0:
+        return False
+    if total > 50:
+        return (current % 5 == 0) or (current == total)
+    return True
+
+
+def _normalize_sweep_candidates(
+    strategy_type: str,
+    param_candidates: dict[str, list[Any]],
+) -> dict[str, list[Any]] | BacktestServiceError:
+    expected_keys = SWEEP_PARAM_SPECS.get(strategy_type)
+    if expected_keys is None:
+        return BacktestServiceError(
+            code="UNSUPPORTED_STRATEGY",
+            message=f"不支援參數掃描的策略類型：{strategy_type}",
+        )
+
+    provided_keys = set(param_candidates.keys())
+    if provided_keys != set(expected_keys):
+        return BacktestServiceError(
+            code="INVALID_PARAMS",
+            message=f"param_candidates 必須包含：{', '.join(expected_keys)}",
+        )
+
+    normalized: dict[str, list[Any]] = {}
+    for key in expected_keys:
+        raw_values = param_candidates.get(key)
+        if not isinstance(raw_values, list) or len(raw_values) == 0:
+            return BacktestServiceError(
+                code="INVALID_PARAMS",
+                message=f"參數 {key} 需為非空 list",
+            )
+
+        values: list[Any] = []
+        for raw in raw_values:
+            try:
+                as_num = float(raw)
+            except (TypeError, ValueError):
+                return BacktestServiceError(
+                    code="INVALID_PARAMS",
+                    message=f"參數 {key} 含非數值項目：{raw}",
+                )
+
+            expected_type = _SWEEP_PARAM_TYPES.get(key, "float")
+            if expected_type == "int":
+                if not as_num.is_integer():
+                    return BacktestServiceError(
+                        code="INVALID_PARAMS",
+                        message=f"參數 {key} 必須是整數：{raw}",
+                    )
+                values.append(int(as_num))
+            else:
+                values.append(float(as_num))
+        normalized[key] = values
+    return normalized
 
 
 def _build_fetchers_from_config(market: str = "tw") -> list[tuple[str, IDataFetcher]]:

@@ -141,6 +141,32 @@ _MOCK_BATCH_PAYLOAD = {
     ],
 }
 
+_MOCK_SWEEP_PAYLOAD = {
+    "symbol": "2330",
+    "market": "tw",
+    "currency": "TWD",
+    "strategy_type": "moving_average_cross",
+    "start_date": "2020-01-01",
+    "end_date": "2024-12-31",
+    "total_combos": 9,
+    "valid_combos": 9,
+    "max_combos_limit": 200,
+    "results": [
+        {
+            "params": {"short_window": 5, "long_window": 40},
+            "total_return": 0.2,
+            "annual_return": 0.05,
+            "max_drawdown": 0.1,
+            "sharpe_ratio": 0.8,
+            "win_rate": 0.6,
+            "profit_factor": 1.5,
+            "total_trades": 5,
+            "error": None,
+            "sample_warning": False,
+        }
+    ],
+}
+
 
 def _reset_manager() -> None:
     import api.job_manager as jm
@@ -577,3 +603,201 @@ def test_backtest_batch_sse_progress_per_preset() -> None:
         assert len(progress_payloads) >= 2
         assert all("current" in p and "total" in p for p in progress_payloads)
         assert {p["preset_name"] for p in progress_payloads if "preset_name" in p} >= {"MA20_MA60", "RSI_14"}
+
+
+# ---------------------------------------------------------------------------
+# 10-E-3 backtest_sweep tests
+# ---------------------------------------------------------------------------
+
+
+def test_backtest_sweep_creates_job_and_returns_results() -> None:
+    _reset_manager()
+    with patch("src.services.backtest_service.run_sweep_job", return_value=_MOCK_SWEEP_PAYLOAD):
+        resp = client.post("/api/jobs", json={
+            "type": "backtest_sweep",
+            "params": {
+                "market": "tw",
+                "symbol": "2330",
+                "start_date": "2020-01-01",
+                "end_date": "2024-12-31",
+                "strategy_type": "moving_average_cross",
+                "param_candidates": {"short_window": [5, 10, 20], "long_window": [40, 60, 120]},
+            },
+        })
+        assert resp.status_code == 201
+        job_id = resp.json()["job_id"]
+        final = _wait_for_job(job_id)
+        assert final["status"] == "complete"
+        result = client.get(f"/api/jobs/{job_id}/result")
+        assert result.status_code == 200
+        data = result.json()["data"]
+        assert data["strategy_type"] == "moving_average_cross"
+        assert len(data["results"]) == 1
+
+
+def test_backtest_sweep_progress_throttle_when_over_50() -> None:
+    _reset_manager()
+    sweep_df = pd.DataFrame({
+        "date": pd.date_range("2020-01-01", periods=300, freq="B", tz="Asia/Taipei"),
+        "open": [100.0] * 300,
+        "high": [101.0] * 300,
+        "low": [99.0] * 300,
+        "close": [100.5] * 300,
+        "volume": [1000] * 300,
+    })
+    mock_bt = MagicMock(
+        total_return=0.1,
+        annual_return=0.03,
+        max_drawdown=0.05,
+        sharpe_ratio=0.7,
+        win_rate=0.5,
+        profit_factor=1.2,
+        total_trades=5,
+    )
+
+    with (
+        patch("src.services.backtest_service.load_backtest_data", return_value=sweep_df),
+        patch("src.services.backtest_service.VectorizedBacktester") as mock_engine_cls,
+    ):
+        mock_engine = MagicMock()
+        mock_engine.run.return_value = mock_bt
+        mock_engine_cls.return_value = mock_engine
+
+        create = client.post("/api/jobs", json={
+            "type": "backtest_sweep",
+            "params": {
+                "market": "tw",
+                "symbol": "2330",
+                "start_date": "2020-01-01",
+                "end_date": "2024-12-31",
+                "strategy_type": "moving_average_cross",
+                "param_candidates": {
+                    "short_window": list(range(1, 11)),
+                    "long_window": list(range(100, 106)),
+                },  # 10 * 6 = 60 (>50)
+            },
+        })
+        job_id = create.json()["job_id"]
+        _wait_for_job(job_id, timeout=10.0)
+
+        progress_payloads: list[dict] = []
+        with client.stream("GET", f"/api/jobs/{job_id}/events") as stream:
+            current_event: str | None = None
+            for line in stream.iter_lines():
+                if not line:
+                    continue
+                if line.startswith("event:"):
+                    current_event = line.split(":", 1)[1].strip()
+                    continue
+                if line.startswith("data:") and current_event == "progress":
+                    import json
+                    progress_payloads.append(json.loads(line.split(":", 1)[1].strip()))
+
+    assert len(progress_payloads) == 12
+    assert progress_payloads[-1]["current"] == 60
+    assert progress_payloads[-1]["total"] == 60
+
+
+def test_backtest_sweep_over_max_combos_sets_job_error() -> None:
+    _reset_manager()
+    create = client.post("/api/jobs", json={
+        "type": "backtest_sweep",
+        "params": {
+            "market": "tw",
+            "symbol": "2330",
+            "start_date": "2020-01-01",
+            "end_date": "2024-12-31",
+            "strategy_type": "moving_average_cross",
+            "param_candidates": {
+                "short_window": list(range(1, 16)),
+                "long_window": list(range(16, 31)),
+            },  # 15 * 15 = 225 > 200
+        },
+    })
+    assert create.status_code == 422
+    detail = create.json()["detail"]["error"]
+    assert detail["code"] == "OVER_MAX_COMBOS"
+    assert "超過上限 200" in detail["message"]
+
+
+def test_backtest_sweep_rejects_non_integer_int_param() -> None:
+    _reset_manager()
+    create = client.post("/api/jobs", json={
+        "type": "backtest_sweep",
+        "params": {
+            "market": "tw",
+            "symbol": "2330",
+            "start_date": "2020-01-01",
+            "end_date": "2024-12-31",
+            "strategy_type": "moving_average_cross",
+            "param_candidates": {"short_window": [5.5], "long_window": [40]},
+        },
+    })
+    assert create.status_code == 422
+    detail = create.json()["detail"]["error"]
+    assert detail["code"] == "INVALID_PARAMS"
+    assert "short_window" in detail["message"]
+
+
+def test_backtest_sweep_sample_warning_when_total_trades_below_3() -> None:
+    _reset_manager()
+    sweep_df = pd.DataFrame({
+        "date": pd.date_range("2020-01-01", periods=90, freq="B", tz="Asia/Taipei"),
+        "open": [100.0] * 90,
+        "high": [101.0] * 90,
+        "low": [99.0] * 90,
+        "close": [100.2] * 90,
+        "volume": [1000] * 90,
+    })
+    mock_bt = MagicMock(
+        total_return=0.01,
+        annual_return=0.01,
+        max_drawdown=0.02,
+        sharpe_ratio=0.3,
+        win_rate=0.4,
+        profit_factor=1.1,
+        total_trades=2,
+    )
+    with (
+        patch("src.services.backtest_service.load_backtest_data", return_value=sweep_df),
+        patch("src.services.backtest_service.VectorizedBacktester") as mock_engine_cls,
+    ):
+        mock_engine = MagicMock()
+        mock_engine.run.return_value = mock_bt
+        mock_engine_cls.return_value = mock_engine
+        create = client.post("/api/jobs", json={
+            "type": "backtest_sweep",
+            "params": {
+                "market": "tw",
+                "symbol": "2330",
+                "start_date": "2020-01-01",
+                "end_date": "2024-12-31",
+                "strategy_type": "moving_average_cross",
+                "param_candidates": {"short_window": [5], "long_window": [40]},
+            },
+        })
+        job_id = create.json()["job_id"]
+        _wait_for_job(job_id)
+        result = client.get(f"/api/jobs/{job_id}/result")
+
+    assert result.status_code == 200
+    row = result.json()["data"]["results"][0]
+    assert row["sample_warning"] is True
+
+
+def test_backtest_sweep_csv_export_returns_blob() -> None:
+    _reset_manager()
+    manager = get_job_manager()
+
+    async def _setup() -> str:
+        job = await manager.create_job("backtest_sweep", {})
+        manager.complete_job(job.id, result=_MOCK_SWEEP_PAYLOAD)
+        return job.id
+
+    job_id = asyncio.run(_setup())
+    csv_resp = client.get(f"/api/jobs/{job_id}/result?format=csv")
+    assert csv_resp.status_code == 200
+    assert "text/csv" in csv_resp.headers.get("content-type", "")
+    disposition = csv_resp.headers.get("content-disposition", "")
+    assert "attachment" in disposition
+    assert "sweep_2330_" in disposition

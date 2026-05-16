@@ -30,11 +30,12 @@ Report to user: current progress, and any issues with their scope of impact.
 
 ## Project Skills
 
-This project uses local skills from `C:\Users\User\OneDrive\桌面\AI_Work\Skills\`.
+This project uses local skills from `C:\_work\AI_Work\Skills\`.
 
 Trigger rules:
 - Diagnosing bugs / analyzing errors / finding root cause → read `Skills\engineering\diagnose\SKILL.md` first
 - Requirements unclear / spec discussion / planning / need to ask clarifying questions → read `Skills\productivity\grill-me\SKILL.md` first
+- Frontend / local web app verification, UI behavior debugging, browser screenshots, or console logs → read `Skills\engineering\webapp-testing\SKILL.md` first
 - Normal state / no urgent or special situation → read `Skills\productivity\caveman\SKILL.md` first
 
 Only modify files when user explicitly requests fix, implement, or commit. Verify/diagnose = report only.
@@ -66,6 +67,8 @@ Only modify files when user explicitly requests fix, implement, or commit. Verif
 - 建立 commit
 
 若驗證中發現問題，只列出問題、影響範圍與建議修法，等待使用者下一步指示。
+
+驗證階段先用 npx tsc --noEmit + pnpm test -- --run 當主要 gate
 
 ## 修改程式碼授權規則
 
