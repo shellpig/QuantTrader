@@ -87,3 +87,18 @@ export async function apiPut<T>(
 export async function apiDelete<T>(path: string): Promise<ApiResponse<T>> {
   return apiFetch<ApiResponse<T>>(path, { method: "DELETE" });
 }
+
+export async function apiDeleteNoContent(path: string): Promise<void> {
+  const res = await fetch(`${BASE_URL}${path}`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new ApiClientError(
+      res.status,
+      body?.detail?.error?.code as string | undefined,
+      body?.detail?.error?.message as string | undefined,
+    );
+  }
+}

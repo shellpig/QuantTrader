@@ -9,11 +9,14 @@ from pydantic import BaseModel
 
 from src.services.config_service import (
     CONFIG_UPDATE_WHITELIST,
+    delete_strategy_preset_by_name,
     get_secrets_status,
     get_strategy_presets_config,
     read_config,
+    restore_strategy_defaults,
     update_config,
     update_secrets,
+    upsert_strategy_preset,
 )
 
 router = APIRouter(prefix="/api/config", tags=["config"])
@@ -82,3 +85,36 @@ def get_strategies() -> dict[str, Any]:
     """Return strategy preset list."""
     presets = get_strategy_presets_config()
     return {"data": presets, "meta": {"count": len(presets)}}
+
+
+class StrategyPresetUpsertRequest(BaseModel):
+    preset: dict[str, Any]
+
+
+@router.post("/strategies", status_code=201)
+def upsert_strategy(request: StrategyPresetUpsertRequest) -> dict[str, Any]:
+    """Add or update a strategy preset (matched by name)."""
+    try:
+        upsert_strategy_preset(request.preset)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"error": {"code": "INVALID_PRESET", "message": str(exc)}},
+        ) from exc
+    name = str(request.preset.get("name", "")).strip()
+    return {"data": {"upserted": True, "name": name}, "meta": {}}
+
+
+@router.post("/strategies/restore")
+def restore_strategies() -> dict[str, Any]:
+    """Reset strategy presets to defaults."""
+    restore_strategy_defaults()
+    count = len(get_strategy_presets_config())
+    return {"data": {"count": count}, "meta": {}}
+
+
+@router.delete("/strategies/{name}", status_code=204)
+def delete_strategy(name: str) -> None:
+    """Delete strategy preset by name. Idempotent — name not found is not an error."""
+    delete_strategy_preset_by_name(name)
+    return None

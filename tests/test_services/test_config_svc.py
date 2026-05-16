@@ -11,6 +11,7 @@ import pytest
 from src.services.config_service import (
     CONFIG_UPDATE_WHITELIST,
     _write_env,
+    delete_strategy_preset_by_name,
     get_secrets_status,
     read_config,
     update_config,
@@ -166,3 +167,79 @@ def test_get_secrets_status_never_returns_key_values(
     status = get_secrets_status()
     for v in status.values():
         assert isinstance(v, bool), f"Expected bool, got {type(v).__name__}: {v!r}"
+
+
+# ---------------------------------------------------------------------------
+# delete_strategy_preset_by_name
+# ---------------------------------------------------------------------------
+
+
+@patch("src.services.config_service.get_config")
+@patch("src.services.config_service.get_project_root")
+@patch("src.services.config_service.clear_config_cache")
+def test_delete_strategy_preset_by_name_removes_entry(
+    mock_clear: MagicMock,
+    mock_root: MagicMock,
+    mock_get_config: MagicMock,
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("strategies: []\n", encoding="utf-8")
+    mock_root.return_value = tmp_path
+    mock_get_config.return_value = {
+        "strategies": [
+            {"name": "MA Cross", "type": "moving_average_cross", "params": {}},
+            {"name": "RSI", "type": "rsi", "params": {}},
+        ]
+    }
+
+    delete_strategy_preset_by_name("MA Cross")
+
+    written = config_path.read_text(encoding="utf-8")
+    assert "MA Cross" not in written
+    assert "RSI" in written
+
+
+@patch("src.services.config_service.get_config")
+@patch("src.services.config_service.get_project_root")
+@patch("src.services.config_service.clear_config_cache")
+def test_delete_strategy_preset_by_name_nonexistent_no_write(
+    mock_clear: MagicMock,
+    mock_root: MagicMock,
+    mock_get_config: MagicMock,
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("sentinel: true\n", encoding="utf-8")
+    mock_root.return_value = tmp_path
+    mock_get_config.return_value = {
+        "strategies": [{"name": "RSI", "strategy": "rsi"}]
+    }
+
+    delete_strategy_preset_by_name("DoesNotExist")
+
+    # No rewrite happened — sentinel file unchanged
+    assert config_path.read_text(encoding="utf-8") == "sentinel: true\n"
+    mock_clear.assert_not_called()
+
+
+@patch("src.services.config_service.get_config")
+@patch("src.services.config_service.get_project_root")
+@patch("src.services.config_service.clear_config_cache")
+def test_delete_strategy_preset_by_name_strips_spaces(
+    mock_clear: MagicMock,
+    mock_root: MagicMock,
+    mock_get_config: MagicMock,
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("strategies: []\n", encoding="utf-8")
+    mock_root.return_value = tmp_path
+    mock_get_config.return_value = {
+        "strategies": [{"name": "  MA Cross  ", "type": "moving_average_cross", "params": {}}]
+    }
+
+    delete_strategy_preset_by_name("  MA Cross  ")
+
+    written = config_path.read_text(encoding="utf-8")
+    assert "MA Cross" not in written

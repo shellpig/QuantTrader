@@ -182,6 +182,15 @@ def upsert_strategy_preset(preset: dict[str, Any]) -> None:
     _save_strategy_presets(updated)
 
 
+def delete_strategy_preset_by_name(name: str) -> None:
+    """Delete preset matching name (case-sensitive trimmed). Idempotent."""
+    existing = get_strategy_presets_config()
+    target = str(name).strip()
+    updated = [p for p in existing if str(p.get("name", "")).strip() != target]
+    if len(updated) != len(existing):
+        _save_strategy_presets(updated)
+
+
 def delete_strategy_preset_by_index(index: int) -> None:
     """Delete strategy preset at the given 0-based index."""
     existing = get_strategy_presets_config()

@@ -13,9 +13,9 @@
 2026-05-14 Phase 10 規格已完成並寫入正式文件：前端架構從 Streamlit 遷移至 Next.js (React) + FastAPI，拆為 10-A~10-H 八個子階段。新增 `src/services/`（服務層）、`api/`（FastAPI 後端）、`web/`（Next.js 前端）。核心演算法不重寫。Phase 9-G（美股 intraday）為前置條件。
 
 - Phase 9 全部完成（含美股 US-1 / 9-G intraday）。
-- Phase 10-A / 10-B / 10-C / 10-D / 10-E-1 / 10-E-2 / 10-E-3 / 10-E-4 / 10-F-1 / 10-G-1 已完成。
+- Phase 10-A / 10-B / 10-C / 10-D / 10-E-1 / 10-E-2 / 10-E-3 / 10-E-4 / 10-F-1 / 10-G-1 / 10-G-2 已完成。
 - Phase 10-F-2（AI 問答接 LLM）延後，不卡主線。
-- 後續順序：10-G-2 → 10-H。
+- 後續順序：10-H。
 
 ## 技術棧
 
@@ -231,16 +231,21 @@ risk:
 | 10-F-1 | ✅ 完成 | AI 問答頁 UI shell + 後端 lock（**不接 LLM**）：完整 chat UI、免責聲明 gate（localStorage `ai_chat.disclaimer_accepted_v1`）、`react-markdown` + remark-gfm、Mock 逐字串流（25ms / char）、訊息歷史刷新即清；`GET /api/ai/status` 回 `feature_locked`、`POST /api/ai/chat` 回 503；Sidebar AI 入口加灰色「後續開放」徽章；package version py + web + FastAPI 三處同步 bump 至 `0.2.0`；文件 V2.4。tsc 0 errors + vitest **17 files / 124 tests pass**（+31：disclaimer-gate 5 / message-bubble 10 / chat-page-client 8 / use-ai-status 3 / sidebar 5）+ pytest **test_api 59 passed**（+7 in `test_ai_api.py`） |
 | 10-F-2 | ⏸ 延後 | AI 問答頁接 LLM：補 `AIAdvisor.stream_chat()` 三 adapter（Anthropic / OpenAI / Gemini）+ 真實 SSE token 串流；**不卡 10-G / 10-H** |
 | 10-G-1 | ✅ 完成 | 基礎設施先行：新增 `sonner` toast + 10-C-2 banner 遷移、React Error Boundary（只接 render/lifecycle/hook 例外）、`CardSkeleton` / `ChartSkeleton` / `TableSkeleton`、`cmdk` Command Palette（頁面跳轉 + 股票搜尋）；移除 `@radix-ui/react-toast`；補 7 檔前端測試與單檔更新/新增失敗 toast regression。tsc 0 errors + vitest **24 files / 148 tests passed** |
-| 10-G-2 | 📋 規格已定，待實作（10-E 後） | 設定頁主功能：API key write-only UI（5 provider）、策略 preset CRUD（upsert/delete/restore by name）、Dark↔Light 主題切換（`next-themes`、不接 system）、AI toggle disabled + tooltip |
+| 10-G-2 | ✅ 完成 | 設定頁 4 分區：API key write-only UI（5 provider）、策略 preset CRUD（`POST/DELETE/restore` 三端點 + Dialog）、Dark↔Light 主題切換（沿用既有自製 `theme-provider.tsx`，**未引入 `next-themes`**，等價支援 `class="dark"` + localStorage）、AI toggle disabled + Radix Tooltip；pytest `test_config_api.py + test_config_svc.py` 28 passed（+6 strategy endpoints / +3 `delete_strategy_preset_by_name`）+ vitest **46 files / 290 tests passed**（+5 settings 元件測試 + use-config hook）+ tsc 0 errors |
 | 10-H | 📋 規格已定，待實作 | 舊 Streamlit UI 移除（測試遷移檢查表不可跳過；`src/ai/advisor.py` 必須保留供 10-F-2 與 dashboard analysis 使用） |
 
 ## 當前待辦
 
 見 `驗證後已知問題.md`（每次必讀）。
 
-主線：Phase 9 全部完成（含 9-F 手動驗收）。Phase 10-A 服務層 + FastAPI 骨架、10-B Next.js 前端骨架、**10-C-1 資料管理頁列表 + DELETE**、**10-C-2 資料管理頁更新/重建/新增（SSE + Job dispatcher）**、**10-D 個股分析儀表板（3 輪驗收完成）**、**10-E-1 單次回測**、**10-E-2 策略比較（批次）**、**10-F-1 AI 問答頁 UI shell + 後端 lock**、**10-G-1 全局基礎設施（toast / error boundary / skeleton / command palette）** 均已完成。**Phase 10-C 全段落結束**；10-F 已拆成 10-F-1（已完成）與 10-F-2（接 LLM、延後且不卡 10-G / 10-H）。**10-E 已拆成 10-E-1 / 10-E-2 / 10-E-3 / 10-E-4 四段，10-G 已拆成 10-G-1 / 10-G-2（規格 V2.6 已記載）**。**後續實作順序：10-E-3 → 10-E-4 → 10-G-2（設定頁主功能）→ 10-H**；10-E 4 段共用 10-G-1 的 Toast / Error Boundary / Loading Skeleton / Command Palette。下一步預計實作 10-E-3。
+主線：Phase 9 全部完成（含 9-F 手動驗收）。Phase 10-A 服務層 + FastAPI 骨架、10-B Next.js 前端骨架、**10-C-1 / 10-C-2 資料管理頁**、**10-D 個股分析儀表板**、**10-E-1 / 10-E-2 / 10-E-3 / 10-E-4 回測工作台四段**、**10-F-1 AI 問答頁 UI shell + 後端 lock**、**10-G-1 全局基礎設施**、**10-G-2 設定頁主功能** 均已完成。10-F-2（接 LLM、延後且不卡 10-H）。**後續：10-H（舊 Streamlit UI 移除 + 測試遷移檢查表）**。
 
 2026-05-16 狀態：
+- **10-E-3 實作 + 驗證完成**：後端 `backtest_sweep` dispatcher + `run_param_sweep_job()` + sweep CSV blob + progress throttle（>50 combos）+ `OVER_MAX_COMBOS` 422 + `sample_warning`（total_trades < 3）；前端新增 `SweepTab` / `ParamGridForm` / `SweepRankingTable` / `SweepHeatmap`（僅 2 參數時自製 CSS Grid 2D）+ `sweep-types` / `sweep-helpers` / `sweep-constants`；commit `4b39120`。驗證：pytest 6 個 sweep case 全綠（含 throttle / over_max / 非整數參數 / sample_warning / CSV blob）。
+- **10-E-4 實作 + 驗證完成**：後端 `backtest_wfa` dispatcher + `run_walk_forward_job()` + 巢狀 SSE（`window_progress` × `sweep_progress`）+ `INSUFFICIENT_DATA_FOR_WFA` 422 + `build_wfa_window_csv_blob` / `build_wfa_stability_csv_blob` 雙 CSV；前端新增 `WalkForwardTab` / `WfaSummaryCards` / `WfaWindowTable` / `WfaStabilityTable`；commit `18fde89`。驗證：pytest `test_backtest_api.py` 26 passed（含 6 個 WFA case）；vitest 40 files / 252 tests passed；tsc 0 errors。
+- **10-G-2 實作 + 驗證完成**：後端 `api/routers/config.py` 新增 `POST /api/config/strategies`（upsert by name）、`DELETE /api/config/strategies/{name}`（idempotent 204）、`POST /api/config/strategies/restore`；`config_service.py` 新增 `delete_strategy_preset_by_name()`。前端 `web/src/app/settings/page.tsx` + 6 個 settings 元件（`settings-page-client` / `secrets-section` / `strategy-presets-section` / `strategy-preset-dialog` / `theme-section` / `ai-toggle-section`）+ `use-config` SWR hook。**主題系統**：沿用既有自製 `theme-provider.tsx`（class="dark" + localStorage `qt-theme`），**未引入 `next-themes`**（與規格 L3553-3554 偏離，但功能等價，已於 brief 與 spec 註記）。**AI toggle**：Radix Tooltip + `disabled`，文案「AI 功能尚未開放」。**Secrets 安全**：GET 永不回傳 key 值（既有規約沿用）。驗證：pytest `test_config_api.py + test_config_svc.py` 28 passed（+6 strategy endpoints / +3 delete_by_name）；vitest 46 files / 290 tests passed（+5 settings 測試檔 + use-config hook）；tsc 0 errors。
+
+
 - **10-E-1 實作 + 驗證完成**：後端 `job_manager.py` 新增 `finish_cancelled_job()` + 修正 `cancel_job()` race condition；`backtest_service.py` 新增 `initial_capital` 參數 + DCA 序列化；`jobs.py` 新增 `backtest_run` dispatcher + cancelled partial result 回傳。前端新增 `BacktestPageClient`（4-tab 框架，僅 Single 啟用）、`SingleRunTab`（表單 + 結果顯示）、`TearsheetCards` / `CandleChartWithMarkers` / `EquityCurveChart` / `TradesTable` / `StrategyPresetSelect` / `DateRangePicker` / `EngineSelect` / `BacktestProgressBar` 共 10 個元件；`use-backtest-job` hook（SSE + cancel + toast）。驗證：pytest **9/9 passed**（`test_backtest_api.py`）；vitest **31 files / 202 tests passed**（含 7 個 backtest 測試檔 53 cases）；`tsc --noEmit` 通過。
 - **10-E-2 實作 + 驗證完成**：後端 `api/routers/jobs.py` 新增 `backtest_batch` dispatcher、per-preset SSE progress、cancelled partial result 保留、`GET /api/jobs/{id}/result?format=csv` CSV blob；`src/services/backtest_service.py` 新增 `run_batch_backtest_job()`、`build_batch_csv_blob()` 與 batch summary detail 序列化（`price_data` 只在 result 頂層帶一次）。前端解鎖策略比較 tab，新增 `BatchCompareTab` / `StrategyMultiSelect` / `ComparisonTable` / `MultiEquityChart` / `batch-types`；`use-backtest-job` 支援 `jobId` 與 callback options；批次頁含 FastAPI base URL 取 preset、多策略 equity crosshair tooltip、10 欄 sortable table、row 展開重用 tearsheet / K 線 / equity / trades、CSV 下載 toast、取消後 partial result 顯示。驗證：`test_backtest_api.py` **14 passed**（含 SSE per-preset progress）、`tests/test_api/` **73 passed**、10-E-2 前端 targeted vitest **3 files / 12 tests passed**、完整 vitest **34 files / 214 tests passed**、`tsc --noEmit` 與 `py_compile` 通過。
 - **10-E 規格審查完成（V2.7 補丁）**：三份文件同步補充以下 12 項缺口，規格、設計方針、測試指南已更新：
