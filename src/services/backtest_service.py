@@ -19,6 +19,18 @@ from src.backtest.engine_event import EventDrivenBacktester
 from src.backtest.engine_vec import VectorizedBacktester
 from src.backtest.metrics import BacktestResult
 from src.backtest.sweep import MAX_COMBOS, SWEEP_PARAM_SPECS, generate_param_grid
+from src.backtest.walk_forward import (
+    MAX_WFA_WINDOWS,
+    MIN_WFA_WINDOWS,
+    WalkForwardWindow,
+    WalkForwardWindowResult,
+    _build_walk_forward_aggregate,
+    _calculate_degradation,
+    _select_best_sweep_run,
+    calculate_parameter_stability,
+    generate_walk_forward_windows,
+    required_months_for_wfa,
+)
 from src.core.config import get_config
 from src.core.exceptions import FetcherError
 from src.core.market import get_market_spec, normalize_market, normalize_symbol
@@ -975,6 +987,386 @@ def _normalize_sweep_candidates(
                 values.append(float(as_num))
         normalized[key] = values
     return normalized
+
+
+def run_walk_forward_job(
+    *,
+    symbol: str,
+    start_ts: pd.Timestamp,
+    end_exclusive: pd.Timestamp,
+    strategy_type: str,
+    param_candidates: dict[str, list[Any]],
+    is_months: int = 12,
+    oos_months: int = 3,
+    step_months: int = 3,
+    optimize_metric: str = "sharpe_ratio",
+    market: str = "tw",
+    initial_capital: float = 1_000_000,
+    on_window_progress: Callable[..., None] | None = None,
+    on_sweep_progress: Callable[..., None] | None = None,
+    should_cancel: Callable[[], bool] | None = None,
+) -> dict[str, Any] | BacktestServiceError:
+    """Run WFA and return JSON-safe payload for 10-E-4.
+
+    Emits nested progress: window_progress (is_sweep/oos_validate/done) +
+    sweep_progress (per IS combo when valid_combos > 50, else every combo).
+    """
+    normalized_market = normalize_market(market)
+    market_spec = get_market_spec(normalized_market)
+
+    normalized_type = str(strategy_type).strip().lower()
+    if normalized_type not in SWEEP_PARAM_SPECS:
+        return BacktestServiceError(
+            code="UNSUPPORTED_STRATEGY",
+            message=f"不支援 WFA 的策略類型：{strategy_type}",
+        )
+
+    validated = validate_sweep_request(
+        strategy_type=normalized_type,
+        param_candidates=param_candidates,
+    )
+    if isinstance(validated, BacktestServiceError):
+        return validated
+
+    valid_list: list[dict[str, Any]] = validated["valid_params_list"]
+    valid_combos: int = validated["valid_combos"]
+
+    data = load_backtest_data(
+        symbol,
+        start_ts,
+        end_exclusive,
+        market=normalized_market,
+        require_adjusted=True,
+    )
+    if isinstance(data, BacktestServiceError):
+        return data
+
+    if data.empty:
+        return BacktestServiceError(code="NO_DATA", message="資料區間內沒有可用日線資料。")
+
+    # Build DatetimeIndex data for window generation
+    df_indexed = data.copy()
+    df_indexed.index = pd.DatetimeIndex(df_indexed["date"])
+
+    try:
+        windows = generate_walk_forward_windows(
+            df_indexed,
+            is_months=is_months,
+            oos_months=oos_months,
+            step_months=step_months,
+            min_windows=MIN_WFA_WINDOWS,
+            max_windows=MAX_WFA_WINDOWS,
+        )
+    except ValueError as exc:
+        return BacktestServiceError(code="INSUFFICIENT_DATA_FOR_WFA", message=str(exc))
+
+    total_windows = len(windows)
+    calculator = create_cost_calculator(market=normalized_market)
+    throttle_step = 5 if valid_combos > 50 else 1
+
+    window_results: list[WalkForwardWindowResult] = []
+
+    for win_idx, win in enumerate(windows):
+        if should_cancel is not None and should_cancel():
+            break
+
+        window_id = win.window_id + 1  # 1-based for display
+
+        # IS sweep phase
+        if on_window_progress is not None:
+            on_window_progress(
+                window_id=window_id,
+                total_windows=total_windows,
+                phase="is_sweep",
+            )
+
+        is_mask = (df_indexed.index >= win.is_start) & (df_indexed.index <= win.is_end)
+        is_data = df_indexed[is_mask].copy()
+        oos_mask = (df_indexed.index >= win.oos_start) & (df_indexed.index <= win.oos_end)
+        oos_data = df_indexed[oos_mask].copy()
+
+        from src.backtest.sweep import SweepRunSummary
+        sweep_results: list[SweepRunSummary] = []
+
+        for combo_idx, params in enumerate(valid_list, start=1):
+            if should_cancel is not None and should_cancel():
+                break
+
+            if on_sweep_progress is not None:
+                if (combo_idx % throttle_step == 0) or (combo_idx == valid_combos):
+                    on_sweep_progress(
+                        window_id=window_id,
+                        current=combo_idx,
+                        total=valid_combos,
+                        current_params=params,
+                    )
+
+            strategy_obj = build_strategy(normalized_type, params)
+            if isinstance(strategy_obj, BacktestServiceError):
+                sweep_results.append(SweepRunSummary(
+                    params=params,
+                    total_return=0.0,
+                    annual_return=0.0,
+                    max_drawdown=0.0,
+                    sharpe_ratio=-999.0,
+                    win_rate=0.0,
+                    profit_factor=0.0,
+                    total_trades=0,
+                    error=strategy_obj.message,
+                ))
+                continue
+
+            engine = VectorizedBacktester(
+                initial_capital=initial_capital,
+                cost_calculator=calculator,
+            )
+            try:
+                bt = engine.run(strategy=strategy_obj, data=is_data)  # type: ignore[arg-type]
+                sweep_results.append(SweepRunSummary(
+                    params=params,
+                    total_return=float(bt.total_return),
+                    annual_return=float(bt.annual_return),
+                    max_drawdown=float(bt.max_drawdown),
+                    sharpe_ratio=float(bt.sharpe_ratio),
+                    win_rate=float(bt.win_rate),
+                    profit_factor=float(bt.profit_factor),
+                    total_trades=int(bt.total_trades),
+                    error=None,
+                    result=bt,
+                ))
+            except Exception as exc:  # noqa: BLE001
+                sweep_results.append(SweepRunSummary(
+                    params=params,
+                    total_return=0.0,
+                    annual_return=0.0,
+                    max_drawdown=0.0,
+                    sharpe_ratio=-999.0,
+                    win_rate=0.0,
+                    profit_factor=0.0,
+                    total_trades=0,
+                    error=str(exc),
+                ))
+
+        is_best = _select_best_sweep_run(sweep_results, optimize_metric)
+
+        # OOS validation phase
+        if on_window_progress is not None:
+            on_window_progress(
+                window_id=window_id,
+                total_windows=total_windows,
+                phase="oos_validate",
+            )
+
+        if is_best is None:
+            window_results.append(WalkForwardWindowResult(
+                window=win,
+                best_params=None,
+                is_best=None,
+                oos_result=None,
+                degradation=None,
+                skipped=True,
+                warnings=["IS 掃描全部失敗，跳過此視窗"],
+            ))
+            if on_window_progress is not None:
+                on_window_progress(
+                    window_id=window_id,
+                    total_windows=total_windows,
+                    phase="done",
+                    best_params=None,
+                    oos_sharpe=None,
+                )
+            continue
+
+        oos_warnings: list[str] = []
+        try:
+            oos_strategy = build_strategy(normalized_type, is_best.params)
+            if isinstance(oos_strategy, BacktestServiceError):
+                raise RuntimeError(oos_strategy.message)
+            oos_engine = VectorizedBacktester(
+                initial_capital=initial_capital,
+                cost_calculator=calculator,
+            )
+            oos_result = oos_engine.run(strategy=oos_strategy, data=oos_data)  # type: ignore[arg-type]
+        except Exception as exc:  # noqa: BLE001
+            window_results.append(WalkForwardWindowResult(
+                window=win,
+                best_params=is_best.params,
+                is_best=is_best,
+                oos_result=None,
+                degradation=None,
+                skipped=True,
+                warnings=[f"OOS 回測失敗：{exc}"],
+            ))
+            if on_window_progress is not None:
+                on_window_progress(
+                    window_id=window_id,
+                    total_windows=total_windows,
+                    phase="done",
+                    best_params=is_best.params,
+                    oos_sharpe=None,
+                )
+            continue
+
+        if oos_result.total_trades < 3:
+            oos_warnings.append(
+                f"OOS 交易樣本不足（{oos_result.total_trades} 筆，建議至少 3 筆）"
+            )
+
+        degradation = _calculate_degradation(is_best, oos_result, optimize_metric)
+        window_results.append(WalkForwardWindowResult(
+            window=win,
+            best_params=is_best.params,
+            is_best=is_best,
+            oos_result=oos_result,
+            degradation=degradation,
+            skipped=False,
+            warnings=oos_warnings,
+        ))
+
+        if on_window_progress is not None:
+            on_window_progress(
+                window_id=window_id,
+                total_windows=total_windows,
+                phase="done",
+                best_params=is_best.params,
+                oos_sharpe=round(float(oos_result.sharpe_ratio), 4),
+            )
+
+    aggregate = _build_walk_forward_aggregate(window_results)
+    stability = calculate_parameter_stability(window_results)
+
+    # Build serialized windows
+    serialized_windows: list[dict[str, Any]] = []
+    for wr in window_results:
+        win = wr.window
+        is_metrics: dict[str, Any] | None = None
+        if wr.is_best is not None and wr.is_best.error is None:
+            is_metrics = {
+                "total_return": round(float(wr.is_best.total_return), 6),
+                "annual_return": round(float(wr.is_best.annual_return), 6),
+                "max_drawdown": round(float(wr.is_best.max_drawdown), 6),
+                "sharpe_ratio": round(float(wr.is_best.sharpe_ratio), 4),
+                "win_rate": round(float(wr.is_best.win_rate), 4),
+                "total_trades": int(wr.is_best.total_trades),
+            }
+        oos_metrics: dict[str, Any] | None = None
+        if wr.oos_result is not None:
+            oos_metrics = {
+                "total_return": round(float(wr.oos_result.total_return), 6),
+                "annual_return": round(float(wr.oos_result.annual_return), 6),
+                "max_drawdown": round(float(wr.oos_result.max_drawdown), 6),
+                "sharpe_ratio": round(float(wr.oos_result.sharpe_ratio), 4),
+                "win_rate": round(float(wr.oos_result.win_rate), 4),
+                "total_trades": int(wr.oos_result.total_trades),
+            }
+        serialized_windows.append({
+            "window_id": win.window_id + 1,
+            "is_start": str(win.is_start.date()),
+            "is_end": str(win.is_end.date()),
+            "oos_start": str(win.oos_start.date()),
+            "oos_end": str(win.oos_end.date()),
+            "best_params": wr.best_params,
+            "is_metrics": is_metrics,
+            "oos_metrics": oos_metrics,
+            "degradation": round(float(wr.degradation), 4) if wr.degradation is not None else None,
+            "skipped": wr.skipped,
+            "warnings": list(wr.warnings),
+        })
+
+    # Serialize stability
+    serialized_stability: dict[str, Any] = {
+        "overall_status": stability.get("overall_status", "unknown"),
+        "params": {},
+    }
+    for param_name, stat in stability.get("params", {}).items():
+        values_across_windows = [
+            wr.best_params[param_name]
+            for wr in window_results
+            if not wr.skipped and wr.best_params and param_name in wr.best_params
+        ]
+        serialized_stability["params"][param_name] = {
+            "values": values_across_windows,
+            "cv": round(float(stat.get("cv", 0.0)), 4) if stat.get("cv") is not None else None,
+            "mean": round(float(stat.get("mean", 0.0)), 4),
+            "std": round(float(stat.get("std", 0.0)), 4),
+            "status": stat.get("status", "unknown"),
+        }
+
+    valid_count = sum(1 for wr in window_results if not wr.skipped)
+    skipped_count = sum(1 for wr in window_results if wr.skipped)
+
+    return {
+        "symbol": symbol,
+        "market": normalized_market,
+        "currency": market_spec.currency,
+        "strategy_type": normalized_type,
+        "optimize_metric": optimize_metric,
+        "total_window_count": len(window_results),
+        "valid_window_count": valid_count,
+        "skipped_window_count": skipped_count,
+        "windows": serialized_windows,
+        "aggregate": {
+            "oos_total_return": round(float(aggregate.get("avg_oos_return", 0.0)), 6),
+            "oos_annual_return": None,
+            "oos_max_drawdown": round(float(aggregate.get("worst_oos_drawdown", 0.0)), 6),
+            "oos_sharpe_ratio": round(float(aggregate.get("avg_oos_sharpe", 0.0)), 4),
+            "oos_win_rate": round(float(aggregate.get("oos_win_window_rate", 0.0)), 4),
+            "avg_degradation": (
+                round(float(aggregate["avg_degradation"]), 4)
+                if aggregate.get("avg_degradation") is not None
+                else None
+            ),
+        },
+        "parameter_stability": serialized_stability,
+    }
+
+
+def build_wfa_window_csv_blob(wfa_payload: dict[str, Any]) -> io.StringIO:
+    """Build in-memory CSV blob for WFA window results."""
+    rows: list[dict[str, Any]] = []
+    for w in wfa_payload.get("windows", []):
+        is_m = w.get("is_metrics") or {}
+        oos_m = w.get("oos_metrics") or {}
+        rows.append({
+            "視窗": w.get("window_id"),
+            "IS 開始": w.get("is_start"),
+            "IS 結束": w.get("is_end"),
+            "OOS 開始": w.get("oos_start"),
+            "OOS 結束": w.get("oos_end"),
+            "最佳參數": str(w.get("best_params", "")),
+            "IS 總報酬": _fmt_pct(is_m.get("total_return")),
+            "IS Sharpe": _fmt_num(is_m.get("sharpe_ratio"), 2),
+            "OOS 總報酬": _fmt_pct(oos_m.get("total_return")),
+            "OOS Sharpe": _fmt_num(oos_m.get("sharpe_ratio"), 2),
+            "OOS 最大回撤": _fmt_pct(oos_m.get("max_drawdown")),
+            "OOS 交易次數": int(oos_m.get("total_trades", 0) or 0),
+            "Degradation": _fmt_num(w.get("degradation"), 4),
+            "跳過": bool(w.get("skipped", False)),
+            "警告": "; ".join(w.get("warnings", [])),
+        })
+    buffer = io.StringIO()
+    pd.DataFrame(rows).to_csv(buffer, index=False)
+    buffer.seek(0)
+    return buffer
+
+
+def build_wfa_stability_csv_blob(wfa_payload: dict[str, Any]) -> io.StringIO:
+    """Build in-memory CSV blob for WFA parameter stability."""
+    rows: list[dict[str, Any]] = []
+    stability = wfa_payload.get("parameter_stability", {})
+    for param_name, stat in stability.get("params", {}).items():
+        rows.append({
+            "參數": param_name,
+            "各視窗值": str(stat.get("values", [])),
+            "CV": _fmt_num(stat.get("cv"), 4),
+            "平均": _fmt_num(stat.get("mean"), 4),
+            "標準差": _fmt_num(stat.get("std"), 4),
+            "穩定性": stat.get("status", ""),
+        })
+    buffer = io.StringIO()
+    pd.DataFrame(rows).to_csv(buffer, index=False)
+    buffer.seek(0)
+    return buffer
 
 
 def _build_fetchers_from_config(market: str = "tw") -> list[tuple[str, IDataFetcher]]:

@@ -200,6 +200,94 @@ describe("useBacktestJob", () => {
     expect(result.current.error).toBeNull();
   });
 
+  it("parses window_progress SSE event into wfaProgress", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ job_id: "job-wfa-1" }),
+    });
+
+    const { result } = renderHook(() => useBacktestJob());
+    await act(async () => {
+      await result.current.start("backtest_wfa", {});
+    });
+
+    const es = MockEventSource.instances[0];
+    act(() => {
+      es.dispatchEvent("window_progress", {
+        window_id: 2,
+        total_windows: 5,
+        phase: "is_sweep",
+      });
+    });
+
+    expect(result.current.wfaProgress?.windowId).toBe(2);
+    expect(result.current.wfaProgress?.totalWindows).toBe(5);
+    expect(result.current.wfaProgress?.phase).toBe("is_sweep");
+  });
+
+  it("merges sweep_progress into existing wfaProgress", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ job_id: "job-wfa-2" }),
+    });
+
+    const { result } = renderHook(() => useBacktestJob());
+    await act(async () => {
+      await result.current.start("backtest_wfa", {});
+    });
+
+    const es = MockEventSource.instances[0];
+    // First set a window_progress so wfaProgress is non-null
+    act(() => {
+      es.dispatchEvent("window_progress", {
+        window_id: 1,
+        total_windows: 3,
+        phase: "is_sweep",
+      });
+    });
+
+    act(() => {
+      es.dispatchEvent("sweep_progress", {
+        window_id: 1,
+        current: 4,
+        total: 10,
+        current_params: { short_window: 20, long_window: 60 },
+      });
+    });
+
+    expect(result.current.wfaProgress?.sweepCurrent).toBe(4);
+    expect(result.current.wfaProgress?.sweepTotal).toBe(10);
+    // window context is preserved
+    expect(result.current.wfaProgress?.windowId).toBe(1);
+  });
+
+  it("window_progress with done phase populates bestParams and oosSharpe", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ job_id: "job-wfa-3" }),
+    });
+
+    const { result } = renderHook(() => useBacktestJob());
+    await act(async () => {
+      await result.current.start("backtest_wfa", {});
+    });
+
+    const es = MockEventSource.instances[0];
+    act(() => {
+      es.dispatchEvent("window_progress", {
+        window_id: 3,
+        total_windows: 5,
+        phase: "done",
+        best_params: { short_window: 20, long_window: 60 },
+        oos_sharpe: 0.75,
+      });
+    });
+
+    expect(result.current.wfaProgress?.phase).toBe("done");
+    expect(result.current.wfaProgress?.bestParams).toEqual({ short_window: 20, long_window: 60 });
+    expect(result.current.wfaProgress?.oosSharpe).toBe(0.75);
+  });
+
   it("uses job.error details when polling ends with status=error", async () => {
     mockFetch
       .mockResolvedValueOnce({

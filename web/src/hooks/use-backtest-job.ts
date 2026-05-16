@@ -12,6 +12,16 @@ export interface BacktestProgress {
   meta?: unknown;
 }
 
+export interface WfaProgress {
+  windowId: number;
+  totalWindows: number;
+  phase: "is_sweep" | "oos_validate" | "done";
+  bestParams?: Record<string, unknown>;
+  oosSharpe?: number;
+  sweepCurrent?: number;
+  sweepTotal?: number;
+}
+
 export interface BacktestJobError {
   code: string;
   message: string;
@@ -21,6 +31,7 @@ export interface UseBacktestJobReturn<TResult> {
   jobId: string | null;
   status: BacktestJobStatus;
   progress: BacktestProgress | null;
+  wfaProgress: WfaProgress | null;
   result: TResult | null;
   error: BacktestJobError | null;
   start: (type: string, params: Record<string, unknown>) => Promise<void>;
@@ -31,6 +42,7 @@ export interface UseBacktestJobReturn<TResult> {
 export interface UseBacktestJobOptions<TResult> {
   disableDefaultToasts?: boolean;
   onProgress?: (progress: BacktestProgress) => void;
+  onWfaProgress?: (progress: WfaProgress) => void;
   onResult?: (result: TResult) => void;
   onComplete?: (result: TResult | null) => void;
   onCancelled?: (result: TResult | null) => void;
@@ -45,6 +57,7 @@ export function useBacktestJob<TResult = unknown>(
   const [jobId, setJobId] = useState<string | null>(null);
   const [status, setStatus] = useState<BacktestJobStatus>("idle");
   const [progress, setProgress] = useState<BacktestProgress | null>(null);
+  const [wfaProgress, setWfaProgress] = useState<WfaProgress | null>(null);
   const [result, setResult] = useState<TResult | null>(null);
   const [error, setError] = useState<BacktestJobError | null>(null);
 
@@ -70,6 +83,7 @@ export function useBacktestJob<TResult = unknown>(
     _closeStream();
     setStatus("idle");
     setProgress(null);
+    setWfaProgress(null);
     setResult(null);
     resultRef.current = null;
     setError(null);
@@ -82,6 +96,7 @@ export function useBacktestJob<TResult = unknown>(
       _closeStream();
       setStatus("running");
       setProgress(null);
+      setWfaProgress(null);
       setResult(null);
       resultRef.current = null;
       setError(null);
@@ -136,6 +151,52 @@ export function useBacktestJob<TResult = unknown>(
           };
           setProgress(nextProgress);
           options?.onProgress?.(nextProgress);
+        } catch {
+          // ignore parse errors
+        }
+      });
+
+      es.addEventListener("window_progress", (evt) => {
+        try {
+          const data = JSON.parse(evt.data);
+          const wp: WfaProgress = {
+            windowId: data.window_id,
+            totalWindows: data.total_windows,
+            phase: data.phase,
+            bestParams: data.best_params,
+            oosSharpe: data.oos_sharpe,
+          };
+          setWfaProgress(wp);
+          options?.onWfaProgress?.(wp);
+          const next: BacktestProgress = {
+            current: data.window_id,
+            total: data.total_windows,
+            phase: data.phase,
+          };
+          setProgress(next);
+        } catch {
+          // ignore parse errors
+        }
+      });
+
+      es.addEventListener("sweep_progress", (evt) => {
+        try {
+          const data = JSON.parse(evt.data);
+          setWfaProgress((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  sweepCurrent: data.current,
+                  sweepTotal: data.total,
+                }
+              : {
+                  windowId: data.window_id,
+                  totalWindows: 0,
+                  phase: "is_sweep",
+                  sweepCurrent: data.current,
+                  sweepTotal: data.total,
+                },
+          );
         } catch {
           // ignore parse errors
         }
@@ -237,5 +298,5 @@ export function useBacktestJob<TResult = unknown>(
     }
   }, []);
 
-  return { jobId, status, progress, result, error, start, cancel, reset };
+  return { jobId, status, progress, wfaProgress, result, error, start, cancel, reset };
 }

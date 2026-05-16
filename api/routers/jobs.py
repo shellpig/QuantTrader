@@ -79,6 +79,41 @@ async def create_job(
         request.params["strategy_type"] = validated["strategy_type"]
         request.params["param_candidates"] = validated["param_candidates"]
 
+    if request.type == "backtest_wfa":
+        import pandas as pd
+
+        from src.backtest.walk_forward import required_months_for_wfa
+
+        try:
+            start = pd.Timestamp(str(request.params.get("start_date", "2020-01-01")))
+            end = pd.Timestamp(str(request.params.get("end_date", "2024-12-31")))
+        except Exception:  # noqa: BLE001
+            start = pd.Timestamp("2020-01-01")
+            end = pd.Timestamp("2024-12-31")
+
+        is_months = int(request.params.get("is_months", 12))
+        oos_months = int(request.params.get("oos_months", 3))
+        step_months = int(request.params.get("step_months", 3))
+        required = required_months_for_wfa(
+            is_months=is_months,
+            oos_months=oos_months,
+            step_months=step_months,
+        )
+        actual = (end.year - start.year) * 12 + (end.month - start.month)
+        if actual < required:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error": {
+                        "code": "INSUFFICIENT_DATA_FOR_WFA",
+                        "message": (
+                            f"資料日期區間不足：需要 {required} 個月，"
+                            f"目前僅 {actual} 個月"
+                        ),
+                    }
+                },
+            )
+
     is_write = request.type in _WRITE_JOB_TYPES
     if is_write:
         acquired = await manager.acquire_write_lock()
@@ -218,6 +253,25 @@ def get_job_result(
                 media_type="text/csv; charset=utf-8",
                 headers={"Content-Disposition": f'attachment; filename="{filename}"'},
             )
+        if job.type == "backtest_wfa":
+            from src.services.backtest_service import (
+                build_wfa_stability_csv_blob,
+                build_wfa_window_csv_blob,
+            )
+
+            symbol = str(job.result.get("symbol", "symbol"))
+            ts = datetime.now().strftime("%Y%m%dT%H%M%S")
+            if part == "stability":
+                filename = f"wfa_stability_{symbol}_{ts}.csv"
+                blob = build_wfa_stability_csv_blob(job.result)
+            else:
+                filename = f"wfa_window_{symbol}_{ts}.csv"
+                blob = build_wfa_window_csv_blob(job.result)
+            return StreamingResponse(
+                iter([blob.getvalue()]),
+                media_type="text/csv; charset=utf-8",
+                headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            )
         raise HTTPException(
             status_code=422,
             detail={
@@ -276,6 +330,8 @@ async def _run_job(manager: JobManager, job: Job, params: dict[str, Any]) -> Non
             await _run_backtest_batch_job(manager, job, params)
         elif job.type == "backtest_sweep":
             await _run_backtest_sweep_job(manager, job, params)
+        elif job.type == "backtest_wfa":
+            await _run_backtest_wfa_job(manager, job, params)
         elif job.type == "dummy":
             await _run_dummy_job(manager, job)
         else:
@@ -625,6 +681,96 @@ async def _run_backtest_sweep_job(
         market=str(params.get("market", "tw")),
         initial_capital=float(params.get("initial_capital", 1_000_000)),
         on_progress=_on_progress,
+        should_cancel=_should_cancel,
+    )
+
+    if isinstance(payload, BacktestServiceError):
+        manager.fail_job(
+            job.id,
+            error={"code": payload.code, "message": payload.message},
+        )
+        return
+
+    manager.push_event(job.id, "result", payload)
+    current = manager.get_job(job.id)
+    if current and current.status == "cancelled":
+        manager.finish_cancelled_job(job.id, result=payload)
+    else:
+        manager.complete_job(job.id, result=payload)
+
+
+async def _run_backtest_wfa_job(
+    manager: JobManager, job: Job, params: dict[str, Any]
+) -> None:
+    """Runner for backtest_wfa job type (Phase 10-E-4)."""
+    import pandas as pd
+
+    from src.services.backtest_service import (
+        BacktestServiceError,
+        run_walk_forward_job,
+    )
+
+    manager.update_job(job.id, progress=0.02, message="Walk-Forward 分析啟動中…")
+
+    def _on_window_progress(
+        *,
+        window_id: int,
+        total_windows: int,
+        phase: str,
+        best_params: Any = None,
+        oos_sharpe: Any = None,
+    ) -> None:
+        data: dict[str, Any] = {
+            "window_id": window_id,
+            "total_windows": total_windows,
+            "phase": phase,
+        }
+        if best_params is not None:
+            data["best_params"] = best_params
+        if oos_sharpe is not None:
+            data["oos_sharpe"] = oos_sharpe
+        manager.push_event(job.id, "window_progress", data)
+        if phase == "done" and total_windows > 0:
+            manager.update_job(
+                job.id,
+                progress=window_id / total_windows,
+                message=f"WFA 進度：{window_id}/{total_windows} 段視窗",
+            )
+
+    def _on_sweep_progress(
+        *,
+        window_id: int,
+        current: int,
+        total: int,
+        current_params: dict[str, Any],
+    ) -> None:
+        manager.push_event(job.id, "sweep_progress", {
+            "window_id": window_id,
+            "current": current,
+            "total": total,
+            "current_params": current_params,
+        })
+
+    def _should_cancel() -> bool:
+        current = manager.get_job(job.id)
+        return bool(current and current.status == "cancelled")
+
+    payload = await asyncio.to_thread(
+        run_walk_forward_job,
+        symbol=str(params.get("symbol", "")),
+        start_ts=pd.Timestamp(str(params.get("start_date", "2020-01-01"))),
+        end_exclusive=pd.Timestamp(str(params.get("end_date", "2024-12-31")))
+        + pd.Timedelta(days=1),
+        strategy_type=str(params.get("strategy_type", "")),
+        param_candidates=params.get("param_candidates", {}),
+        is_months=int(params.get("is_months", 12)),
+        oos_months=int(params.get("oos_months", 3)),
+        step_months=int(params.get("step_months", 3)),
+        optimize_metric=str(params.get("optimize_metric", "sharpe_ratio")),
+        market=str(params.get("market", "tw")),
+        initial_capital=float(params.get("initial_capital", 1_000_000)),
+        on_window_progress=_on_window_progress,
+        on_sweep_progress=_on_sweep_progress,
         should_cancel=_should_cancel,
     )
 

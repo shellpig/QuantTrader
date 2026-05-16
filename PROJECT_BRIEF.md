@@ -13,9 +13,9 @@
 2026-05-14 Phase 10 規格已完成並寫入正式文件：前端架構從 Streamlit 遷移至 Next.js (React) + FastAPI，拆為 10-A~10-H 八個子階段。新增 `src/services/`（服務層）、`api/`（FastAPI 後端）、`web/`（Next.js 前端）。核心演算法不重寫。Phase 9-G（美股 intraday）為前置條件。
 
 - Phase 9 全部完成（含美股 US-1 / 9-G intraday）。
-- Phase 10-A / 10-B / 10-C / 10-D / 10-E-1 / 10-E-2 / 10-F-1 / 10-G-1 已完成。
+- Phase 10-A / 10-B / 10-C / 10-D / 10-E-1 / 10-E-2 / 10-E-3 / 10-E-4 / 10-F-1 / 10-G-1 已完成。
 - Phase 10-F-2（AI 問答接 LLM）延後，不卡主線。
-- 後續順序：10-E-3 → 10-E-4 → 10-G-2 → 10-H。
+- 後續順序：10-G-2 → 10-H。
 
 ## 技術棧
 
@@ -226,8 +226,8 @@ risk:
 | 10-D | ✅ 完成 | 個股分析儀表板（Lightweight Charts）：3 輪驗收完成（round-3 13 項基本修正 + round-4 6 項緊湊化 + round-5 三欄佈局 50:25:25）；K 線 + MA + KD/RSI/MACD 副圖、crosshair tooltip、S/R 壓力支撐線、Pattern 長描述 tooltip、Radix Tooltip；tsc 0 errors + vitest 34 pass + pytest 25 pass |
 | 10-E-1 | ✅ 完成 | 單次回測：Job + SSE、5 metric card tearsheet、K 線 + MA + buy/sell markers、equity curve、trades 表；建立 form / K 線 / tearsheet 元件供 10-E-2~4 重用；使用 10-G-1 的 toast / skeleton / error boundary / command palette；pytest 9 passed + vitest 31 files / 202 tests passed + tsc 0 errors |
 | 10-E-2 | ✅ 完成 | 策略比較（批次）：`backtest_batch` Job + per-preset SSE progress、10 欄比較表、多策略 equity 疊圖（lightweight-charts 多 LineSeries + crosshair tooltip）、row 展開重用 10-E-1 元件、CSV blob 匯出；pytest `test_backtest_api.py` 14 passed、API 回歸 73 passed、vitest 34 files / 214 tests passed、tsc 0 errors |
-| 10-E-3 | 📋 規格已定，待實作 | 參數掃描：Top N 排名表 + 2D heatmap（僅 2 參數，自製 CSS Grid）+ 進度 throttle + sample_warning |
-| 10-E-4 | 📋 規格已定，待實作 | Walk-Forward：Summary / Window / Stability 三表 + 巢狀 SSE 進度（window × IS sweep）+ 雙 CSV 匯出（window + stability） |
+| 10-E-3 | ✅ 完成 | 參數掃描：Top N 排名表 + 2D heatmap（僅 2 參數，自製 CSS Grid）+ 進度 throttle + sample_warning |
+| 10-E-4 | ✅ 完成 | Walk-Forward：Summary / Window / Stability 三表 + 巢狀 SSE 進度（window × IS sweep）+ 雙 CSV 匯出（window + stability）；`run_walk_forward_job` + `WalkForwardTab` + `WfaSummaryCards` + `WfaWindowTable` + `WfaStabilityTable`；pytest 26 passed + vitest 40 files / 252 tests passed + tsc 0 errors |
 | 10-F-1 | ✅ 完成 | AI 問答頁 UI shell + 後端 lock（**不接 LLM**）：完整 chat UI、免責聲明 gate（localStorage `ai_chat.disclaimer_accepted_v1`）、`react-markdown` + remark-gfm、Mock 逐字串流（25ms / char）、訊息歷史刷新即清；`GET /api/ai/status` 回 `feature_locked`、`POST /api/ai/chat` 回 503；Sidebar AI 入口加灰色「後續開放」徽章；package version py + web + FastAPI 三處同步 bump 至 `0.2.0`；文件 V2.4。tsc 0 errors + vitest **17 files / 124 tests pass**（+31：disclaimer-gate 5 / message-bubble 10 / chat-page-client 8 / use-ai-status 3 / sidebar 5）+ pytest **test_api 59 passed**（+7 in `test_ai_api.py`） |
 | 10-F-2 | ⏸ 延後 | AI 問答頁接 LLM：補 `AIAdvisor.stream_chat()` 三 adapter（Anthropic / OpenAI / Gemini）+ 真實 SSE token 串流；**不卡 10-G / 10-H** |
 | 10-G-1 | ✅ 完成 | 基礎設施先行：新增 `sonner` toast + 10-C-2 banner 遷移、React Error Boundary（只接 render/lifecycle/hook 例外）、`CardSkeleton` / `ChartSkeleton` / `TableSkeleton`、`cmdk` Command Palette（頁面跳轉 + 股票搜尋）；移除 `@radix-ui/react-toast`；補 7 檔前端測試與單檔更新/新增失敗 toast regression。tsc 0 errors + vitest **24 files / 148 tests passed** |

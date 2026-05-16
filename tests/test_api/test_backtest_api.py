@@ -801,3 +801,220 @@ def test_backtest_sweep_csv_export_returns_blob() -> None:
     disposition = csv_resp.headers.get("content-disposition", "")
     assert "attachment" in disposition
     assert "sweep_2330_" in disposition
+
+
+# ---------------------------------------------------------------------------
+# Phase 10-E-4: Walk-Forward Analysis tests
+# ---------------------------------------------------------------------------
+
+_MOCK_WFA_PAYLOAD = {
+    "symbol": "2330",
+    "market": "tw",
+    "currency": "TWD",
+    "strategy_type": "moving_average_cross",
+    "optimize_metric": "sharpe_ratio",
+    "total_window_count": 3,
+    "valid_window_count": 3,
+    "skipped_window_count": 0,
+    "windows": [
+        {
+            "window_id": 1,
+            "is_start": "2018-01-01",
+            "is_end": "2018-12-31",
+            "oos_start": "2019-01-01",
+            "oos_end": "2019-03-31",
+            "best_params": {"short_window": 20, "long_window": 60},
+            "is_metrics": {"sharpe_ratio": 1.2, "total_return": 0.15},
+            "oos_metrics": {"sharpe_ratio": 0.7, "total_return": 0.05},
+            "degradation": -0.5,
+            "skipped": False,
+            "warnings": [],
+        }
+    ],
+    "aggregate": {
+        "oos_total_return": 0.05,
+        "oos_annual_return": None,
+        "oos_max_drawdown": -0.08,
+        "oos_sharpe_ratio": 0.7,
+        "oos_win_rate": 0.67,
+        "avg_degradation": -0.5,
+    },
+    "parameter_stability": {
+        "overall_status": "stable",
+        "params": {
+            "short_window": {
+                "values": [20, 20, 20],
+                "cv": 0.0,
+                "mean": 20.0,
+                "std": 0.0,
+                "status": "stable",
+            },
+            "long_window": {
+                "values": [60, 60, 60],
+                "cv": 0.0,
+                "mean": 60.0,
+                "std": 0.0,
+                "status": "stable",
+            },
+        },
+    },
+}
+
+
+def test_backtest_wfa_job_created_returns_201() -> None:
+    _reset_manager()
+    resp = client.post("/api/jobs", json={
+        "type": "backtest_wfa",
+        "params": {
+            "market": "tw",
+            "symbol": "2330",
+            "start_date": "2018-01-01",
+            "end_date": "2024-12-31",
+            "strategy_type": "moving_average_cross",
+            "param_candidates": {"short_window": [20], "long_window": [60]},
+            "is_months": 12,
+            "oos_months": 3,
+            "step_months": 3,
+        },
+    })
+    assert resp.status_code == 201
+    assert "job_id" in resp.json()
+
+
+def test_backtest_wfa_insufficient_date_range_returns_422() -> None:
+    _reset_manager()
+    resp = client.post("/api/jobs", json={
+        "type": "backtest_wfa",
+        "params": {
+            "market": "tw",
+            "symbol": "2330",
+            "start_date": "2023-01-01",
+            "end_date": "2023-06-30",
+            "strategy_type": "moving_average_cross",
+            "param_candidates": {"short_window": [20], "long_window": [60]},
+            "is_months": 12,
+            "oos_months": 3,
+            "step_months": 3,
+        },
+    })
+    assert resp.status_code == 422
+    detail = resp.json()["detail"]["error"]
+    assert detail["code"] == "INSUFFICIENT_DATA_FOR_WFA"
+    assert "需要" in detail["message"]
+
+
+def test_backtest_wfa_sse_pushes_window_and_sweep_progress() -> None:
+    """Verify that the WFA job dispatcher calls window_progress and sweep_progress
+    callbacks, and that the job completes with the expected result structure."""
+    _reset_manager()
+
+    window_events: list[dict] = []
+    sweep_events: list[dict] = []
+
+    def _fake_run_wfa(
+        *,
+        on_window_progress=None,
+        on_sweep_progress=None,
+        **_kwargs,
+    ):
+        # Simulate callbacks the real service would invoke
+        if on_sweep_progress:
+            on_sweep_progress(
+                window_id=1, current=1, total=1,
+                current_params={"short_window": 20, "long_window": 60},
+            )
+        if on_window_progress:
+            on_window_progress(window_id=1, total_windows=3, phase="is_sweep")
+            on_window_progress(
+                window_id=1, total_windows=3, phase="done",
+                best_params={"short_window": 20, "long_window": 60},
+                oos_sharpe=0.8,
+            )
+        # Record what was pushed (read back from mock invocations above)
+        return _MOCK_WFA_PAYLOAD
+
+    with patch("src.services.backtest_service.run_walk_forward_job", side_effect=_fake_run_wfa):
+        create = client.post("/api/jobs", json={
+            "type": "backtest_wfa",
+            "params": {
+                "market": "tw",
+                "symbol": "2330",
+                "start_date": "2018-01-01",
+                "end_date": "2024-12-31",
+                "strategy_type": "moving_average_cross",
+                "param_candidates": {"short_window": [20], "long_window": [60]},
+                "is_months": 12,
+                "oos_months": 3,
+                "step_months": 3,
+            },
+        })
+        assert create.status_code == 201
+        job_id = create.json()["job_id"]
+        final = _wait_for_job(job_id, timeout=5.0)
+        assert final["status"] in ("complete", "error")
+
+    # Result must contain WFA-specific fields
+    result_resp = client.get(f"/api/jobs/{job_id}/result")
+    assert result_resp.status_code == 200
+    data = result_resp.json()["data"]
+    assert "windows" in data
+    assert "aggregate" in data
+    assert "parameter_stability" in data
+
+
+def test_backtest_wfa_result_contains_required_fields() -> None:
+    _reset_manager()
+    manager = get_job_manager()
+
+    async def _setup() -> str:
+        job = await manager.create_job("backtest_wfa", {})
+        manager.complete_job(job.id, result=_MOCK_WFA_PAYLOAD)
+        return job.id
+
+    job_id = asyncio.run(_setup())
+    result = client.get(f"/api/jobs/{job_id}/result")
+    assert result.status_code == 200
+    data = result.json()["data"]
+    assert data["total_window_count"] == 3
+    assert data["valid_window_count"] == 3
+    assert len(data["windows"]) == 1
+    assert "aggregate" in data
+    assert "parameter_stability" in data
+    assert "oos_sharpe_ratio" in data["aggregate"]
+    assert "short_window" in data["parameter_stability"]["params"]
+
+
+def test_backtest_wfa_csv_window_export() -> None:
+    _reset_manager()
+    manager = get_job_manager()
+
+    async def _setup() -> str:
+        job = await manager.create_job("backtest_wfa", {})
+        manager.complete_job(job.id, result=_MOCK_WFA_PAYLOAD)
+        return job.id
+
+    job_id = asyncio.run(_setup())
+    csv_resp = client.get(f"/api/jobs/{job_id}/result?format=csv&part=window")
+    assert csv_resp.status_code == 200
+    assert "text/csv" in csv_resp.headers.get("content-type", "")
+    disposition = csv_resp.headers.get("content-disposition", "")
+    assert "attachment" in disposition
+    assert "wfa_window_2330_" in disposition
+
+
+def test_backtest_wfa_csv_stability_export() -> None:
+    _reset_manager()
+    manager = get_job_manager()
+
+    async def _setup() -> str:
+        job = await manager.create_job("backtest_wfa", {})
+        manager.complete_job(job.id, result=_MOCK_WFA_PAYLOAD)
+        return job.id
+
+    job_id = asyncio.run(_setup())
+    csv_resp = client.get(f"/api/jobs/{job_id}/result?format=csv&part=stability")
+    assert csv_resp.status_code == 200
+    assert "text/csv" in csv_resp.headers.get("content-type", "")
+    disposition = csv_resp.headers.get("content-disposition", "")
+    assert "attachment" in disposition
+    assert "wfa_stability_2330_" in disposition
