@@ -28,7 +28,7 @@ export default function RootLayout({
             <div className="min-h-screen flex">
               <Sidebar />
               {/* Main content — offset left on PC, bottom padding on mobile */}
-              <main className="flex-1 lg:pl-32 pb-16 lg:pb-0">
+              <main className="flex-1 lg:pl-32 pb-14 lg:pb-0">
                 <div className="px-4 py-6">
                   {children}
                 </div>

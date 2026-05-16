@@ -18,17 +18,18 @@ import { useCommandPaletteEntry } from "@/hooks/use-command-palette";
 
 interface NavItem {
   label: string;
+  shortLabel: string;
   href: string;
   icon: React.ComponentType<{ className?: string }>;
   badge?: string;
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { label: "個股分析", href: "/dashboard", icon: BarChart3 },
-  { label: "回測研究", href: "/backtest", icon: TrendingUp },
-  { label: "資料管理", href: "/data",     icon: FolderOpen },
-  { label: "AI 問答",  href: "/ai",       icon: Bot,      badge: "後續開放" },
-  { label: "設定",     href: "/settings", icon: Settings },
+  { label: "個股分析", shortLabel: "分析",  href: "/dashboard", icon: BarChart3 },
+  { label: "回測研究", shortLabel: "回測",  href: "/backtest",  icon: TrendingUp },
+  { label: "資料管理", shortLabel: "資料",  href: "/data",      icon: FolderOpen },
+  { label: "AI 問答",  shortLabel: "AI",    href: "/ai",        icon: Bot,       badge: "後續開放" },
+  { label: "設定",     shortLabel: "設定",  href: "/settings",  icon: Settings },
 ];
 
 export function Sidebar() {
@@ -87,10 +88,10 @@ export function Sidebar() {
 
       {/* ── Mobile: bottom tab bar ── */}
       <nav
-        className="lg:hidden fixed bottom-0 inset-x-0 z-40 bg-card border-t border-border"
-        aria-label="モバイルナビ"
+        className="lg:hidden fixed bottom-0 left-0 right-0 z-50 h-14 bg-background border-t border-border"
+        aria-label="手機底部導覽"
       >
-        <div className="flex items-center justify-around h-16 px-2">
+        <div className="grid grid-cols-5 h-full">
           {NAV_ITEMS.map((item) => (
             <MobileTabItem key={item.href} item={item} active={pathname === item.href} />
           ))}
@@ -136,14 +137,14 @@ function MobileTabItem({ item, active }: { item: NavItem; active: boolean }) {
     <Link
       href={item.href}
       className={cn(
-        "flex flex-col items-center gap-0.5 px-2 py-1 text-xs font-medium transition-colors",
+        "flex flex-col items-center justify-center gap-0.5 transition-colors",
         active ? "text-primary" : "text-muted-foreground",
       )}
       aria-current={active ? "page" : undefined}
       data-testid={`mobile-nav-${item.href.slice(1)}`}
     >
-      <Icon className="h-6 w-6" />
-      <span>{item.label}</span>
+      <Icon className="h-5 w-5" />
+      <span className="text-[10px] font-medium">{item.shortLabel}</span>
     </Link>
   );
 }

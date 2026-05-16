@@ -16,6 +16,8 @@ interface StrategyPresetSelectProps {
   disabled?: boolean;
 }
 
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
 const fetcher = (url: string) =>
   fetch(url).then((r) => r.json()).then((b) => b.data as StrategyPreset[]);
 
@@ -25,7 +27,7 @@ export function StrategyPresetSelect({
   disabled,
 }: StrategyPresetSelectProps) {
   const { data: presets, isLoading } = useSWR<StrategyPreset[]>(
-    "/api/config/strategies",
+    `${API_BASE}/api/config/strategies`,
     fetcher,
   );
 

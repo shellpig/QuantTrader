@@ -163,7 +163,9 @@ def load_backtest_data(
     for col in ("open", "high", "low", "close"):
         data[col] = pd.to_numeric(data[col], errors="coerce")
     data = data.dropna(subset=["open", "high", "low", "close"])
-    data = data[(data["date"] >= start_ts) & (data["date"] < end_exclusive)].copy()
+    start_tz = start_ts.tz_localize(timezone) if start_ts.tz is None else start_ts.tz_convert(timezone)
+    end_tz = end_exclusive.tz_localize(timezone) if end_exclusive.tz is None else end_exclusive.tz_convert(timezone)
+    data = data[(data["date"] >= start_tz) & (data["date"] < end_tz)].copy()
     return data.sort_values("date").reset_index(drop=True)
 
 
