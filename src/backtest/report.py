@@ -185,20 +185,7 @@ class TearsheetReport:
         }
 
     def _apply_theme(self, fig: go.Figure) -> go.Figure:
-        from src.core.config import get_config
-        from src.ui.themes import get_theme
-
-        config = get_config()
-        ui_section = config.get("ui", {}) if isinstance(config, dict) else {}
-        theme_name = str(ui_section.get("theme", "arctic_light"))
-        _, palette = get_theme(theme_name)
-
-        fig.update_layout(
-            template=palette["plotly_template"],
-            paper_bgcolor=palette["surface"],
-            plot_bgcolor=palette["surface"],
-            font={"color": palette["text"]},
-        )
+        return fig
 
         for trace in fig.data:
             if hasattr(trace, "header") and hasattr(trace.header, "update"):
