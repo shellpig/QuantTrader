@@ -3,6 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 import time
 from typing import Any
 
@@ -19,6 +20,7 @@ from src.core.constants import (
     MARGIN_COLUMNS,
     MONTHLY_REVENUE_COLUMNS,
     PER_COLUMNS,
+    SHAREHOLDER_MEETING_COLUMNS,
     SPLITS_COLUMNS,
     STANDARD_COLUMNS,
     TAIPEI_TZ,
@@ -1204,3 +1206,99 @@ class YFinanceFetcher(IDataFetcher):
             timestamp=latest_ts,
         )
         return intraday_df, snapshot, None
+
+
+def _parse_tw_roc_date(value: Any) -> pd.Timestamp | pd.NaT:
+    text = str(value or "").strip()
+    digits = "".join(ch for ch in text if ch.isdigit())
+    if len(digits) < 7:
+        return pd.NaT
+    digits = digits[-7:]
+    try:
+        roc_year = int(digits[:3])
+        month = int(digits[3:5])
+        day = int(digits[5:7])
+        if roc_year <= 0:
+            return pd.NaT
+        return pd.Timestamp(datetime(roc_year + 1911, month, day), tz=TAIPEI_TZ)
+    except Exception:  # noqa: BLE001
+        return pd.NaT
+
+
+def _normalize_meeting_type(value: Any) -> str | None:
+    text = str(value or "").strip()
+    if "臨時" in text:
+        return "臨時會"
+    if "常" in text:
+        return "常會"
+    return None
+
+
+class TWSEFetcher:
+    """TWSE/TPEx open data fetcher for shareholder meeting calendar (11-C)."""
+
+    TWSE_URL = "https://openapi.twse.com.tw/v1/opendata/t187ap41_L"
+    TPEX_URL = "https://www.tpex.org.tw/openapi/v1/t187ap41_O"
+
+    def __init__(self, session: requests.Session | None = None, timeout_seconds: int = 20):
+        self._session = session
+        self._timeout_seconds = timeout_seconds
+
+    def fetch_shareholder_meeting(self, session: requests.Session | None = None) -> pd.DataFrame:
+        client = session or self._session or requests.Session()
+        now = pd.Timestamp.now(tz=TAIPEI_TZ)
+
+        twse_df = self._fetch_one(client, self.TWSE_URL)
+        tpex_df = self._fetch_one(client, self.TPEX_URL)
+        merged = pd.concat([twse_df, tpex_df], ignore_index=True)
+
+        if merged.empty:
+            return pd.DataFrame(
+                {
+                    "date": pd.Series(dtype=f"datetime64[ns, {TAIPEI_TZ}]"),
+                    "symbol": pd.Series(dtype="object"),
+                    "meeting_type": pd.Series(dtype="object"),
+                    "source": pd.Series(dtype="object"),
+                    "updated_at": pd.Series(dtype=f"datetime64[ns, {TAIPEI_TZ}]"),
+                }
+            )[SHAREHOLDER_MEETING_COLUMNS]
+
+        out = merged.copy()
+        out["symbol"] = out["symbol"].astype(str).str.strip()
+        out["date"] = out["date"].map(_parse_tw_roc_date)
+        out["meeting_type"] = out["meeting_type"].map(_normalize_meeting_type)
+        out = out.dropna(subset=["date", "meeting_type"]).copy()
+        out = out[out["symbol"] != ""].copy()
+        out["source"] = "auto"
+        out["updated_at"] = now
+        out = out[SHAREHOLDER_MEETING_COLUMNS]
+        out = out.drop_duplicates(subset=["symbol", "date"], keep="last")
+        out = out.sort_values(["date", "symbol"]).reset_index(drop=True)
+        return out
+
+    def _fetch_one(self, client: requests.Session, url: str) -> pd.DataFrame:
+        try:
+            response = client.get(url, timeout=self._timeout_seconds)
+            response.raise_for_status()
+            payload = response.json()
+        except Exception as exc:  # noqa: BLE001
+            raise FetcherError(f"Shareholder meeting fetch failed: {url}") from exc
+
+        if not isinstance(payload, list):
+            raise FetcherError(f"Unexpected shareholder meeting payload: {url}")
+
+        raw = pd.DataFrame(payload)
+        if raw.empty:
+            return pd.DataFrame(columns=["symbol", "date", "meeting_type"])
+
+        out = raw.rename(
+            columns={
+                "公司代號": "symbol",
+                "開會日期": "date",
+                "股東常(臨時)會": "meeting_type",
+            }
+        )
+        for col in ("symbol", "date", "meeting_type"):
+            if col not in out.columns:
+                out[col] = pd.NA
+        return out[["symbol", "date", "meeting_type"]].copy()

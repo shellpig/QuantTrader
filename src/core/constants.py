@@ -39,6 +39,7 @@ DIVIDENDS_COLUMNS = ["date", "cash_dividend", "stock_dividend", "symbol"]
 EPS_COLUMNS = ["date", "year", "quarter", "eps", "symbol"]
 PER_COLUMNS = ["date", "per", "pbr", "dividend_yield", "symbol"]
 MONTHLY_REVENUE_COLUMNS = ["date", "revenue", "revenue_month", "revenue_year", "symbol"]
+SHAREHOLDER_MEETING_COLUMNS = ["date", "symbol", "meeting_type", "source", "updated_at"]
 
 # Canonical bar frequencies for event objects.
 VALID_BAR_FREQS = {"1min", "5min", "15min", "30min", "60min", "1day"}

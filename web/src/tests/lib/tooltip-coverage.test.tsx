@@ -1,6 +1,8 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { DividendHistoryPanel } from "@/components/dashboard/p11/dividend-history-panel";
+import { EventCalendarPanel } from "@/components/dashboard/p11/event-calendar-panel";
+import { InstitutionalCostPanel } from "@/components/dashboard/p11/institutional-cost-panel";
 import { IndustryPerModal } from "@/components/dashboard/p11/industry-per-modal";
 import { P11_TOOLTIP_TEXT } from "@/components/dashboard/tooltip-text";
 
@@ -37,11 +39,36 @@ describe("P11 tooltip coverage", () => {
             items: [{ date: "2026-06-15", cash_dividend: 3.5, ttm_pe: 12.5 }],
           }}
         />
+        <InstitutionalCostPanel
+          data={{
+            symbol: "2330",
+            market: "tw",
+            days: 30,
+            current_price: 110,
+            foreign: { cost: 100, pnl: 10 },
+            trust: { cost: 95, pnl: 15 },
+            dealer: { cost: null, pnl: null },
+          }}
+        />
+        <EventCalendarPanel
+          onEdit={() => undefined}
+          data={{
+            symbol: "2330",
+            market: "tw",
+            next_ex_dividend: null,
+            last_ex_dividend: null,
+            next_shareholder_meeting: null,
+            last_shareholder_meeting: null,
+            missing_shareholder_meeting: true,
+          }}
+        />
       </>,
     );
 
     expect(screen.getByLabelText(P11_TOOLTIP_TEXT.per_abbr)).toBeInTheDocument();
     expect(screen.getByLabelText(P11_TOOLTIP_TEXT.pbr)).toBeInTheDocument();
     expect(screen.getByLabelText(P11_TOOLTIP_TEXT.ttm_pe)).toBeInTheDocument();
+    expect(screen.getByLabelText(P11_TOOLTIP_TEXT.institutional_cost)).toBeInTheDocument();
+    expect(screen.getByLabelText(P11_TOOLTIP_TEXT.event_calendar)).toBeInTheDocument();
   });
 });

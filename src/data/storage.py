@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import json
 import shutil
 import stat
 import time
@@ -20,8 +21,10 @@ from src.core.constants import (
     MARGIN_COLUMNS,
     MONTHLY_REVENUE_COLUMNS,
     PER_COLUMNS,
+    SHAREHOLDER_MEETING_COLUMNS,
     SPLITS_COLUMNS,
     STANDARD_COLUMNS,
+    TAIPEI_TZ,
 )
 from src.core.exceptions import StorageError
 from src.core.market import get_market_spec, normalize_market, validate_symbol
@@ -131,6 +134,18 @@ def _empty_monthly_revenue_dataframe(timezone: str) -> pd.DataFrame:
             "symbol": pd.Series(dtype="object"),
         }
     )[MONTHLY_REVENUE_COLUMNS]
+
+
+def _empty_shareholder_meeting_dataframe(timezone: str = TAIPEI_TZ) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "date": pd.Series(dtype=f"datetime64[ns, {timezone}]"),
+            "symbol": pd.Series(dtype="object"),
+            "meeting_type": pd.Series(dtype="object"),
+            "source": pd.Series(dtype="object"),
+            "updated_at": pd.Series(dtype=f"datetime64[ns, {timezone}]"),
+        }
+    )[SHAREHOLDER_MEETING_COLUMNS]
 
 
 def _normalize_market_df(df: pd.DataFrame, symbol: str, timezone: str) -> pd.DataFrame:
@@ -261,6 +276,81 @@ def _normalize_margin_df(df: pd.DataFrame, symbol: str, timezone: str) -> pd.Dat
         out[col] = pd.to_numeric(out[col], errors="coerce").fillna(0).astype("int64")
 
     return out[MARGIN_COLUMNS].sort_values("date").reset_index(drop=True)
+
+
+def _normalize_shareholder_meeting_df(df: pd.DataFrame, timezone: str = TAIPEI_TZ) -> pd.DataFrame:
+    if df.empty:
+        return _empty_shareholder_meeting_dataframe(timezone)
+
+    out = df.copy()
+    for col in SHAREHOLDER_MEETING_COLUMNS:
+        if col not in out.columns:
+            out[col] = pd.NA
+
+    out["symbol"] = out["symbol"].fillna("").astype(str).str.strip()
+    out["meeting_type"] = out["meeting_type"].fillna("").astype(str).str.strip()
+    out["source"] = out["source"].fillna("").astype(str).str.strip()
+    out["date"] = pd.to_datetime(out["date"], errors="coerce")
+    out["updated_at"] = pd.to_datetime(out["updated_at"], errors="coerce")
+    out = out.dropna(subset=["date", "updated_at"]).copy()
+    out = out[(out["symbol"] != "") & (out["meeting_type"] != "")].copy()
+    if out.empty:
+        return _empty_shareholder_meeting_dataframe(timezone)
+
+    for col in ("date", "updated_at"):
+        series = out[col]
+        if series.dt.tz is None:
+            out[col] = series.dt.tz_localize(timezone)
+        else:
+            out[col] = series.dt.tz_convert(timezone)
+        out[col] = out[col].astype(f"datetime64[ns, {timezone}]")
+
+    out = out[SHAREHOLDER_MEETING_COLUMNS]
+    out = out.drop_duplicates(subset=["symbol"], keep="last").sort_values("symbol").reset_index(drop=True)
+    return out
+
+
+def merge_shareholder_meeting_auto(
+    new_rows: pd.DataFrame,
+    existing: pd.DataFrame,
+    now: pd.Timestamp,
+    timezone: str = TAIPEI_TZ,
+) -> pd.DataFrame:
+    normalized_existing = _normalize_shareholder_meeting_df(existing, timezone=timezone)
+    normalized_new = _normalize_shareholder_meeting_df(new_rows, timezone=timezone)
+    if normalized_new.empty:
+        return normalized_existing
+
+    now_ts = pd.Timestamp(now)
+    if now_ts.tzinfo is None:
+        now_ts = now_ts.tz_localize(timezone)
+    else:
+        now_ts = now_ts.tz_convert(timezone)
+
+    by_symbol: dict[str, dict[str, Any]] = {}
+    for _, row in normalized_existing.iterrows():
+        by_symbol[str(row["symbol"])] = row.to_dict()
+
+    for _, row in normalized_new.iterrows():
+        key = str(row["symbol"])
+        prev = by_symbol.get(key)
+        if prev is not None:
+            same_date = pd.Timestamp(prev["date"]) == pd.Timestamp(row["date"])
+            same_type = str(prev["meeting_type"]) == str(row["meeting_type"])
+            if same_date and same_type:
+                row_dict = row.to_dict()
+                row_dict["updated_at"] = prev["updated_at"]
+                by_symbol[key] = row_dict
+                continue
+
+        row_dict = row.to_dict()
+        row_dict["updated_at"] = now_ts
+        by_symbol[key] = row_dict
+
+    merged = pd.DataFrame(list(by_symbol.values()))
+    if merged.empty:
+        return _empty_shareholder_meeting_dataframe(timezone)
+    return _normalize_shareholder_meeting_df(merged, timezone=timezone)
 
 
 def _normalize_dividends_df(df: pd.DataFrame, symbol: str, timezone: str) -> pd.DataFrame:
@@ -517,6 +607,30 @@ class ParquetStorage:
             self._validate_symbol(symbol, normalized_market),
             "eps.parquet",
         )
+
+    def _shareholder_meeting_path(self) -> Path:
+        path = (self.data_dir / "raw" / "tw" / "shareholder_meeting.parquet").resolve(strict=False)
+        try:
+            path.relative_to(self.data_dir)
+        except ValueError as exc:
+            raise StorageError(f"Resolved path escapes data_dir: {path}") from exc
+        return path
+
+    def _shareholder_meeting_meta_path(self) -> Path:
+        path = (self.data_dir / "raw" / "tw" / "shareholder_meeting.meta.json").resolve(strict=False)
+        try:
+            path.relative_to(self.data_dir)
+        except ValueError as exc:
+            raise StorageError(f"Resolved path escapes data_dir: {path}") from exc
+        return path
+
+    def _shareholder_meeting_override_path(self) -> Path:
+        path = (self.data_dir / "manual" / "shareholder_meeting_override.csv").resolve(strict=False)
+        try:
+            path.relative_to(self.data_dir)
+        except ValueError as exc:
+            raise StorageError(f"Resolved path escapes data_dir: {path}") from exc
+        return path
 
     def _save_with_upsert(self, path: Path, symbol: str, df: pd.DataFrame, timezone: str) -> Path:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -914,6 +1028,101 @@ class ParquetStorage:
             normalized_symbol,
             timezone=self._market_timezone(normalized_market),
         )
+
+    def save_shareholder_meeting(self, df: pd.DataFrame) -> None:
+        path = self._shareholder_meeting_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        normalized = _normalize_shareholder_meeting_df(df, timezone=TAIPEI_TZ)
+        try:
+            normalized.to_parquet(path, index=False)
+        except Exception as exc:  # noqa: BLE001
+            raise StorageError(f"Failed to write parquet: {path}") from exc
+
+    def load_shareholder_meeting(self) -> pd.DataFrame:
+        path = self._shareholder_meeting_path()
+        if not path.exists():
+            return _empty_shareholder_meeting_dataframe(TAIPEI_TZ)
+        try:
+            loaded = pd.read_parquet(path)
+        except Exception as exc:  # noqa: BLE001
+            raise StorageError(f"Failed to read parquet: {path}") from exc
+        return _normalize_shareholder_meeting_df(loaded, timezone=TAIPEI_TZ)
+
+    def load_shareholder_meeting_meta(self) -> dict[str, Any]:
+        path = self._shareholder_meeting_meta_path()
+        if not path.exists():
+            return {}
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:  # noqa: BLE001
+            raise StorageError(f"Failed to read meta: {path}") from exc
+
+    def save_shareholder_meeting_meta(self, meta: dict[str, Any]) -> None:
+        path = self._shareholder_meeting_meta_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = path.with_suffix(path.suffix + ".tmp")
+        try:
+            tmp_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+            tmp_path.replace(path)
+        except Exception as exc:  # noqa: BLE001
+            raise StorageError(f"Failed to write meta: {path}") from exc
+
+    def load_shareholder_meeting_override(self) -> pd.DataFrame:
+        path = self._shareholder_meeting_override_path()
+        if not path.exists():
+            return _empty_shareholder_meeting_dataframe(TAIPEI_TZ)
+        try:
+            loaded = pd.read_csv(path)
+        except Exception as exc:  # noqa: BLE001
+            raise StorageError(f"Failed to read override csv: {path}") from exc
+        return _normalize_shareholder_meeting_df(loaded, timezone=TAIPEI_TZ)
+
+    def upsert_shareholder_meeting_override(
+        self,
+        symbol: str,
+        date: str,
+        meeting_type: str,
+        *,
+        updated_at: pd.Timestamp | None = None,
+    ) -> None:
+        now = updated_at or pd.Timestamp.now(tz=TAIPEI_TZ)
+        base = self.load_shareholder_meeting_override()
+        base = base[base["symbol"] != symbol].copy()
+        appended = pd.DataFrame(
+            [
+                {
+                    "symbol": symbol,
+                    "date": date,
+                    "meeting_type": meeting_type,
+                    "source": "manual",
+                    "updated_at": now,
+                }
+            ]
+        )
+        merged = pd.concat([base, appended], ignore_index=True)
+        normalized = _normalize_shareholder_meeting_df(merged, timezone=TAIPEI_TZ)
+        self._save_shareholder_override_csv_atomic(normalized)
+
+    def delete_shareholder_meeting_override(self, symbol: str) -> None:
+        current = self.load_shareholder_meeting_override()
+        next_df = current[current["symbol"] != symbol].copy()
+        self._save_shareholder_override_csv_atomic(next_df)
+
+    def _save_shareholder_override_csv_atomic(self, df: pd.DataFrame) -> None:
+        path = self._shareholder_meeting_override_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = path.with_suffix(path.suffix + ".tmp")
+        normalized = _normalize_shareholder_meeting_df(df, timezone=TAIPEI_TZ).copy()
+        if normalized.empty:
+            for col in SHAREHOLDER_MEETING_COLUMNS:
+                if col not in normalized.columns:
+                    normalized[col] = pd.Series(dtype="object")
+            normalized = normalized[SHAREHOLDER_MEETING_COLUMNS]
+        try:
+            normalized.to_csv(tmp_path, index=False)
+            tmp_path.replace(path)
+        except Exception as exc:  # noqa: BLE001
+            raise StorageError(f"Failed to write override csv: {path}") from exc
 
     def clear_p11_parquets(self, symbol: str, market: str = "tw") -> None:
         """Delete P11-specific parquets (per, monthly_revenue, dividends, eps) so that

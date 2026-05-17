@@ -13,10 +13,14 @@ from src.services.dashboard_service import (
     DashboardError,
     DashboardPayload,
     build_dashboard_payload,
+    delete_shareholder_meeting_override,
     get_dividend_history_with_pe,
+    get_event_calendar,
+    get_institutional_cost,
     get_industry_per_table,
     get_monthly_revenue,
     get_valuation,
+    upsert_shareholder_meeting_override,
     _lookup_nearest_close,
     _normalize_daily_df,
     _prepare_daily_data,
@@ -438,3 +442,202 @@ def test_get_industry_per_table_uses_cache_hit(tmp_path) -> None:
         assert len(data["items"]) == 2
         current_rows = [row for row in data["items"] if row["symbol"] == "2330"]
         assert current_rows and current_rows[0]["is_current"] is True
+
+
+def test_get_institutional_cost_computes_weighted_costs() -> None:
+    daily_df = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2026-05-10", "2026-05-11"]),
+            "open": [100, 110],
+            "high": [120, 130],
+            "low": [80, 90],
+            "close": [100, 120],
+            "volume": [1000, 1000],
+            "symbol": ["2330", "2330"],
+        }
+    )
+    institutional_df = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2026-05-10", "2026-05-11"]),
+            "foreign_buy": [0, 0],
+            "foreign_sell": [0, 0],
+            "foreign_net": [100, 100],
+            "trust_buy": [0, 0],
+            "trust_sell": [0, 0],
+            "trust_net": [100, 0],
+            "dealer_buy": [0, 0],
+            "dealer_sell": [0, 0],
+            "dealer_net": [0, 0],
+            "symbol": ["2330", "2330"],
+        }
+    )
+
+    with patch("src.services.dashboard_service.ParquetStorage") as mock_storage_cls:
+        mock_storage = MagicMock()
+        mock_storage.load_daily.return_value = daily_df
+        mock_storage.load_institutional.return_value = institutional_df
+        mock_storage_cls.return_value = mock_storage
+        data = get_institutional_cost("2330", days=30, market="tw")
+
+    assert data["foreign"]["cost"] is not None
+    assert data["trust"]["cost"] is not None
+    assert data["dealer"]["cost"] is None
+
+
+def test_get_institutional_cost_falls_back_to_incremental_when_storage_empty() -> None:
+    daily_df = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2026-05-10", "2026-05-11"]),
+            "open": [100, 110],
+            "high": [120, 130],
+            "low": [80, 90],
+            "close": [100, 120],
+            "volume": [1000, 1000],
+            "symbol": ["2330", "2330"],
+        }
+    )
+    institutional_df = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2026-05-10", "2026-05-11"]),
+            "foreign_buy": [0, 0],
+            "foreign_sell": [0, 0],
+            "foreign_net": [100, 100],
+            "trust_buy": [0, 0],
+            "trust_sell": [0, 0],
+            "trust_net": [0, 0],
+            "dealer_buy": [0, 0],
+            "dealer_sell": [0, 0],
+            "dealer_net": [0, 0],
+            "symbol": ["2330", "2330"],
+        }
+    )
+
+    with patch("src.services.dashboard_service.ParquetStorage") as mock_storage_cls, \
+         patch("src.services.dashboard_service._build_chip_fetcher") as mock_fetcher_builder:
+        mock_storage = MagicMock()
+        mock_storage.load_daily.return_value = daily_df
+        # First call empty (cache miss), second call populated (after incremental fetch wrote).
+        mock_storage.load_institutional.side_effect = [
+            pd.DataFrame(),
+            institutional_df,
+        ]
+        mock_storage_cls.return_value = mock_storage
+
+        mock_fetcher = MagicMock()
+        mock_fetcher.fetch_institutional_incremental.return_value = institutional_df
+        mock_fetcher_builder.return_value = mock_fetcher
+
+        data = get_institutional_cost("2330", days=30, market="tw")
+
+    mock_fetcher.fetch_institutional_incremental.assert_called_once_with("2330", mock_storage)
+    assert data["foreign"]["cost"] is not None
+
+
+def test_get_institutional_cost_returns_null_when_incremental_fetch_fails() -> None:
+    daily_df = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2026-05-10"]),
+            "open": [100], "high": [120], "low": [80], "close": [100],
+            "volume": [1000], "symbol": ["2330"],
+        }
+    )
+
+    with patch("src.services.dashboard_service.ParquetStorage") as mock_storage_cls, \
+         patch("src.services.dashboard_service._build_chip_fetcher") as mock_fetcher_builder:
+        mock_storage = MagicMock()
+        mock_storage.load_daily.return_value = daily_df
+        mock_storage.load_institutional.return_value = pd.DataFrame()
+        mock_storage_cls.return_value = mock_storage
+        mock_fetcher_builder.side_effect = RuntimeError("finmind not configured")
+
+        data = get_institutional_cost("2330", days=30, market="tw")
+
+    assert data["foreign"]["cost"] is None
+    assert data["foreign"]["pnl"] is None
+    assert data["trust"]["cost"] is None
+    assert data["dealer"]["cost"] is None
+
+
+def test_get_event_calendar_prefers_newer_manual_shareholder_row() -> None:
+    dividends_df = pd.DataFrame(
+        {"date": pd.to_datetime(["2026-06-15"]), "cash_dividend": [3.5], "stock_dividend": [0.0], "symbol": ["2330"]}
+    )
+    auto_df = pd.DataFrame(
+        [
+            {
+                "date": pd.Timestamp("2026-06-30", tz="Asia/Taipei"),
+                "symbol": "2330",
+                "meeting_type": "常會",
+                "source": "auto",
+                "updated_at": pd.Timestamp("2026-05-01T10:00:00+08:00"),
+            }
+        ]
+    )
+    manual_df = pd.DataFrame(
+        [
+            {
+                "date": pd.Timestamp("2026-07-10", tz="Asia/Taipei"),
+                "symbol": "2330",
+                "meeting_type": "臨時會",
+                "source": "manual",
+                "updated_at": pd.Timestamp("2026-05-17T10:00:00+08:00"),
+            }
+        ]
+    )
+
+    with patch("src.services.dashboard_service.ParquetStorage") as mock_storage_cls:
+        mock_storage = MagicMock()
+        mock_storage.load_dividends.return_value = dividends_df
+        mock_storage.load_shareholder_meeting.return_value = auto_df
+        mock_storage.load_shareholder_meeting_override.return_value = manual_df
+        mock_storage_cls.return_value = mock_storage
+        data = get_event_calendar("2330", market="tw")
+
+    assert data["next_shareholder_meeting"]["source"] == "manual"
+    assert data["next_shareholder_meeting"]["meeting_type"] == "臨時會"
+
+
+def test_get_event_calendar_flags_etf_via_stock_info() -> None:
+    info_df = pd.DataFrame(
+        [{"symbol": "00929", "name": "復華台灣科技優息", "industry": "ETF"}]
+    )
+    with patch("src.services.dashboard_service.ParquetStorage") as mock_storage_cls, \
+         patch("src.services.dashboard_service._load_stock_info_table", return_value=info_df):
+        mock_storage = MagicMock()
+        mock_storage.load_dividends.return_value = pd.DataFrame()
+        mock_storage.load_shareholder_meeting.return_value = pd.DataFrame()
+        mock_storage.load_shareholder_meeting_override.return_value = pd.DataFrame()
+        mock_storage_cls.return_value = mock_storage
+        data = get_event_calendar("00929", market="tw")
+
+    assert data["is_etf"] is True
+    assert data["missing_shareholder_meeting"] is True
+
+
+def test_get_event_calendar_non_etf_returns_is_etf_false() -> None:
+    info_df = pd.DataFrame(
+        [{"symbol": "2330", "name": "台積電", "industry": "半導體業"}]
+    )
+    with patch("src.services.dashboard_service.ParquetStorage") as mock_storage_cls, \
+         patch("src.services.dashboard_service._load_stock_info_table", return_value=info_df):
+        mock_storage = MagicMock()
+        mock_storage.load_dividends.return_value = pd.DataFrame()
+        mock_storage.load_shareholder_meeting.return_value = pd.DataFrame()
+        mock_storage.load_shareholder_meeting_override.return_value = pd.DataFrame()
+        mock_storage_cls.return_value = mock_storage
+        data = get_event_calendar("2330", market="tw")
+
+    assert data["is_etf"] is False
+
+
+def test_shareholder_override_upsert_and_delete_delegates_to_storage() -> None:
+    with patch("src.services.dashboard_service.ParquetStorage") as mock_storage_cls:
+        mock_storage = MagicMock()
+        mock_storage_cls.return_value = mock_storage
+        upsert_result = upsert_shareholder_meeting_override("2330", "2026-06-30", "常會", market="tw")
+        delete_result = delete_shareholder_meeting_override("2330", market="tw")
+
+    mock_storage.upsert_shareholder_meeting_override.assert_called_once()
+    mock_storage.delete_shareholder_meeting_override.assert_called_once_with(symbol="2330")
+    assert upsert_result["source"] == "manual"
+    assert delete_result["deleted"] is True

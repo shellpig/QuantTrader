@@ -428,6 +428,213 @@ def get_industry_per_table(symbol: str, market: str = "tw") -> dict[str, Any]:
         )
 
 
+def get_institutional_cost(symbol: str, days: int = 30, market: str = "tw") -> dict[str, Any]:
+    normalized_market = normalize_market(market)
+    if normalized_market != "tw":
+        raise NotImplementedError("US not supported in P11.")
+
+    storage = ParquetStorage()
+    daily = storage.load_daily(symbol, market=normalized_market)
+    institutional = storage.load_institutional(symbol, market=normalized_market)
+
+    if institutional.empty:
+        try:
+            fetcher = _build_chip_fetcher()
+            fetcher.fetch_institutional_incremental(symbol, storage)
+            institutional = storage.load_institutional(symbol, market=normalized_market)
+        except Exception:  # noqa: BLE001
+            institutional = storage.load_institutional(symbol, market=normalized_market)
+
+    if not daily.empty:
+        daily = daily.copy()
+        daily["date"] = pd.to_datetime(daily["date"], errors="coerce")
+        daily = daily.dropna(subset=["date"]).copy()
+        daily["typical_price"] = (
+            pd.to_numeric(daily["high"], errors="coerce")
+            + pd.to_numeric(daily["low"], errors="coerce")
+            + pd.to_numeric(daily["close"], errors="coerce")
+        ) / 3.0
+        daily["date_key"] = daily["date"].dt.strftime("%Y-%m-%d")
+        daily = daily.dropna(subset=["typical_price"]).copy()
+    if not institutional.empty:
+        institutional = institutional.copy()
+        institutional["date"] = pd.to_datetime(institutional["date"], errors="coerce")
+        institutional = institutional.dropna(subset=["date"]).sort_values("date").tail(max(1, int(days))).copy()
+        institutional["date_key"] = institutional["date"].dt.strftime("%Y-%m-%d")
+
+    current_price: float | None = None
+    if not daily.empty:
+        latest_close = pd.to_numeric(daily["close"], errors="coerce").dropna()
+        if not latest_close.empty:
+            current_price = float(latest_close.iloc[-1])
+
+    def _cost_for(net_col: str) -> dict[str, float | None]:
+        if daily.empty or institutional.empty:
+            return {"cost": None, "pnl": None}
+        work = institutional[["date_key", net_col]].copy()
+        work[net_col] = pd.to_numeric(work[net_col], errors="coerce").fillna(0.0)
+        work = work[work[net_col] > 0].copy()
+        if work.empty:
+            return {"cost": None, "pnl": None}
+        joined = work.merge(daily[["date_key", "typical_price"]], on="date_key", how="inner")
+        if joined.empty:
+            return {"cost": None, "pnl": None}
+        total_shares = float(joined[net_col].sum())
+        if total_shares <= 0:
+            return {"cost": None, "pnl": None}
+        weighted_sum = float((joined[net_col] * joined["typical_price"]).sum())
+        cost = weighted_sum / total_shares
+        pnl = None if current_price is None else float(current_price - cost)
+        return {"cost": _to_float_or_none(cost), "pnl": _to_float_or_none(pnl)}
+
+    return {
+        "symbol": symbol,
+        "market": normalized_market,
+        "days": int(days),
+        "current_price": _to_float_or_none(current_price),
+        "foreign": _cost_for("foreign_net"),
+        "trust": _cost_for("trust_net"),
+        "dealer": _cost_for("dealer_net"),
+    }
+
+
+def _serialize_event_entry(row: pd.Series, *, include_countdown: bool, today: pd.Timestamp) -> dict[str, Any]:
+    date_ts = pd.Timestamp(row["date"])
+    countdown = None
+    if include_countdown:
+        countdown = int((date_ts.normalize() - today.normalize()) / pd.Timedelta(days=1))
+    return {
+        "date": date_ts.strftime("%Y-%m-%d"),
+        "meeting_type": str(row.get("meeting_type", "")).strip() or None,
+        "source": str(row.get("source", "")).strip() or None,
+        "is_manual": str(row.get("source", "")).strip() == "manual",
+        "days_until": countdown,
+    }
+
+
+def _resolve_shareholder_meeting_event(symbol: str, storage: ParquetStorage) -> pd.DataFrame:
+    auto_df = storage.load_shareholder_meeting()
+    manual_df = storage.load_shareholder_meeting_override()
+
+    auto_row = auto_df[auto_df["symbol"] == symbol].copy() if not auto_df.empty else auto_df.iloc[0:0].copy()
+    manual_row = manual_df[manual_df["symbol"] == symbol].copy() if not manual_df.empty else manual_df.iloc[0:0].copy()
+    if auto_row.empty and manual_row.empty:
+        return auto_row
+    if auto_row.empty:
+        return manual_row
+    if manual_row.empty:
+        return auto_row
+
+    auto_latest = auto_row.sort_values("updated_at").iloc[-1]
+    manual_latest = manual_row.sort_values("updated_at").iloc[-1]
+    auto_updated = pd.Timestamp(auto_latest["updated_at"])
+    manual_updated = pd.Timestamp(manual_latest["updated_at"])
+    return manual_row if manual_updated >= auto_updated else auto_row
+
+
+def get_event_calendar(symbol: str, market: str = "tw") -> dict[str, Any]:
+    normalized_market = normalize_market(market)
+    if normalized_market != "tw":
+        raise NotImplementedError("US not supported in P11.")
+
+    storage = ParquetStorage()
+    today = pd.Timestamp.now(tz="Asia/Taipei")
+
+    dividends = storage.load_dividends(symbol, market=normalized_market)
+    if not dividends.empty:
+        dividends = dividends.copy()
+        dividends["date"] = pd.to_datetime(dividends["date"], errors="coerce")
+        if dividends["date"].dt.tz is None:
+            dividends["date"] = dividends["date"].dt.tz_localize("Asia/Taipei")
+        else:
+            dividends["date"] = dividends["date"].dt.tz_convert("Asia/Taipei")
+        dividends["cash_dividend"] = pd.to_numeric(dividends["cash_dividend"], errors="coerce")
+        dividends = dividends.dropna(subset=["date"]).copy()
+        dividends = dividends[dividends["cash_dividend"].fillna(0) > 0].copy()
+        dividends = dividends.sort_values("date").reset_index(drop=True)
+
+    next_ex_dividend: dict[str, Any] | None = None
+    last_ex_dividend: dict[str, Any] | None = None
+    if not dividends.empty:
+        future = dividends[dividends["date"] >= today]
+        past = dividends[dividends["date"] < today]
+
+        if not future.empty:
+            row = future.iloc[0]
+            days_until = int((pd.Timestamp(row["date"]).normalize() - today.normalize()) / pd.Timedelta(days=1))
+            next_ex_dividend = {
+                "date": pd.Timestamp(row["date"]).strftime("%Y-%m-%d"),
+                "cash_dividend": _to_float_or_none(row.get("cash_dividend")),
+                "days_until": days_until,
+                "is_estimated": False,
+            }
+        if not past.empty:
+            row = past.iloc[-1]
+            last_ex_dividend = {
+                "date": pd.Timestamp(row["date"]).strftime("%Y-%m-%d"),
+                "cash_dividend": _to_float_or_none(row.get("cash_dividend")),
+            }
+            if next_ex_dividend is None:
+                next_date = pd.Timestamp(row["date"]) + pd.DateOffset(years=1)
+                days_until = int((next_date.normalize() - today.normalize()) / pd.Timedelta(days=1))
+                next_ex_dividend = {
+                    "date": next_date.strftime("%Y-%m-%d"),
+                    "cash_dividend": _to_float_or_none(row.get("cash_dividend")),
+                    "days_until": days_until,
+                    "is_estimated": True,
+                }
+
+    meeting_df = _resolve_shareholder_meeting_event(symbol, storage)
+    next_shareholder_meeting: dict[str, Any] | None = None
+    last_shareholder_meeting: dict[str, Any] | None = None
+    if not meeting_df.empty:
+        row = meeting_df.sort_values("updated_at").iloc[-1]
+        date_ts = pd.Timestamp(row["date"])
+        if date_ts.tzinfo is None:
+            date_ts = date_ts.tz_localize("Asia/Taipei")
+        else:
+            date_ts = date_ts.tz_convert("Asia/Taipei")
+        if date_ts >= today.normalize():
+            next_shareholder_meeting = _serialize_event_entry(row, include_countdown=True, today=today)
+        else:
+            last_shareholder_meeting = _serialize_event_entry(row, include_countdown=False, today=today)
+
+    return {
+        "symbol": symbol,
+        "market": normalized_market,
+        "next_ex_dividend": next_ex_dividend,
+        "last_ex_dividend": last_ex_dividend,
+        "next_shareholder_meeting": next_shareholder_meeting,
+        "last_shareholder_meeting": last_shareholder_meeting,
+        "missing_shareholder_meeting": next_shareholder_meeting is None and last_shareholder_meeting is None,
+        "is_etf": _lookup_is_etf(symbol),
+    }
+
+
+def upsert_shareholder_meeting_override(symbol: str, date: str, meeting_type: str, market: str = "tw") -> dict[str, Any]:
+    normalized_market = normalize_market(market)
+    if normalized_market != "tw":
+        raise NotImplementedError("US not supported in P11.")
+    storage = ParquetStorage()
+    storage.upsert_shareholder_meeting_override(symbol=symbol, date=date, meeting_type=meeting_type)
+    return {
+        "symbol": symbol,
+        "market": normalized_market,
+        "date": date,
+        "meeting_type": meeting_type,
+        "source": "manual",
+    }
+
+
+def delete_shareholder_meeting_override(symbol: str, market: str = "tw") -> dict[str, Any]:
+    normalized_market = normalize_market(market)
+    if normalized_market != "tw":
+        raise NotImplementedError("US not supported in P11.")
+    storage = ParquetStorage()
+    storage.delete_shareholder_meeting_override(symbol=symbol)
+    return {"symbol": symbol, "market": normalized_market, "deleted": True}
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers — these are pure Python, no st.* calls
 # ---------------------------------------------------------------------------
@@ -484,6 +691,16 @@ def _load_stock_info_table() -> pd.DataFrame:
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     out[["symbol", "name", "industry"]].to_parquet(cache_path, index=False)
     return out[["symbol", "name", "industry"]]
+
+
+def _lookup_is_etf(symbol: str) -> bool:
+    info = _load_stock_info_table()
+    if info.empty:
+        return False
+    row = info[info["symbol"] == symbol]
+    if row.empty:
+        return False
+    return str(row.iloc[0].get("industry", "")).strip().upper() == "ETF"
 
 
 def _lookup_symbol_industry(symbol: str) -> str | None:

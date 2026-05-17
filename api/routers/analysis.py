@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import math
 from typing import Any
 
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 
 from api.deps import get_manager
 from api.job_manager import JobManager
@@ -16,13 +17,23 @@ from src.services.dashboard_service import (
     DashboardError,
     DashboardPayload,
     build_dashboard_payload,
+    delete_shareholder_meeting_override,
+    get_event_calendar,
+    get_institutional_cost,
     get_dividend_history_with_pe,
     get_industry_per_table,
     get_monthly_revenue,
     get_valuation,
+    upsert_shareholder_meeting_override,
 )
 
 router = APIRouter(tags=["analysis"])
+
+
+class ShareholderMeetingOverrideBody(BaseModel):
+    symbol: str
+    date: str
+    meeting_type: str
 
 
 def _to_jsonable(value: Any) -> Any:
@@ -188,6 +199,99 @@ def get_p11_industry_per(
         ) from exc
 
     return {"data": _to_jsonable(data), "meta": {"section": "p11_industry_per", "symbol": symbol, "market": market}}
+
+
+@router.get("/api/analysis/p11/institutional-cost")
+def get_p11_institutional_cost(
+    symbol: str,
+    days: int = 30,
+    market: str = "tw",
+) -> dict[str, Any]:
+    try:
+        data = get_institutional_cost(symbol=symbol, days=days, market=market)
+    except NotImplementedError as exc:
+        raise HTTPException(
+            status_code=501,
+            detail={"error": {"code": "P11_US_UNSUPPORTED", "message": str(exc)}},
+        ) from exc
+
+    return {"data": _to_jsonable(data), "meta": {"section": "p11_institutional_cost", "symbol": symbol, "market": market}}
+
+
+@router.get("/api/analysis/p11/event-calendar")
+def get_p11_event_calendar(
+    symbol: str,
+    market: str = "tw",
+) -> dict[str, Any]:
+    try:
+        data = get_event_calendar(symbol=symbol, market=market)
+    except NotImplementedError as exc:
+        raise HTTPException(
+            status_code=501,
+            detail={"error": {"code": "P11_US_UNSUPPORTED", "message": str(exc)}},
+        ) from exc
+
+    return {"data": _to_jsonable(data), "meta": {"section": "p11_event_calendar", "symbol": symbol, "market": market}}
+
+
+def _validate_override_payload(payload: ShareholderMeetingOverrideBody) -> None:
+    if payload.meeting_type not in {"常會", "臨時會"}:
+        raise HTTPException(
+            status_code=422,
+            detail={"error": {"code": "INVALID_MEETING_TYPE", "message": "meeting_type must be 常會 or 臨時會"}},
+        )
+
+    try:
+        parsed = datetime.strptime(payload.date, "%Y-%m-%d").date()
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"error": {"code": "INVALID_DATE", "message": "date must be YYYY-MM-DD"}},
+        ) from exc
+
+    today = datetime.now().date()
+    threshold = today - timedelta(days=365)
+    if parsed < threshold:
+        raise HTTPException(
+            status_code=422,
+            detail={"error": {"code": "DATE_TOO_OLD", "message": "date cannot be earlier than one year before today"}},
+        )
+
+
+@router.post("/api/analysis/p11/shareholder-meeting/override")
+def post_shareholder_meeting_override(
+    body: ShareholderMeetingOverrideBody,
+    market: str = "tw",
+) -> dict[str, Any]:
+    _validate_override_payload(body)
+    try:
+        data = upsert_shareholder_meeting_override(
+            symbol=body.symbol,
+            date=body.date,
+            meeting_type=body.meeting_type,
+            market=market,
+        )
+    except NotImplementedError as exc:
+        raise HTTPException(
+            status_code=501,
+            detail={"error": {"code": "P11_US_UNSUPPORTED", "message": str(exc)}},
+        ) from exc
+    return {"data": _to_jsonable(data), "meta": {"section": "p11_shareholder_meeting_override", "symbol": body.symbol, "market": market}}
+
+
+@router.delete("/api/analysis/p11/shareholder-meeting/override")
+def delete_p11_shareholder_meeting_override(
+    symbol: str,
+    market: str = "tw",
+) -> dict[str, Any]:
+    try:
+        data = delete_shareholder_meeting_override(symbol=symbol, market=market)
+    except NotImplementedError as exc:
+        raise HTTPException(
+            status_code=501,
+            detail={"error": {"code": "P11_US_UNSUPPORTED", "message": str(exc)}},
+        ) from exc
+    return {"data": _to_jsonable(data), "meta": {"section": "p11_shareholder_meeting_override_delete", "symbol": symbol, "market": market}}
 
 
 @router.get("/api/analysis/{section}")

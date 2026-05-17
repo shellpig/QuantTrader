@@ -10,12 +10,13 @@ from src.core.constants import (
     EPS_COLUMNS,
     MONTHLY_REVENUE_COLUMNS,
     PER_COLUMNS,
+    SHAREHOLDER_MEETING_COLUMNS,
     STANDARD_COLUMNS,
     TAIPEI_TZ,
 )
 from src.core.market import get_market_spec
 from src.core.exceptions import FetcherError
-from src.data.fetcher import FinMindFetcher, YFinanceFetcher, localize_to_taipei
+from src.data.fetcher import FinMindFetcher, TWSEFetcher, YFinanceFetcher, localize_to_taipei
 
 
 def _assert_standard_columns(df: pd.DataFrame) -> None:
@@ -432,6 +433,67 @@ def test_yfinance_fetch_monthly_revenue_not_supported_in_p11() -> None:
     fetcher = YFinanceFetcher(downloader=lambda *args, **kwargs: pd.DataFrame(), market="us")
     with pytest.raises(NotImplementedError, match="US not supported in P11."):
         fetcher.fetch_monthly_revenue("AAPL", "2026-01-01", "2026-05-17")
+
+
+def test_twse_fetch_shareholder_meeting_merges_and_normalizes_schema() -> None:
+    class DummyResponse:
+        def __init__(self, payload: list[dict], status_ok: bool = True):
+            self._payload = payload
+            self._status_ok = status_ok
+
+        def raise_for_status(self) -> None:
+            if not self._status_ok:
+                raise FetcherError("http error")
+
+        def json(self) -> list[dict]:
+            return self._payload
+
+    class DummySession:
+        def get(self, url: str, timeout: int) -> DummyResponse:  # noqa: ARG002
+            if "twse.com.tw" in url:
+                return DummyResponse(
+                    [
+                        {"公司代號": "2330", "開會日期": "1150604", "股東常(臨時)會": "股東常會"},
+                    ]
+                )
+            return DummyResponse(
+                [
+                    {"公司代號": "6488", "開會日期": "1150701", "股東常(臨時)會": "股東臨時會"},
+                ]
+            )
+
+    fetcher = TWSEFetcher(session=DummySession())
+    df = fetcher.fetch_shareholder_meeting()
+
+    assert df.columns.tolist() == SHAREHOLDER_MEETING_COLUMNS
+    assert len(df) == 2
+    assert df.loc[df["symbol"] == "2330", "meeting_type"].iloc[0] == "常會"
+    assert df.loc[df["symbol"] == "6488", "meeting_type"].iloc[0] == "臨時會"
+    assert df.loc[df["symbol"] == "2330", "date"].iloc[0].strftime("%Y-%m-%d") == "2026-06-04"
+    assert (df["source"] == "auto").all()
+
+
+def test_twse_fetch_shareholder_meeting_raises_when_any_source_fails() -> None:
+    class DummyResponse:
+        def __init__(self, status_ok: bool = True):
+            self._status_ok = status_ok
+
+        def raise_for_status(self) -> None:
+            if not self._status_ok:
+                raise FetcherError("http error")
+
+        def json(self) -> list[dict]:
+            return []
+
+    class DummySession:
+        def get(self, url: str, timeout: int) -> DummyResponse:  # noqa: ARG002
+            if "twse.com.tw" in url:
+                return DummyResponse(status_ok=True)
+            return DummyResponse(status_ok=False)
+
+    fetcher = TWSEFetcher(session=DummySession())
+    with pytest.raises(FetcherError):
+        fetcher.fetch_shareholder_meeting()
 
 
 def test_finmind_fetch_splits_normalizes_schema() -> None:

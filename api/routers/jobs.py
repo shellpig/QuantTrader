@@ -358,7 +358,12 @@ async def _run_data_job(manager: JobManager, job: Job, params: dict[str, Any]) -
 
     Single-file failures do NOT abort the batch — they are recorded in `failed`.
     """
-    from src.services.data_service import DataServiceError, list_symbols, run_maintenance
+    from src.services.data_service import (
+        DataServiceError,
+        list_symbols,
+        refresh_shareholder_meeting_once_per_day,
+        run_maintenance,
+    )
 
     market = params.get("market", "tw")
     rebuild = (job.type == "data_rebuild")
@@ -422,7 +427,19 @@ async def _run_data_job(manager: JobManager, job: Job, params: dict[str, Any]) -
                 "error": err_str,
             })
 
-    final_result: dict[str, Any] = {"succeeded": succeeded, "failed": failed}
+    shareholder_refreshed = False
+    current = manager.get_job(job.id)
+    if market == "tw" and not (current and current.status == "cancelled"):
+        shareholder_refreshed = await asyncio.to_thread(
+            refresh_shareholder_meeting_once_per_day,
+            market,
+        )
+
+    final_result: dict[str, Any] = {
+        "succeeded": succeeded,
+        "failed": failed,
+        "shareholder_meeting_refreshed": shareholder_refreshed,
+    }
     manager.push_event(job.id, "result", final_result)
     manager.complete_job(job.id, result=final_result)
 

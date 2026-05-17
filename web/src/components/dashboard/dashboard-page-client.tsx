@@ -8,15 +8,20 @@ import { StockSelector } from "@/components/stock-selector";
 import { CandlestickChart } from "@/components/dashboard/candlestick-chart";
 import { HelpTooltip } from "@/components/dashboard/help-tooltip";
 import { DividendHistoryPanel } from "@/components/dashboard/p11/dividend-history-panel";
+import { EventCalendarPanel } from "@/components/dashboard/p11/event-calendar-panel";
 import { IndustryPerModal } from "@/components/dashboard/p11/industry-per-modal";
+import { InstitutionalCostPanel } from "@/components/dashboard/p11/institutional-cost-panel";
 import { MonthlyRevenuePanel } from "@/components/dashboard/p11/monthly-revenue-panel";
+import { ShareholderMeetingEditDialog } from "@/components/dashboard/p11/shareholder-meeting-edit-dialog";
 import { ValuationPanel } from "@/components/dashboard/p11/valuation-panel";
 import {
   DASHBOARD_TOOLTIP_TEXT,
   PATTERN_DETAILS,
 } from "@/components/dashboard/tooltip-text";
 import { useP11DividendHistory } from "@/lib/hooks/useP11DividendHistory";
+import { useP11EventCalendar } from "@/lib/hooks/useP11EventCalendar";
 import { useP11IndustryPer } from "@/lib/hooks/useP11IndustryPer";
+import { useP11InstitutionalCost } from "@/lib/hooks/useP11InstitutionalCost";
 import { useP11MonthlyRevenue } from "@/lib/hooks/useP11MonthlyRevenue";
 import { useP11Valuation } from "@/lib/hooks/useP11Valuation";
 import { useDashboard } from "@/lib/hooks/useDashboard";
@@ -727,6 +732,7 @@ export default function DashboardPageClient() {
   const [interval, setInterval] = useState<ChartInterval>("day");
   const [aiHint, setAiHint] = useState<string>("");
   const [industryModalOpen, setIndustryModalOpen] = useState(false);
+  const [shareholderDialogOpen, setShareholderDialogOpen] = useState(false);
 
   // Restore last selection from localStorage after hydration.
   useEffect(() => {
@@ -746,14 +752,22 @@ export default function DashboardPageClient() {
   }, [market]);
 
   const { data, error, isLoading, mutate } = useDashboard(symbol, market);
-  const { data: valuation } = useP11Valuation(symbol, market);
-  const { data: monthlyRevenue } = useP11MonthlyRevenue(symbol, market, 12);
-  const { data: dividendHistory } = useP11DividendHistory(symbol, market, 5);
+  // Gate P11 hooks on dashboard payload being ready: build_dashboard_payload writes
+  // daily/dividends/per/eps/monthly_revenue/institutional/margin parquets, so P11
+  // endpoints would race and read empty files on first visit otherwise.
+  const p11Ready = !!data && !error;
+  const { data: valuation } = useP11Valuation(symbol, market, p11Ready);
+  const { data: monthlyRevenue } = useP11MonthlyRevenue(symbol, market, 12, p11Ready);
+  const { data: dividendHistory } = useP11DividendHistory(symbol, market, 5, p11Ready);
+  const { data: institutionalCost } = useP11InstitutionalCost(symbol, market, 30, p11Ready);
+  const { data: eventCalendar, mutate: mutateEventCalendar } = useP11EventCalendar(symbol, market, p11Ready);
   const { data: industryPer, isLoading: industryPerLoading } = useP11IndustryPer(
     symbol,
     market,
     industryModalOpen,
   );
+  const currentShareholderMeeting =
+    eventCalendar?.next_shareholder_meeting ?? eventCalendar?.last_shareholder_meeting ?? null;
 
   const titleSymbol = data?.symbol ?? symbol ?? "----";
   const titleName = data?.subject_name ?? "";
@@ -893,20 +907,11 @@ export default function DashboardPageClient() {
                       className="space-y-3"
                       data-testid="p11-grid-right"
                     >
-                      <section
-                        className="rounded-lg border border-dashed border-slate-700 bg-slate-950/40 p-3"
-                        data-testid="p11-panel-institutional-cost"
-                      >
-                        <h3 className="text-sm font-semibold text-slate-100">法人持股成本</h3>
-                        <p className="text-sm italic text-slate-500">(P11-C-1 待實作)</p>
-                      </section>
-                      <section
-                        className="rounded-lg border border-dashed border-slate-700 bg-slate-950/40 p-3"
-                        data-testid="p11-panel-event-calendar"
-                      >
-                        <h3 className="text-sm font-semibold text-slate-100">事件行事曆</h3>
-                        <p className="text-sm italic text-slate-500">(P11-C-2 待實作)</p>
-                      </section>
+                      <InstitutionalCostPanel data={institutionalCost} />
+                      <EventCalendarPanel
+                        data={eventCalendar}
+                        onEdit={() => setShareholderDialogOpen(true)}
+                      />
                       <section
                         className="rounded-lg border border-dashed border-slate-700 bg-slate-950/40 p-3"
                         data-testid="p11-panel-retail-sentiment"
@@ -963,6 +968,16 @@ export default function DashboardPageClient() {
         onOpenChange={setIndustryModalOpen}
         data={industryPer}
         isLoading={industryPerLoading}
+      />
+      <ShareholderMeetingEditDialog
+        open={shareholderDialogOpen}
+        onOpenChange={setShareholderDialogOpen}
+        symbol={symbol ?? ""}
+        market={market}
+        current={currentShareholderMeeting}
+        onSaved={async () => {
+          await mutateEventCalendar();
+        }}
       />
     </div>
   );

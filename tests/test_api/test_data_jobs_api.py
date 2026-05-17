@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -27,12 +27,19 @@ def _reset() -> None:
     jm._job_manager = None
 
 
+@pytest.fixture(autouse=True)
+def _mock_shareholder_refresh():
+    with patch("src.services.data_service.refresh_shareholder_meeting_once_per_day", return_value=False):
+        yield
+
+
 # ---------------------------------------------------------------------------
 # POST /api/jobs — create data_update / data_rebuild
 # ---------------------------------------------------------------------------
 
 
-def test_create_data_update_job_returns_201() -> None:
+@patch("api.routers.jobs._run_job", new_callable=AsyncMock)
+def test_create_data_update_job_returns_201(_mock_run: AsyncMock) -> None:
     _reset()
     resp = client.post("/api/jobs", json={"type": "data_update", "params": {"market": "tw", "symbols": ["2330"]}})
     assert resp.status_code == 201
@@ -41,7 +48,8 @@ def test_create_data_update_job_returns_201() -> None:
     assert body["type"] == "data_update"
 
 
-def test_create_data_rebuild_job_returns_201() -> None:
+@patch("api.routers.jobs._run_job", new_callable=AsyncMock)
+def test_create_data_rebuild_job_returns_201(_mock_run: AsyncMock) -> None:
     _reset()
     resp = client.post("/api/jobs", json={"type": "data_rebuild", "params": {"market": "tw", "all": True}})
     assert resp.status_code == 201
@@ -266,5 +274,38 @@ def test_data_job_write_lock_released_after_completion() -> None:
             await _run_job(mgr, job, job.params)
 
         assert not mgr.is_write_locked()
+
+    asyncio.run(run())
+
+
+def test_data_job_triggers_shareholder_refresh_once_after_symbol_loop() -> None:
+    _reset()
+
+    async def run() -> None:
+        from api.routers.jobs import _run_data_job
+        mgr, job = await _make_test_job("data_update", {"market": "tw", "symbols": ["2330", "2317"]})
+        with (
+            patch("src.services.data_service.run_maintenance", return_value=MagicMock()),
+            patch("src.services.data_service.refresh_shareholder_meeting_once_per_day", return_value=True) as mock_refresh,
+        ):
+            await _run_data_job(mgr, job, job.params)
+        assert mock_refresh.call_count == 1
+        assert mock_refresh.call_args.args == ("tw",)
+
+    asyncio.run(run())
+
+
+def test_data_job_us_market_does_not_trigger_shareholder_refresh() -> None:
+    _reset()
+
+    async def run() -> None:
+        from api.routers.jobs import _run_data_job
+        mgr, job = await _make_test_job("data_update", {"market": "us", "symbols": ["AAPL"]})
+        with (
+            patch("src.services.data_service.run_maintenance", return_value=MagicMock()),
+            patch("src.services.data_service.refresh_shareholder_meeting_once_per_day", return_value=True) as mock_refresh,
+        ):
+            await _run_data_job(mgr, job, job.params)
+        assert mock_refresh.call_count == 0
 
     asyncio.run(run())

@@ -298,6 +298,36 @@ def delete_symbol_data(
         meta.close()
 
 
+def refresh_shareholder_meeting_once_per_day(market: str = "tw") -> bool:
+    """Refresh global TW shareholder meeting dataset once per day.
+
+    This is a best-effort helper for data_update/data_rebuild job tail.
+    Any failure is swallowed to avoid breaking the main daily pipeline.
+    """
+    normalized_market = normalize_market(market)
+    if normalized_market != "tw":
+        return False
+
+    storage = ParquetStorage()
+    meta = DuckDBMeta()
+    try:
+        fetchers = _build_fetchers_from_config(market=normalized_market)
+        if not fetchers:
+            return False
+        _, fetcher = fetchers[0]
+        maintenance = DataMaintenance(
+            fetcher=fetcher,
+            storage=storage,
+            meta=meta,
+            cleaner=DataCleaner(),
+        )
+        return maintenance.refresh_shareholder_meeting_once_per_day(market=normalized_market)
+    except Exception:  # noqa: BLE001
+        return False
+    finally:
+        meta.close()
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------

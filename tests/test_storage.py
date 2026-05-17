@@ -4,10 +4,10 @@ import duckdb
 import pandas as pd
 import pytest
 
-from src.core.constants import DIVIDENDS_COLUMNS, EPS_COLUMNS, MONTHLY_REVENUE_COLUMNS, PER_COLUMNS, STANDARD_COLUMNS, TAIPEI_TZ
+from src.core.constants import DIVIDENDS_COLUMNS, EPS_COLUMNS, MONTHLY_REVENUE_COLUMNS, PER_COLUMNS, SHAREHOLDER_MEETING_COLUMNS, STANDARD_COLUMNS, TAIPEI_TZ
 from src.core.exceptions import StorageError
 from src.core.market import get_market_spec
-from src.data.storage import DuckDBMeta, ParquetStorage
+from src.data.storage import DuckDBMeta, ParquetStorage, merge_shareholder_meeting_auto
 
 
 def _make_daily_df(
@@ -88,6 +88,20 @@ def _make_eps_df(symbol: str, timezone: str = TAIPEI_TZ) -> pd.DataFrame:
             "symbol": [symbol, symbol],
         }
     )[["report_date", "year", "quarter", "eps", "symbol"]]
+
+
+def _make_shareholder_df(symbol: str, date: str, meeting_type: str, source: str, updated_at: str) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "date": pd.Timestamp(date, tz=TAIPEI_TZ),
+                "symbol": symbol,
+                "meeting_type": meeting_type,
+                "source": source,
+                "updated_at": pd.Timestamp(updated_at, tz=TAIPEI_TZ),
+            }
+        ]
+    )[SHAREHOLDER_MEETING_COLUMNS]
 
 
 def test_save_and_load_daily_roundtrip(tmp_path) -> None:
@@ -171,6 +185,82 @@ def test_save_eps_copies_report_date_to_date(tmp_path) -> None:
     assert loaded.columns.tolist() == [*EPS_COLUMNS, "report_date"]
     assert loaded["date"].equals(loaded["report_date"])
     assert list(zip(loaded["year"], loaded["quarter"], strict=True)) == [(2026, 1), (2026, 2)]
+
+
+def test_shareholder_meeting_roundtrip_and_meta_roundtrip(tmp_path) -> None:
+    storage = ParquetStorage(data_dir=tmp_path)
+    source = _make_shareholder_df("2330", "2026-06-30", "常會", "auto", "2026-05-17T09:00:00+08:00")
+    storage.save_shareholder_meeting(source)
+    loaded = storage.load_shareholder_meeting()
+    assert loaded.columns.tolist() == SHAREHOLDER_MEETING_COLUMNS
+    assert loaded.loc[0, "meeting_type"] == "常會"
+
+    storage.save_shareholder_meeting_meta({"last_updated_at": "2026-05-17T10:00:00+08:00"})
+    meta = storage.load_shareholder_meeting_meta()
+    assert meta["last_updated_at"] == "2026-05-17T10:00:00+08:00"
+
+
+def test_shareholder_meeting_does_not_write_data_meta_rows(tmp_path) -> None:
+    storage = ParquetStorage(data_dir=tmp_path / "data")
+    meta = DuckDBMeta(db_path=str(tmp_path / "meta.duckdb"))
+    storage.save_shareholder_meeting(_make_shareholder_df("2330", "2026-06-30", "常會", "auto", "2026-05-17T09:00:00+08:00"))
+    rows = meta.list_all()
+    assert "shareholder_meeting" not in set(rows.get("freq", pd.Series(dtype="object")).tolist())
+
+
+def test_merge_shareholder_meeting_auto_preserves_or_bumps_updated_at() -> None:
+    existing = pd.concat(
+        [
+            _make_shareholder_df("2330", "2026-06-30", "常會", "auto", "2026-05-01T09:00:00+08:00"),
+            _make_shareholder_df("2317", "2026-07-01", "常會", "auto", "2026-05-01T09:00:00+08:00"),
+        ],
+        ignore_index=True,
+    )
+    new_rows = pd.concat(
+        [
+            _make_shareholder_df("2330", "2026-06-30", "常會", "auto", "2026-05-17T09:00:00+08:00"),
+            _make_shareholder_df("2317", "2026-07-15", "臨時會", "auto", "2026-05-17T09:00:00+08:00"),
+        ],
+        ignore_index=True,
+    )
+    now = pd.Timestamp("2026-05-17T10:00:00+08:00")
+    merged = merge_shareholder_meeting_auto(new_rows=new_rows, existing=existing, now=now)
+
+    ts_2330 = merged.loc[merged["symbol"] == "2330", "updated_at"].iloc[0]
+    ts_2317 = merged.loc[merged["symbol"] == "2317", "updated_at"].iloc[0]
+    assert pd.Timestamp(ts_2330) == pd.Timestamp("2026-05-01T09:00:00+08:00")
+    assert pd.Timestamp(ts_2317) == now
+    assert merged.loc[merged["symbol"] == "2317", "meeting_type"].iloc[0] == "臨時會"
+
+
+def test_merge_shareholder_meeting_auto_keeps_existing_rows_missing_in_new() -> None:
+    existing = _make_shareholder_df("2330", "2026-06-30", "常會", "auto", "2026-05-01T09:00:00+08:00")
+    merged = merge_shareholder_meeting_auto(
+        new_rows=pd.DataFrame(columns=SHAREHOLDER_MEETING_COLUMNS),
+        existing=existing,
+        now=pd.Timestamp("2026-05-17T10:00:00+08:00"),
+    )
+    assert len(merged) == 1
+    assert merged.loc[0, "symbol"] == "2330"
+
+
+def test_shareholder_override_loader_returns_empty_when_missing(tmp_path) -> None:
+    storage = ParquetStorage(data_dir=tmp_path)
+    loaded = storage.load_shareholder_meeting_override()
+    assert loaded.empty
+    assert loaded.columns.tolist() == SHAREHOLDER_MEETING_COLUMNS
+
+
+def test_shareholder_override_upsert_and_delete(tmp_path) -> None:
+    storage = ParquetStorage(data_dir=tmp_path)
+    storage.upsert_shareholder_meeting_override(symbol="2330", date="2026-06-30", meeting_type="常會")
+    loaded = storage.load_shareholder_meeting_override()
+    assert len(loaded) == 1
+    assert loaded.loc[0, "source"] == "manual"
+
+    storage.delete_shareholder_meeting_override("2330")
+    loaded_after = storage.load_shareholder_meeting_override()
+    assert loaded_after.empty
 
 
 @pytest.mark.parametrize(

@@ -224,6 +224,90 @@ def test_p11_us_market_returns_501(mock_get_valuation) -> None:
     assert resp.json()["detail"]["error"]["code"] == "P11_US_UNSUPPORTED"
 
 
+@patch("api.routers.analysis.get_institutional_cost")
+def test_p11_institutional_cost_endpoint_returns_three_groups(mock_cost) -> None:
+    mock_cost.return_value = {
+        "symbol": "2330",
+        "market": "tw",
+        "days": 30,
+        "current_price": 110.0,
+        "foreign": {"cost": 100.0, "pnl": 10.0},
+        "trust": {"cost": 95.0, "pnl": 15.0},
+        "dealer": {"cost": None, "pnl": None},
+    }
+    resp = client.get("/api/analysis/p11/institutional-cost", params={"symbol": "2330", "market": "tw"})
+    assert resp.status_code == 200
+    body = resp.json()["data"]
+    assert "foreign" in body and "trust" in body and "dealer" in body
+
+
+@patch("api.routers.analysis.get_event_calendar")
+def test_p11_event_calendar_endpoint_returns_payload(mock_event) -> None:
+    mock_event.return_value = {
+        "symbol": "2330",
+        "market": "tw",
+        "next_ex_dividend": None,
+        "last_ex_dividend": None,
+        "next_shareholder_meeting": {"date": "2026-06-30", "meeting_type": "常會", "source": "manual"},
+        "last_shareholder_meeting": None,
+        "missing_shareholder_meeting": False,
+    }
+    resp = client.get("/api/analysis/p11/event-calendar", params={"symbol": "2330", "market": "tw"})
+    assert resp.status_code == 200
+    assert resp.json()["data"]["next_shareholder_meeting"]["source"] == "manual"
+
+
+@patch("api.routers.analysis.upsert_shareholder_meeting_override")
+def test_p11_shareholder_override_post(mock_upsert) -> None:
+    mock_upsert.return_value = {"symbol": "2330", "market": "tw", "date": "2026-06-30", "meeting_type": "常會", "source": "manual"}
+    resp = client.post(
+        "/api/analysis/p11/shareholder-meeting/override",
+        params={"market": "tw"},
+        json={"symbol": "2330", "date": "2026-06-30", "meeting_type": "常會"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["data"]["source"] == "manual"
+
+
+@patch("api.routers.analysis.delete_shareholder_meeting_override")
+def test_p11_shareholder_override_delete(mock_delete) -> None:
+    mock_delete.return_value = {"symbol": "2330", "market": "tw", "deleted": True}
+    resp = client.delete(
+        "/api/analysis/p11/shareholder-meeting/override",
+        params={"symbol": "2330", "market": "tw"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["data"]["deleted"] is True
+
+
+def test_p11_shareholder_override_rejects_invalid_meeting_type() -> None:
+    resp = client.post(
+        "/api/analysis/p11/shareholder-meeting/override",
+        params={"market": "tw"},
+        json={"symbol": "2330", "date": "2026-06-30", "meeting_type": "invalid"},
+    )
+    assert resp.status_code == 422
+    assert resp.json()["detail"]["error"]["code"] == "INVALID_MEETING_TYPE"
+
+
+def test_p11_shareholder_override_rejects_too_old_date() -> None:
+    resp = client.post(
+        "/api/analysis/p11/shareholder-meeting/override",
+        params={"market": "tw"},
+        json={"symbol": "2330", "date": "2020-01-01", "meeting_type": "常會"},
+    )
+    assert resp.status_code == 422
+    assert resp.json()["detail"]["error"]["code"] == "DATE_TOO_OLD"
+
+
+@patch("api.routers.analysis.get_institutional_cost")
+def test_p11_institutional_cost_us_market_returns_501(mock_cost) -> None:
+    mock_cost.side_effect = NotImplementedError("US not supported in P11.")
+    resp = client.get("/api/analysis/p11/institutional-cost", params={"symbol": "AAPL", "market": "us"})
+    assert resp.status_code == 501
+    assert resp.json()["detail"]["error"]["code"] == "P11_US_UNSUPPORTED"
+
+
 @patch("api.routers.analysis.build_dashboard_payload")
 def test_analysis_p11foo_still_hits_unknown_section(mock_build) -> None:
     mock_build.return_value = _sample_payload(market="tw")

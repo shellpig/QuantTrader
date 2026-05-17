@@ -237,3 +237,39 @@ export interface P11IndustryPerResponse {
   items: P11IndustryPerItem[];
   cached_at: string | null;
 }
+
+export interface P11InstitutionalCostEntry {
+  cost: number | null;
+  pnl: number | null;
+}
+
+export interface P11InstitutionalCostResponse {
+  symbol: string;
+  market: Market;
+  days: number;
+  current_price: number | null;
+  foreign: P11InstitutionalCostEntry;
+  trust: P11InstitutionalCostEntry;
+  dealer: P11InstitutionalCostEntry;
+}
+
+export interface P11EventCalendarEntry {
+  date: string;
+  meeting_type?: string | null;
+  source?: string | null;
+  is_manual?: boolean;
+  cash_dividend?: number | null;
+  days_until?: number | null;
+  is_estimated?: boolean;
+}
+
+export interface P11EventCalendarResponse {
+  symbol: string;
+  market: Market;
+  next_ex_dividend: P11EventCalendarEntry | null;
+  last_ex_dividend: P11EventCalendarEntry | null;
+  next_shareholder_meeting: P11EventCalendarEntry | null;
+  last_shareholder_meeting: P11EventCalendarEntry | null;
+  missing_shareholder_meeting: boolean;
+  is_etf?: boolean;
+}

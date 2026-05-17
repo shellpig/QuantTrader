@@ -8,8 +8,8 @@ import type { Market } from "@/types/market";
 const USE_MOCK = process.env.NEXT_PUBLIC_USE_MOCK_DASHBOARD === "1";
 const DISABLE_FETCH = USE_MOCK || process.env.NODE_ENV === "test";
 
-export function useP11MonthlyRevenue(symbol: string | null, market: Market, months = 12) {
-  const key = !symbol || market !== "tw" || DISABLE_FETCH ? null : `p11/monthly/${market}/${symbol}/${months}`;
+export function useP11MonthlyRevenue(symbol: string | null, market: Market, months = 12, enabled = true) {
+  const key = !enabled || !symbol || market !== "tw" || DISABLE_FETCH ? null : `p11/monthly/${market}/${symbol}/${months}`;
   return useSWR<P11MonthlyRevenueResponse>(
     key,
     async () => {

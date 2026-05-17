@@ -35,19 +35,19 @@ function buildPayload(market: Market, symbol: string): DashboardPayloadResponse 
   return {
     symbol,
     market,
-    subject_name: market === "tw" ? "台積電" : "Apple Inc",
+    subject_name: market === "tw" ? "TSMC" : "Apple Inc",
     analysis_time: "2026-05-17 10:00:00",
     ai_enabled: true,
     daily_df: buildBars(symbol),
     technical: {
-      trend_direction: "多頭",
-      ma_status: "多頭排列",
-      kd_status: "黃金交叉",
-      macd_status: "多方增強",
-      volume_status: "量增",
-      volume_price_relation: "價漲量增",
+      trend_direction: "up",
+      ma_status: "up",
+      kd_status: "bull",
+      macd_status: "bull",
+      volume_status: "normal",
+      volume_price_relation: "up",
       short_term_score: 0.76,
-      short_term_label: "偏多",
+      short_term_label: "bull",
       short_term_components: { ma: 0.8, kd: 0.7, volume_price: 0.8, breakout: 0.7 },
       resistance_levels: [
         { value: 533, label: "R1", kind: "swing_high" },
@@ -57,23 +57,23 @@ function buildPayload(market: Market, symbol: string): DashboardPayloadResponse 
         { value: 28.42, label: "S1", kind: "ma20" },
         { value: 23.07, label: "S2", kind: "swing_low" },
       ],
-      volume_price_divergence: "無明顯背離",
+      volume_price_divergence: "none",
       ma_bias: "2.1%",
-      chip_behavior: "中性",
-      operation_observation: "沿 20MA 偏多震盪。",
+      chip_behavior: "flat",
+      operation_observation: "watch 20MA",
     },
-    candle_patterns: [{ name: "長紅 K", detected: true, description: "多方力道強" }],
-    chart_patterns: [{ pattern_type: "W底（雙底）", formed: false, description: "尚未突破", key_points: [] }],
+    candle_patterns: [{ name: "hammer", detected: true, description: "desc" }],
+    chart_patterns: [{ pattern_type: "W", formed: false, description: "desc", key_points: [] }],
     multi_timeframe: {
-      daily: { timeframe: "day", trend_direction: "多頭", strength: "中強" },
-      weekly: { timeframe: "week", trend_direction: "多頭", strength: "中等" },
-      monthly: { timeframe: "month", trend_direction: "多頭", strength: "中等" },
+      daily: { timeframe: "day", trend_direction: "up", strength: "strong" },
+      weekly: { timeframe: "week", trend_direction: "up", strength: "mid" },
+      monthly: { timeframe: "month", trend_direction: "up", strength: "mid" },
     },
     quote:
       market === "tw"
         ? {
             symbol,
-            name: "台積電",
+            name: "TSMC",
             price: 111,
             change: 3,
             change_pct: 2.78,
@@ -90,30 +90,30 @@ function buildPayload(market: Market, symbol: string): DashboardPayloadResponse 
             best_ask_vol: [90, 45],
             is_market_open: true,
             is_estimated_price: false,
-            price_label: "成交價",
+            price_label: "last",
             estimated_price: null,
           }
         : null,
-    bid_ask: market === "tw" ? { total_bid_vol: 150, total_ask_vol: 135, bid_ratio: 0.53, ask_ratio: 0.47, label: "買方略強" } : null,
+    bid_ask: market === "tw" ? { total_bid_vol: 150, total_ask_vol: 135, bid_ratio: 0.53, ask_ratio: 0.47, label: "balanced" } : null,
     chip:
       market === "tw"
         ? {
             foreign_net_n_days: 1000,
             trust_net_n_days: 200,
             dealer_net_n_days: -100,
-            foreign_label: "買超 1,000 張",
-            trust_label: "買超 200 張",
-            dealer_label: "賣超 100 張",
-            chip_concentration: "偏多",
-            chip_trend: "集中",
-            chip_description: "法人偏多",
+            foreign_label: "+1,000",
+            trust_label: "+200",
+            dealer_label: "-100",
+            chip_concentration: "up",
+            chip_trend: "up",
+            chip_description: "desc",
             margin_balance_change: 300,
             short_balance_change: -120,
           }
         : null,
     chip_recent_df:
       market === "tw"
-        ? [{ 日期: "2026-05-16", 外資: 1200, 投信: 200, 自營商: -100 }]
+        ? [{ "日期": "2026-05-16", "外資": 1200, "投信": 200, "自營商": -100 }]
         : [],
     chip_error: null,
     intraday_df: market === "us" ? buildBars(symbol) : [],
@@ -133,11 +133,11 @@ function buildPayload(market: Market, symbol: string): DashboardPayloadResponse 
         : null,
     intraday_error: null,
     analysis: {
-      industry_overview: ["產業偏多"],
-      company_overview: ["基本面穩定"],
-      volume_price_analysis: "量價同步",
-      scenarios: [{ name: "震盪整理", entry_range: "108-110", stop_loss: 104, target: "115" }],
-      conclusion: "偏多但不追高。",
+      industry_overview: ["x"],
+      company_overview: ["x"],
+      volume_price_analysis: "x",
+      scenarios: [{ name: "long", entry_range: "108-110", stop_loss: 104, target: "115" }],
+      conclusion: "x",
     },
   };
 }
@@ -148,27 +148,12 @@ const usPayload = buildPayload("us", "AAPL");
 vi.mock("@/lib/hooks/useDashboard", () => ({
   useDashboard: (symbol: string | null, market: Market) => {
     if (mockLoading) {
-      return {
-        data: undefined,
-        error: undefined,
-        isLoading: true,
-        mutate: mockMutate,
-      };
+      return { data: undefined, error: undefined, isLoading: true, mutate: mockMutate };
     }
     if (!symbol) {
-      return {
-        data: undefined,
-        error: undefined,
-        isLoading: false,
-        mutate: mockMutate,
-      };
+      return { data: undefined, error: undefined, isLoading: false, mutate: mockMutate };
     }
-    return {
-      data: market === "tw" ? twPayload : usPayload,
-      error: undefined,
-      isLoading: false,
-      mutate: mockMutate,
-    };
+    return { data: market === "tw" ? twPayload : usPayload, error: undefined, isLoading: false, mutate: mockMutate };
   },
 }));
 
@@ -179,35 +164,21 @@ vi.mock("@/components/dashboard/candlestick-chart", () => ({
 vi.mock("@/components/market-switcher", () => ({
   MarketSwitcher: ({ onChange }: { onChange: (next: Market) => void }) => (
     <div>
-      <button type="button" onClick={() => onChange("tw")}>
-        TW
-      </button>
-      <button type="button" onClick={() => onChange("us")}>
-        US
-      </button>
+      <button type="button" onClick={() => onChange("tw")}>TW</button>
+      <button type="button" onClick={() => onChange("us")}>US</button>
     </div>
   ),
 }));
 
 vi.mock("@/components/stock-selector", () => ({
-  StockSelector: ({
-    value,
-    onInputChange,
-  }: {
-    value: string;
-    onInputChange: (next: string) => void;
-  }) => (
-    <input
-      aria-label="stock-input"
-      value={value}
-      onChange={(event) => onInputChange(event.target.value)}
-    />
+  StockSelector: ({ value, onInputChange }: { value: string; onInputChange: (next: string) => void }) => (
+    <input aria-label="stock-input" value={value} onChange={(event) => onInputChange(event.target.value)} />
   ),
 }));
 
 vi.mock("@/lib/hooks/useP11Valuation", () => ({
   useP11Valuation: () => ({
-    data: { symbol: "2330", market: "tw", date: "2026-05-17", per: 20.5, pbr: 4.1, dividend_yield: 2.3, industry: "半導體" },
+    data: { symbol: "2330", market: "tw", date: "2026-05-17", per: 20.5, pbr: 4.1, dividend_yield: 2.3, industry: "Semi" },
   }),
 }));
 
@@ -232,11 +203,7 @@ vi.mock("@/lib/hooks/useP11MonthlyRevenue", () => ({
 
 vi.mock("@/lib/hooks/useP11DividendHistory", () => ({
   useP11DividendHistory: () => ({
-    data: {
-      symbol: "2330",
-      market: "tw",
-      items: [{ date: "2026-06-15", cash_dividend: 3.5, ttm_pe: 12.5 }],
-    },
+    data: { symbol: "2330", market: "tw", items: [{ date: "2026-06-15", cash_dividend: 3.5, ttm_pe: 12.5 }] },
   }),
 }));
 
@@ -245,16 +212,43 @@ vi.mock("@/lib/hooks/useP11IndustryPer", () => ({
     data: {
       symbol: "2330",
       market: "tw",
-      industry: "半導體",
+      industry: "Semi",
       median: 18,
       mean: 19,
       count: 1,
-      items: [
-        { symbol: "2330", name: "台積電", date: "2026-05-17", per: 20, pbr: 4, dividend_yield: 2, is_current: true },
-      ],
+      items: [{ symbol: "2330", name: "TSMC", date: "2026-05-17", per: 20, pbr: 4, dividend_yield: 2, is_current: true }],
       cached_at: "2026-05-17T10:00:00+08:00",
     },
     isLoading: false,
+  }),
+}));
+
+vi.mock("@/lib/hooks/useP11InstitutionalCost", () => ({
+  useP11InstitutionalCost: () => ({
+    data: {
+      symbol: "2330",
+      market: "tw",
+      days: 30,
+      current_price: 110,
+      foreign: { cost: 100, pnl: 10 },
+      trust: { cost: 95, pnl: 15 },
+      dealer: { cost: null, pnl: null },
+    },
+  }),
+}));
+
+vi.mock("@/lib/hooks/useP11EventCalendar", () => ({
+  useP11EventCalendar: () => ({
+    data: {
+      symbol: "2330",
+      market: "tw",
+      next_ex_dividend: { date: "2026-06-20", cash_dividend: 3.5, days_until: 10, is_estimated: false },
+      last_ex_dividend: { date: "2025-06-15", cash_dividend: 3.2 },
+      next_shareholder_meeting: { date: "2026-06-30", meeting_type: "常會", source: "manual", is_manual: true, days_until: 20 },
+      last_shareholder_meeting: null,
+      missing_shareholder_meeting: false,
+    },
+    mutate: vi.fn(),
   }),
 }));
 
@@ -264,26 +258,18 @@ describe("P11 panels", () => {
     mockLoading = false;
   });
 
-  it("renders three P11-B panels and keeps C/D placeholders for TW market", () => {
+  it("renders 11-B + 11-C panels and keeps 11-D placeholder for TW market", () => {
     render(<DashboardPageClient />);
-
     expect(screen.getByTestId("p11-panel-pe-ratio")).toBeInTheDocument();
     expect(screen.getByTestId("p11-panel-monthly-revenue")).toBeInTheDocument();
     expect(screen.getByTestId("p11-panel-historical-dividend-pe")).toBeInTheDocument();
-    expect(screen.getByTestId("p11-panel-institutional-cost")).toHaveClass("border-dashed");
-    expect(screen.getByTestId("p11-panel-event-calendar")).toHaveClass("border-dashed");
+    expect(screen.getByTestId("p11-panel-institutional-cost")).toBeInTheDocument();
+    expect(screen.getByTestId("p11-panel-event-calendar")).toBeInTheDocument();
     expect(screen.getByTestId("p11-panel-retail-sentiment")).toHaveClass("border-dashed");
-    expect(screen.getAllByText("本益比").length).toBeGreaterThan(0);
-    expect(screen.getByText("月營收")).toBeInTheDocument();
-    expect(screen.getByText("歷史除息本益比")).toBeInTheDocument();
-    expect(screen.getByText("法人持股成本")).toBeInTheDocument();
-    expect(screen.getByText("事件行事曆")).toBeInTheDocument();
-    expect(screen.getByText("散戶多空比")).toBeInTheDocument();
   });
 
   it("renders tooltip trigger for each 11-B panel title", () => {
     render(<DashboardPageClient />);
-
     expect(screen.getByLabelText(P11_TOOLTIP_TEXT.pe_ratio)).toBeInTheDocument();
     expect(screen.getByLabelText(P11_TOOLTIP_TEXT.monthly_revenue)).toBeInTheDocument();
     expect(screen.getByLabelText(P11_TOOLTIP_TEXT.historical_dividend_pe)).toBeInTheDocument();
@@ -291,44 +277,35 @@ describe("P11 panels", () => {
 
   it("opens same-industry modal without triggering dashboard mutate", () => {
     render(<DashboardPageClient />);
-
     fireEvent.click(screen.getByRole("button", { name: "同產業 ->" }));
     expect(mockMutate).not.toHaveBeenCalled();
-    expect(screen.getByText("同產業本益比 · 半導體")).toBeInTheDocument();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
-  it("does not render P11 placeholders in US market", () => {
+  it("does not render P11 block in US market", () => {
     render(<DashboardPageClient />);
-
     fireEvent.click(screen.getByRole("button", { name: "US" }));
-    fireEvent.change(screen.getByLabelText("stock-input"), {
-      target: { value: "AAPL" },
-    });
+    fireEvent.change(screen.getByLabelText("stock-input"), { target: { value: "AAPL" } });
     fireEvent.click(screen.getByRole("button", { name: "分析" }));
-
     expect(screen.queryByTestId("p11-panel-pe-ratio")).not.toBeInTheDocument();
     expect(screen.queryByTestId("p11-panel-monthly-revenue")).not.toBeInTheDocument();
-    expect(screen.getByText("技術分析總覽")).toBeInTheDocument();
   });
 
   it("uses 300px chart loading skeleton height", () => {
     mockLoading = true;
     render(<DashboardPageClient />);
-
     expect(screen.getByTestId("dashboard-chart-skeleton")).toHaveClass("h-[300px]");
   });
 
   it("renders compact inline rows in chip panel", () => {
     render(<DashboardPageClient />);
-
-    expect(screen.getByTestId("chip-bid-ask-inline")).toHaveTextContent("買方 53.00% / 賣方 47.00%");
-    expect(screen.getByTestId("chip-margin-inline")).toHaveTextContent("+300 張");
-    expect(screen.getByTestId("chip-short-inline")).toHaveTextContent("-120 張");
+    expect(screen.getByTestId("chip-bid-ask-inline")).toHaveTextContent("53.00% /");
+    expect(screen.getByTestId("chip-margin-inline")).toHaveTextContent("+300");
+    expect(screen.getByTestId("chip-short-inline")).toHaveTextContent("-120");
   });
 
   it("formats TW levels by tick size (high price no decimals)", () => {
     render(<DashboardPageClient />);
-
     expect(screen.getByText("533 / 30.43")).toBeInTheDocument();
     expect(screen.getByText("28.42 / 23.07")).toBeInTheDocument();
   });

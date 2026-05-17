@@ -2,17 +2,46 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 import time
 
 import pandas as pd
 
+from src.core.constants import TAIPEI_TZ
 from src.core.market import normalize_market
 from src.data.cleaner import DataCleaner, QualityReport, adjust_prices
-from src.data.fetcher import IDataFetcher
-from src.data.storage import DuckDBMeta, ParquetStorage
+from src.data.fetcher import IDataFetcher, TWSEFetcher
+from src.data.storage import DuckDBMeta, ParquetStorage, merge_shareholder_meeting_auto
 
 US_YFINANCE_REQUEST_INTERVAL_SECONDS = 1.0
+
+
+def should_update_shareholder_meeting(meta_path: Path, now: pd.Timestamp) -> bool:
+    if not meta_path.exists():
+        return True
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        raw_last = meta.get("last_updated_at")
+        if not raw_last:
+            return True
+        last = pd.Timestamp(raw_last)
+    except Exception:  # noqa: BLE001
+        return True
+
+    now_ts = pd.Timestamp(now)
+    if now_ts.tzinfo is None:
+        now_ts = now_ts.tz_localize(TAIPEI_TZ)
+    else:
+        now_ts = now_ts.tz_convert(TAIPEI_TZ)
+
+    if last.tzinfo is None:
+        last = last.tz_localize(TAIPEI_TZ)
+    else:
+        last = last.tz_convert(TAIPEI_TZ)
+
+    return last.normalize() < now_ts.normalize()
 
 
 def _empty_dividends() -> pd.DataFrame:
@@ -394,3 +423,48 @@ class DataMaintenance:
         adjusted_dates = pd.to_datetime(adjusted_df["date"], errors="coerce")
         out = adjusted_df.loc[adjusted_dates.isin(clean_dates)].copy()
         return out.sort_values("date").reset_index(drop=True)
+
+    def refresh_shareholder_meeting_once_per_day(self, market: str = "tw", now: pd.Timestamp | None = None) -> bool:
+        normalized_market = normalize_market(market)
+        if normalized_market != "tw":
+            return False
+
+        now_ts = pd.Timestamp(now or pd.Timestamp.now(tz=TAIPEI_TZ))
+        if now_ts.tzinfo is None:
+            now_ts = now_ts.tz_localize(TAIPEI_TZ)
+        else:
+            now_ts = now_ts.tz_convert(TAIPEI_TZ)
+
+        meta_path = self.storage._shareholder_meeting_meta_path()  # noqa: SLF001
+        data_path = self.storage._shareholder_meeting_path()  # noqa: SLF001
+
+        if not should_update_shareholder_meeting(meta_path, now_ts):
+            return False
+
+        had_data = data_path.exists()
+        had_meta = meta_path.exists()
+        existing_df = self.storage.load_shareholder_meeting()
+        existing_meta = self.storage.load_shareholder_meeting_meta()
+
+        try:
+            fetched = TWSEFetcher().fetch_shareholder_meeting()
+            merged = merge_shareholder_meeting_auto(
+                new_rows=fetched,
+                existing=existing_df,
+                now=now_ts,
+                timezone=TAIPEI_TZ,
+            )
+            self.storage.save_shareholder_meeting(merged)
+            self.storage.save_shareholder_meeting_meta({"last_updated_at": now_ts.isoformat()})
+            return True
+        except Exception:  # noqa: BLE001
+            if had_data:
+                self.storage.save_shareholder_meeting(existing_df)
+            elif data_path.exists():
+                data_path.unlink()
+
+            if had_meta:
+                self.storage.save_shareholder_meeting_meta(existing_meta)
+            elif meta_path.exists():
+                meta_path.unlink()
+            raise

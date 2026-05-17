@@ -9,7 +9,7 @@ from src.core.constants import STANDARD_COLUMNS
 from src.core.market import get_market_spec
 from src.data.cleaner import DataCleaner
 import src.data.maintenance as maintenance_module
-from src.data.maintenance import DataMaintenance
+from src.data.maintenance import DataMaintenance, should_update_shareholder_meeting
 from src.data.storage import DuckDBMeta, ParquetStorage, _rmtree_with_retry
 from src.core.exceptions import FetcherError
 
@@ -304,6 +304,26 @@ def test_list_stale_symbols(tmp_path) -> None:
     assert any(item["symbol"] == "2330" for item in stale)
 
 
+def test_should_update_shareholder_meeting_when_meta_missing(tmp_path) -> None:
+    meta_path = tmp_path / "shareholder_meeting.meta.json"
+    now = pd.Timestamp("2026-05-17T10:00:00+08:00")
+    assert should_update_shareholder_meeting(meta_path, now) is True
+
+
+def test_should_update_shareholder_meeting_when_meta_is_today(tmp_path) -> None:
+    meta_path = tmp_path / "shareholder_meeting.meta.json"
+    meta_path.write_text('{"last_updated_at":"2026-05-17T01:00:00+08:00"}', encoding="utf-8")
+    now = pd.Timestamp("2026-05-17T10:00:00+08:00")
+    assert should_update_shareholder_meeting(meta_path, now) is False
+
+
+def test_should_update_shareholder_meeting_when_meta_is_yesterday(tmp_path) -> None:
+    meta_path = tmp_path / "shareholder_meeting.meta.json"
+    meta_path.write_text('{"last_updated_at":"2026-05-16T23:59:59+08:00"}', encoding="utf-8")
+    now = pd.Timestamp("2026-05-17T00:01:00+08:00")
+    assert should_update_shareholder_meeting(meta_path, now) is True
+
+
 def test_update_daily_returns_added_rows(tmp_path) -> None:
     existing = _make_daily("2330", "2024-01-01", 2)
     incremental = _make_daily("2330", "2024-01-03", 2)
@@ -577,6 +597,33 @@ def test_storage_delete_symbol_removes_parquets(tmp_path) -> None:
     storage.delete_symbol("2330", market="tw")
 
     assert storage.load_daily("2330").empty
+
+
+def test_delete_symbol_keeps_global_shareholder_files(tmp_path) -> None:
+    storage = ParquetStorage(data_dir=tmp_path / "data")
+    storage.save_daily("2330", _make_daily("2330", "2024-01-01", 2))
+    storage.save_shareholder_meeting(
+        pd.DataFrame(
+            [
+                {
+                    "date": pd.Timestamp("2026-06-30", tz="Asia/Taipei"),
+                    "symbol": "2330",
+                    "meeting_type": "常會",
+                    "source": "auto",
+                    "updated_at": pd.Timestamp("2026-05-17T10:00:00+08:00"),
+                }
+            ]
+        )
+    )
+    storage.save_shareholder_meeting_meta({"last_updated_at": "2026-05-17T10:00:00+08:00"})
+    storage.upsert_shareholder_meeting_override(symbol="2330", date="2026-06-30", meeting_type="常會")
+
+    storage.delete_symbol("2330", market="tw")
+
+    assert storage.load_daily("2330").empty
+    assert not storage.load_shareholder_meeting().empty
+    assert storage.load_shareholder_meeting_meta().get("last_updated_at") is not None
+    assert not storage.load_shareholder_meeting_override().empty
 
 
 def test_meta_delete_symbol_removes_rows(tmp_path) -> None:
