@@ -7,11 +7,18 @@ import { MarketSwitcher } from "@/components/market-switcher";
 import { StockSelector } from "@/components/stock-selector";
 import { CandlestickChart } from "@/components/dashboard/candlestick-chart";
 import { HelpTooltip } from "@/components/dashboard/help-tooltip";
+import { DividendHistoryPanel } from "@/components/dashboard/p11/dividend-history-panel";
+import { IndustryPerModal } from "@/components/dashboard/p11/industry-per-modal";
+import { MonthlyRevenuePanel } from "@/components/dashboard/p11/monthly-revenue-panel";
+import { ValuationPanel } from "@/components/dashboard/p11/valuation-panel";
 import {
   DASHBOARD_TOOLTIP_TEXT,
-  P11_TOOLTIP_TEXT,
   PATTERN_DETAILS,
 } from "@/components/dashboard/tooltip-text";
+import { useP11DividendHistory } from "@/lib/hooks/useP11DividendHistory";
+import { useP11IndustryPer } from "@/lib/hooks/useP11IndustryPer";
+import { useP11MonthlyRevenue } from "@/lib/hooks/useP11MonthlyRevenue";
+import { useP11Valuation } from "@/lib/hooks/useP11Valuation";
 import { useDashboard } from "@/lib/hooks/useDashboard";
 import { changeColor, formatNumber, formatPct } from "@/lib/formatters";
 import type {
@@ -691,44 +698,23 @@ function ChartSection({
   );
 }
 
-function P11PlaceholderPanel({
-  title,
-  tooltip,
-  placeholder,
-  action,
-  testId,
-}: {
-  title: string;
-  tooltip: string;
-  placeholder: string;
-  action?: React.ReactNode;
-  testId: string;
-}) {
-  return (
-    <section
-      className="rounded-lg border border-dashed border-slate-700 bg-slate-950/40 p-3"
-      data-testid={testId}
-    >
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <div className="flex items-center gap-1">
-          <h3 className="text-sm font-semibold text-slate-100">{title}</h3>
-          <HelpTooltip text={tooltip} />
-        </div>
-        {action}
-      </div>
-      <p className="text-sm italic text-slate-500">{placeholder}</p>
-    </section>
-  );
-}
-
 export default function DashboardPageClient() {
   const [market, setMarket] = useState<Market>("tw");
   const [pendingSymbol, setPendingSymbol] = useState("2330");
   const [symbol, setSymbol] = useState<string | null>("2330");
   const [interval, setInterval] = useState<ChartInterval>("day");
   const [aiHint, setAiHint] = useState<string>("");
+  const [industryModalOpen, setIndustryModalOpen] = useState(false);
 
   const { data, error, isLoading, mutate } = useDashboard(symbol, market);
+  const { data: valuation } = useP11Valuation(symbol, market);
+  const { data: monthlyRevenue } = useP11MonthlyRevenue(symbol, market, 12);
+  const { data: dividendHistory } = useP11DividendHistory(symbol, market, 5);
+  const { data: industryPer, isLoading: industryPerLoading } = useP11IndustryPer(
+    symbol,
+    market,
+    industryModalOpen,
+  );
 
   const titleSymbol = data?.symbol ?? symbol ?? "----";
   const titleName = data?.subject_name ?? "";
@@ -859,59 +845,36 @@ export default function DashboardPageClient() {
                 />
                 {market === "tw" ? (
                   <div className="grid gap-3 md:grid-cols-2">
-                    <div
-                      className="space-y-3"
-                      data-testid="p11-placeholder-grid-left"
-                    >
-                      <P11PlaceholderPanel
-                        title="本益比"
-                        tooltip={P11_TOOLTIP_TEXT.pe_ratio}
-                        placeholder="(P11-B-1 待實作)"
-                        action={(
-                          <button
-                            type="button"
-                            className="rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-300"
-                          >
-                            同產業 -&gt;
-                          </button>
-                        )}
-                        testId="p11-panel-pe-ratio"
-                      />
-                      <P11PlaceholderPanel
-                        title="月營收"
-                        tooltip={P11_TOOLTIP_TEXT.monthly_revenue}
-                        placeholder="(P11-B-2 待實作)"
-                        testId="p11-panel-monthly-revenue"
-                      />
-                      <P11PlaceholderPanel
-                        title="歷史除息本益比"
-                        tooltip={P11_TOOLTIP_TEXT.historical_dividend_pe}
-                        placeholder="(P11-B-3 待實作)"
-                        testId="p11-panel-historical-dividend-pe"
-                      />
+                    <div className="space-y-3" data-testid="p11-grid-left">
+                      <ValuationPanel data={valuation} onOpenIndustry={() => setIndustryModalOpen(true)} />
+                      <MonthlyRevenuePanel data={monthlyRevenue} />
+                      <DividendHistoryPanel data={dividendHistory} />
                     </div>
                     <div
                       className="space-y-3"
-                      data-testid="p11-placeholder-grid-right"
+                      data-testid="p11-grid-right"
                     >
-                      <P11PlaceholderPanel
-                        title="法人持股成本"
-                        tooltip={P11_TOOLTIP_TEXT.institutional_cost}
-                        placeholder="(P11-C-1 待實作)"
-                        testId="p11-panel-institutional-cost"
-                      />
-                      <P11PlaceholderPanel
-                        title="事件行事曆"
-                        tooltip={P11_TOOLTIP_TEXT.event_calendar}
-                        placeholder="(P11-C-2 待實作)"
-                        testId="p11-panel-event-calendar"
-                      />
-                      <P11PlaceholderPanel
-                        title="散戶多空比"
-                        tooltip={P11_TOOLTIP_TEXT.retail_sentiment}
-                        placeholder="(P11-D 待定)"
-                        testId="p11-panel-retail-sentiment"
-                      />
+                      <section
+                        className="rounded-lg border border-dashed border-slate-700 bg-slate-950/40 p-3"
+                        data-testid="p11-panel-institutional-cost"
+                      >
+                        <h3 className="text-sm font-semibold text-slate-100">法人持股成本</h3>
+                        <p className="text-sm italic text-slate-500">(P11-C-1 待實作)</p>
+                      </section>
+                      <section
+                        className="rounded-lg border border-dashed border-slate-700 bg-slate-950/40 p-3"
+                        data-testid="p11-panel-event-calendar"
+                      >
+                        <h3 className="text-sm font-semibold text-slate-100">事件行事曆</h3>
+                        <p className="text-sm italic text-slate-500">(P11-C-2 待實作)</p>
+                      </section>
+                      <section
+                        className="rounded-lg border border-dashed border-slate-700 bg-slate-950/40 p-3"
+                        data-testid="p11-panel-retail-sentiment"
+                      >
+                        <h3 className="text-sm font-semibold text-slate-100">散戶多空比</h3>
+                        <p className="text-sm italic text-slate-500">(P11-D 待定)</p>
+                      </section>
                     </div>
                   </div>
                 ) : null}
@@ -956,6 +919,12 @@ export default function DashboardPageClient() {
           </div>
         ) : null}
       </div>
+      <IndustryPerModal
+        open={industryModalOpen}
+        onOpenChange={setIndustryModalOpen}
+        data={industryPer}
+        isLoading={industryPerLoading}
+      />
     </div>
   );
 }

@@ -10,8 +10,12 @@ import pandas as pd
 
 from src.core.config import get_data_dir
 from src.core.constants import (
+    DIVIDENDS_COLUMNS,
+    EPS_COLUMNS,
     INSTITUTIONAL_COLUMNS,
     MARGIN_COLUMNS,
+    MONTHLY_REVENUE_COLUMNS,
+    PER_COLUMNS,
     SPLITS_COLUMNS,
     STANDARD_COLUMNS,
 )
@@ -75,6 +79,54 @@ def _empty_margin_dataframe(timezone: str) -> pd.DataFrame:
             "symbol": pd.Series(dtype="object"),
         }
     )[MARGIN_COLUMNS]
+
+
+def _empty_dividends_dataframe(timezone: str) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "date": pd.Series(dtype=f"datetime64[ns, {timezone}]"),
+            "cash_dividend": pd.Series(dtype="float64"),
+            "stock_dividend": pd.Series(dtype="float64"),
+            "symbol": pd.Series(dtype="object"),
+        }
+    )[DIVIDENDS_COLUMNS]
+
+
+def _empty_eps_dataframe(timezone: str) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "date": pd.Series(dtype=f"datetime64[ns, {timezone}]"),
+            "year": pd.Series(dtype="int64"),
+            "quarter": pd.Series(dtype="int64"),
+            "eps": pd.Series(dtype="float64"),
+            "symbol": pd.Series(dtype="object"),
+            "report_date": pd.Series(dtype=f"datetime64[ns, {timezone}]"),
+        }
+    )[[*EPS_COLUMNS, "report_date"]]
+
+
+def _empty_per_dataframe(timezone: str) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "date": pd.Series(dtype=f"datetime64[ns, {timezone}]"),
+            "per": pd.Series(dtype="float64"),
+            "pbr": pd.Series(dtype="float64"),
+            "dividend_yield": pd.Series(dtype="float64"),
+            "symbol": pd.Series(dtype="object"),
+        }
+    )[PER_COLUMNS]
+
+
+def _empty_monthly_revenue_dataframe(timezone: str) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "date": pd.Series(dtype=f"datetime64[ns, {timezone}]"),
+            "revenue": pd.Series(dtype="float64"),
+            "revenue_month": pd.Series(dtype="int64"),
+            "revenue_year": pd.Series(dtype="int64"),
+            "symbol": pd.Series(dtype="object"),
+        }
+    )[MONTHLY_REVENUE_COLUMNS]
 
 
 def _normalize_market_df(df: pd.DataFrame, symbol: str, timezone: str) -> pd.DataFrame:
@@ -207,6 +259,134 @@ def _normalize_margin_df(df: pd.DataFrame, symbol: str, timezone: str) -> pd.Dat
     return out[MARGIN_COLUMNS].sort_values("date").reset_index(drop=True)
 
 
+def _normalize_dividends_df(df: pd.DataFrame, symbol: str, timezone: str) -> pd.DataFrame:
+    if df.empty:
+        return _empty_dividends_dataframe(timezone)
+
+    out = df.copy()
+    for col in DIVIDENDS_COLUMNS:
+        if col not in out.columns:
+            out[col] = pd.NA
+
+    out["symbol"] = out["symbol"].fillna(symbol).astype(str)
+    out["date"] = pd.to_datetime(out["date"], errors="coerce")
+    out["cash_dividend"] = pd.to_numeric(out["cash_dividend"], errors="coerce")
+    out["stock_dividend"] = pd.to_numeric(out["stock_dividend"], errors="coerce")
+    out = out.dropna(subset=["date"]).copy()
+    if out.empty:
+        return _empty_dividends_dataframe(timezone)
+
+    series = out["date"]
+    if series.dt.tz is None:
+        out["date"] = series.dt.tz_localize(timezone)
+    else:
+        out["date"] = series.dt.tz_convert(timezone)
+    out["date"] = out["date"].astype(f"datetime64[ns, {timezone}]")
+    out["cash_dividend"] = out["cash_dividend"].fillna(0.0).astype("float64")
+    out["stock_dividend"] = out["stock_dividend"].fillna(0.0).astype("float64")
+    return out[DIVIDENDS_COLUMNS].sort_values("date").reset_index(drop=True)
+
+
+def _normalize_eps_df(df: pd.DataFrame, symbol: str, timezone: str) -> pd.DataFrame:
+    if df.empty:
+        return _empty_eps_dataframe(timezone)
+
+    out = df.copy()
+    if "date" not in out.columns and "report_date" in out.columns:
+        out["date"] = out["report_date"]
+
+    for col in [*EPS_COLUMNS, "report_date"]:
+        if col not in out.columns:
+            out[col] = pd.NA
+
+    out["symbol"] = out["symbol"].fillna(symbol).astype(str)
+    out["date"] = pd.to_datetime(out["date"], errors="coerce")
+    out["report_date"] = pd.to_datetime(out["report_date"], errors="coerce")
+    out["year"] = pd.to_numeric(out["year"], errors="coerce")
+    out["quarter"] = pd.to_numeric(out["quarter"], errors="coerce")
+    out["eps"] = pd.to_numeric(out["eps"], errors="coerce")
+    out = out.dropna(subset=["date", "year", "quarter", "eps"]).copy()
+    if out.empty:
+        return _empty_eps_dataframe(timezone)
+
+    for col in ("date", "report_date"):
+        series = out[col]
+        if series.dropna().empty:
+            out[col] = pd.Series(pd.NaT, index=out.index, dtype=f"datetime64[ns, {timezone}]")
+            continue
+        if series.dt.tz is None:
+            out[col] = series.dt.tz_localize(timezone)
+        else:
+            out[col] = series.dt.tz_convert(timezone)
+        out[col] = out[col].astype(f"datetime64[ns, {timezone}]")
+
+    out["year"] = out["year"].astype("int64")
+    out["quarter"] = out["quarter"].astype("int64")
+    out["eps"] = out["eps"].astype("float64")
+    out = out[[*EPS_COLUMNS, "report_date"]].sort_values(["date", "year", "quarter"]).reset_index(drop=True)
+    return out
+
+
+def _normalize_per_df(df: pd.DataFrame, symbol: str, timezone: str) -> pd.DataFrame:
+    if df.empty:
+        return _empty_per_dataframe(timezone)
+
+    out = df.copy()
+    for col in PER_COLUMNS:
+        if col not in out.columns:
+            out[col] = pd.NA
+
+    out["symbol"] = out["symbol"].fillna(symbol).astype(str)
+    out["date"] = pd.to_datetime(out["date"], errors="coerce")
+    out["per"] = pd.to_numeric(out["per"], errors="coerce")
+    out["pbr"] = pd.to_numeric(out["pbr"], errors="coerce")
+    out["dividend_yield"] = pd.to_numeric(out["dividend_yield"], errors="coerce")
+    out = out.dropna(subset=["date"]).copy()
+    if out.empty:
+        return _empty_per_dataframe(timezone)
+
+    series = out["date"]
+    if series.dt.tz is None:
+        out["date"] = series.dt.tz_localize(timezone)
+    else:
+        out["date"] = series.dt.tz_convert(timezone)
+    out["date"] = out["date"].astype(f"datetime64[ns, {timezone}]")
+    out["per"] = out["per"].astype("float64")
+    out["pbr"] = out["pbr"].astype("float64")
+    out["dividend_yield"] = out["dividend_yield"].astype("float64")
+    return out[PER_COLUMNS].sort_values("date").reset_index(drop=True)
+
+
+def _normalize_monthly_revenue_df(df: pd.DataFrame, symbol: str, timezone: str) -> pd.DataFrame:
+    if df.empty:
+        return _empty_monthly_revenue_dataframe(timezone)
+
+    out = df.copy()
+    for col in MONTHLY_REVENUE_COLUMNS:
+        if col not in out.columns:
+            out[col] = pd.NA
+
+    out["symbol"] = out["symbol"].fillna(symbol).astype(str)
+    out["date"] = pd.to_datetime(out["date"], errors="coerce")
+    out["revenue"] = pd.to_numeric(out["revenue"], errors="coerce")
+    out["revenue_month"] = pd.to_numeric(out["revenue_month"], errors="coerce")
+    out["revenue_year"] = pd.to_numeric(out["revenue_year"], errors="coerce")
+    out = out.dropna(subset=["date", "revenue_month", "revenue_year"]).copy()
+    if out.empty:
+        return _empty_monthly_revenue_dataframe(timezone)
+
+    series = out["date"]
+    if series.dt.tz is None:
+        out["date"] = series.dt.tz_localize(timezone)
+    else:
+        out["date"] = series.dt.tz_convert(timezone)
+    out["date"] = out["date"].astype(f"datetime64[ns, {timezone}]")
+    out["revenue"] = out["revenue"].astype("float64")
+    out["revenue_month"] = out["revenue_month"].astype("int64")
+    out["revenue_year"] = out["revenue_year"].astype("int64")
+    return out[MONTHLY_REVENUE_COLUMNS].sort_values("date").reset_index(drop=True)
+
+
 class ParquetStorage:
     """
     Parquet file storage with upsert behavior for market data.
@@ -296,6 +476,42 @@ class ParquetStorage:
             normalized_market,
             self._validate_symbol(symbol, normalized_market),
             "margin.parquet",
+        )
+
+    def _per_path(self, symbol: str, market: str = "tw") -> Path:
+        normalized_market = self._validate_market(market)
+        return self._build_market_path(
+            "raw",
+            normalized_market,
+            self._validate_symbol(symbol, normalized_market),
+            "per.parquet",
+        )
+
+    def _monthly_revenue_path(self, symbol: str, market: str = "tw") -> Path:
+        normalized_market = self._validate_market(market)
+        return self._build_market_path(
+            "raw",
+            normalized_market,
+            self._validate_symbol(symbol, normalized_market),
+            "monthly_revenue.parquet",
+        )
+
+    def _dividends_path(self, symbol: str, market: str = "tw") -> Path:
+        normalized_market = self._validate_market(market)
+        return self._build_market_path(
+            "raw",
+            normalized_market,
+            self._validate_symbol(symbol, normalized_market),
+            "dividends.parquet",
+        )
+
+    def _eps_path(self, symbol: str, market: str = "tw") -> Path:
+        normalized_market = self._validate_market(market)
+        return self._build_market_path(
+            "raw",
+            normalized_market,
+            self._validate_symbol(symbol, normalized_market),
+            "eps.parquet",
         )
 
     def _save_with_upsert(self, path: Path, symbol: str, df: pd.DataFrame, timezone: str) -> Path:
@@ -408,6 +624,103 @@ class ParquetStorage:
             raise StorageError(f"Failed to read parquet: {path}") from exc
         return _normalize_margin_df(loaded, symbol=symbol, timezone=timezone)
 
+    def _save_per_with_upsert(self, path: Path, symbol: str, df: pd.DataFrame, timezone: str) -> Path:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        incoming = _normalize_per_df(df, symbol, timezone=timezone)
+        if path.exists():
+            existing = self._load_per_or_empty(path, symbol, timezone=timezone)
+            merged = pd.concat([existing, incoming], ignore_index=True)
+        else:
+            merged = incoming
+        merged = merged.drop_duplicates(subset=["date", "symbol"], keep="last").sort_values("date").reset_index(drop=True)
+        try:
+            merged.to_parquet(path, index=False)
+        except Exception as exc:  # noqa: BLE001
+            raise StorageError(f"Failed to write parquet: {path}") from exc
+        return path
+
+    def _load_per_or_empty(self, path: Path, symbol: str, timezone: str) -> pd.DataFrame:
+        if not path.exists():
+            return _empty_per_dataframe(timezone)
+        try:
+            loaded = pd.read_parquet(path)
+        except Exception as exc:  # noqa: BLE001
+            raise StorageError(f"Failed to read parquet: {path}") from exc
+        return _normalize_per_df(loaded, symbol=symbol, timezone=timezone)
+
+    def _save_monthly_revenue_with_upsert(self, path: Path, symbol: str, df: pd.DataFrame, timezone: str) -> Path:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        incoming = _normalize_monthly_revenue_df(df, symbol, timezone=timezone)
+        if path.exists():
+            existing = self._load_monthly_revenue_or_empty(path, symbol, timezone=timezone)
+            merged = pd.concat([existing, incoming], ignore_index=True)
+        else:
+            merged = incoming
+        merged = merged.drop_duplicates(subset=["date", "symbol"], keep="last").sort_values("date").reset_index(drop=True)
+        try:
+            merged.to_parquet(path, index=False)
+        except Exception as exc:  # noqa: BLE001
+            raise StorageError(f"Failed to write parquet: {path}") from exc
+        return path
+
+    def _load_monthly_revenue_or_empty(self, path: Path, symbol: str, timezone: str) -> pd.DataFrame:
+        if not path.exists():
+            return _empty_monthly_revenue_dataframe(timezone)
+        try:
+            loaded = pd.read_parquet(path)
+        except Exception as exc:  # noqa: BLE001
+            raise StorageError(f"Failed to read parquet: {path}") from exc
+        return _normalize_monthly_revenue_df(loaded, symbol=symbol, timezone=timezone)
+
+    def _save_dividends_with_upsert(self, path: Path, symbol: str, df: pd.DataFrame, timezone: str) -> Path:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        incoming = _normalize_dividends_df(df, symbol, timezone=timezone)
+        if path.exists():
+            existing = self._load_dividends_or_empty(path, symbol, timezone=timezone)
+            merged = pd.concat([existing, incoming], ignore_index=True)
+        else:
+            merged = incoming
+        merged = merged.drop_duplicates(subset=["date", "symbol"], keep="last").sort_values("date").reset_index(drop=True)
+        try:
+            merged.to_parquet(path, index=False)
+        except Exception as exc:  # noqa: BLE001
+            raise StorageError(f"Failed to write parquet: {path}") from exc
+        return path
+
+    def _load_dividends_or_empty(self, path: Path, symbol: str, timezone: str) -> pd.DataFrame:
+        if not path.exists():
+            return _empty_dividends_dataframe(timezone)
+        try:
+            loaded = pd.read_parquet(path)
+        except Exception as exc:  # noqa: BLE001
+            raise StorageError(f"Failed to read parquet: {path}") from exc
+        return _normalize_dividends_df(loaded, symbol=symbol, timezone=timezone)
+
+    def _save_eps_with_upsert(self, path: Path, symbol: str, df: pd.DataFrame, timezone: str) -> Path:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        incoming = _normalize_eps_df(df, symbol, timezone=timezone)
+        if path.exists():
+            existing = self._load_eps_or_empty(path, symbol, timezone=timezone)
+            merged = pd.concat([existing, incoming], ignore_index=True)
+        else:
+            merged = incoming
+        merged = merged.drop_duplicates(subset=["date", "year", "quarter", "symbol"], keep="last")
+        merged = merged.sort_values(["date", "year", "quarter"]).reset_index(drop=True)
+        try:
+            merged.to_parquet(path, index=False)
+        except Exception as exc:  # noqa: BLE001
+            raise StorageError(f"Failed to write parquet: {path}") from exc
+        return path
+
+    def _load_eps_or_empty(self, path: Path, symbol: str, timezone: str) -> pd.DataFrame:
+        if not path.exists():
+            return _empty_eps_dataframe(timezone)
+        try:
+            loaded = pd.read_parquet(path)
+        except Exception as exc:  # noqa: BLE001
+            raise StorageError(f"Failed to read parquet: {path}") from exc
+        return _normalize_eps_df(loaded, symbol=symbol, timezone=timezone)
+
     def save_daily(self, symbol: str, df: pd.DataFrame, market: str = "tw") -> Path:
         normalized_market = self._validate_market(market)
         normalized_symbol = self._validate_symbol(symbol, normalized_market)
@@ -518,6 +831,82 @@ class ParquetStorage:
         normalized_symbol = self._validate_symbol(symbol, normalized_market)
         return self._load_margin_or_empty(
             self._margin_path(normalized_symbol, normalized_market),
+            normalized_symbol,
+            timezone=self._market_timezone(normalized_market),
+        )
+
+    def save_per(self, symbol: str, df: pd.DataFrame, market: str = "tw") -> Path:
+        normalized_market = self._validate_market(market)
+        normalized_symbol = self._validate_symbol(symbol, normalized_market)
+        return self._save_per_with_upsert(
+            self._per_path(normalized_symbol, normalized_market),
+            normalized_symbol,
+            df,
+            timezone=self._market_timezone(normalized_market),
+        )
+
+    def load_per(self, symbol: str, market: str = "tw") -> pd.DataFrame:
+        normalized_market = self._validate_market(market)
+        normalized_symbol = self._validate_symbol(symbol, normalized_market)
+        return self._load_per_or_empty(
+            self._per_path(normalized_symbol, normalized_market),
+            normalized_symbol,
+            timezone=self._market_timezone(normalized_market),
+        )
+
+    def save_monthly_revenue(self, symbol: str, df: pd.DataFrame, market: str = "tw") -> Path:
+        normalized_market = self._validate_market(market)
+        normalized_symbol = self._validate_symbol(symbol, normalized_market)
+        return self._save_monthly_revenue_with_upsert(
+            self._monthly_revenue_path(normalized_symbol, normalized_market),
+            normalized_symbol,
+            df,
+            timezone=self._market_timezone(normalized_market),
+        )
+
+    def load_monthly_revenue(self, symbol: str, market: str = "tw") -> pd.DataFrame:
+        normalized_market = self._validate_market(market)
+        normalized_symbol = self._validate_symbol(symbol, normalized_market)
+        return self._load_monthly_revenue_or_empty(
+            self._monthly_revenue_path(normalized_symbol, normalized_market),
+            normalized_symbol,
+            timezone=self._market_timezone(normalized_market),
+        )
+
+    def save_dividends(self, symbol: str, df: pd.DataFrame, market: str = "tw") -> Path:
+        normalized_market = self._validate_market(market)
+        normalized_symbol = self._validate_symbol(symbol, normalized_market)
+        return self._save_dividends_with_upsert(
+            self._dividends_path(normalized_symbol, normalized_market),
+            normalized_symbol,
+            df,
+            timezone=self._market_timezone(normalized_market),
+        )
+
+    def load_dividends(self, symbol: str, market: str = "tw") -> pd.DataFrame:
+        normalized_market = self._validate_market(market)
+        normalized_symbol = self._validate_symbol(symbol, normalized_market)
+        return self._load_dividends_or_empty(
+            self._dividends_path(normalized_symbol, normalized_market),
+            normalized_symbol,
+            timezone=self._market_timezone(normalized_market),
+        )
+
+    def save_eps(self, symbol: str, df: pd.DataFrame, market: str = "tw") -> Path:
+        normalized_market = self._validate_market(market)
+        normalized_symbol = self._validate_symbol(symbol, normalized_market)
+        return self._save_eps_with_upsert(
+            self._eps_path(normalized_symbol, normalized_market),
+            normalized_symbol,
+            df,
+            timezone=self._market_timezone(normalized_market),
+        )
+
+    def load_eps(self, symbol: str, market: str = "tw") -> pd.DataFrame:
+        normalized_market = self._validate_market(market)
+        normalized_symbol = self._validate_symbol(symbol, normalized_market)
+        return self._load_eps_or_empty(
+            self._eps_path(normalized_symbol, normalized_market),
             normalized_symbol,
             timezone=self._market_timezone(normalized_market),
         )

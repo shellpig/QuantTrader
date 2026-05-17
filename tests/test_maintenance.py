@@ -42,6 +42,9 @@ class StubFetcher:
         self.dividends = dividends
         self.splits = splits if splits is not None else pd.DataFrame(columns=["date", "before_price", "after_price", "symbol"])
         self.daily_calls: list[tuple[str, str, str]] = []
+        self.per_calls: list[tuple[str, str, str]] = []
+        self.monthly_calls: list[tuple[str, str, str]] = []
+        self.eps_calls: list[tuple[str, str]] = []
 
     def fetch_daily(self, symbol: str, start: str, end: str) -> pd.DataFrame:
         self.daily_calls.append((symbol, start, end))
@@ -64,6 +67,47 @@ class StubFetcher:
 
     def fetch_splits(self, symbol: str) -> pd.DataFrame:
         return self.splits.copy(deep=True)
+
+    def fetch_per(self, symbol: str, start: str, end: str) -> pd.DataFrame:
+        self.per_calls.append((symbol, start, end))
+        return pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2026-05-16"]),
+                "per": [20.1],
+                "pbr": [4.1],
+                "dividend_yield": [2.3],
+                "symbol": [symbol],
+            }
+        )
+
+    def fetch_monthly_revenue(self, symbol: str, start: str, end: str) -> pd.DataFrame:
+        self.monthly_calls.append((symbol, start, end))
+        return pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2026-05-10"]),
+                "revenue": [300_000_000_000.0],
+                "revenue_month": [4],
+                "revenue_year": [2026],
+                "symbol": [symbol],
+            }
+        )
+
+    def fetch_eps(self, symbol: str, start_date: str = "2015-01-01") -> pd.DataFrame:
+        self.eps_calls.append((symbol, start_date))
+        return pd.DataFrame(
+            {
+                "report_date": pd.to_datetime(["2026-05-15"]),
+                "year": [2026],
+                "quarter": [1],
+                "eps": [3.2],
+                "symbol": [symbol],
+            }
+        )
+
+
+class StubFetcherP11Failure(StubFetcher):
+    def fetch_per(self, symbol: str, start: str, end: str) -> pd.DataFrame:
+        raise RuntimeError("FinMind quota exceeded")
 
 
 class YFinanceFetcher:
@@ -146,6 +190,14 @@ def test_rebuild_symbol_saves_and_updates_meta(tmp_path) -> None:
     row = meta.get_meta("2330", "daily")
     assert row is not None
     assert row["row_count"] == len(raw_saved)
+    assert not storage.load_per("2330").empty
+    assert not storage.load_monthly_revenue("2330").empty
+    assert not storage.load_dividends("2330").empty
+    assert not storage.load_eps("2330").empty
+    assert meta.get_meta("2330", "per") is not None
+    assert meta.get_meta("2330", "monthly_revenue") is not None
+    assert meta.get_meta("2330", "dividends") is not None
+    assert meta.get_meta("2330", "eps") is not None
 
 
 def test_rebuild_symbol_applies_split(tmp_path) -> None:
@@ -268,6 +320,23 @@ def test_update_daily_returns_added_rows(tmp_path) -> None:
     assert added == 2
     assert len(merged) == 4
     assert pd.to_datetime(merged["date"]).max().date() >= datetime(2024, 1, 4).date()
+
+
+def test_update_daily_tw_does_not_fail_when_p11_rebuild_errors(tmp_path) -> None:
+    existing = _make_daily("2330", "2024-01-01", 2)
+    incremental = _make_daily("2330", "2024-01-03", 2)
+    fetcher = StubFetcherP11Failure(full_daily=existing, incremental_daily=incremental, dividends=pd.DataFrame())
+    storage = ParquetStorage(data_dir=tmp_path / "data")
+    meta = DuckDBMeta(db_path=str(tmp_path / "meta.duckdb"))
+    cleaner = DataCleaner()
+    maintenance = DataMaintenance(fetcher, storage, meta, cleaner)
+
+    storage.save_daily("2330", existing)
+    added = maintenance.update_daily("2330", market="tw")
+    merged = storage.load_daily("2330")
+
+    assert added == 2
+    assert len(merged) == 4
 
 
 def test_update_daily_rebuilds_adjusted_when_no_new_rows(tmp_path) -> None:

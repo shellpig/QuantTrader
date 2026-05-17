@@ -62,6 +62,11 @@ export const PATTERN_DETAILS: Record<string, string> = {
 
 export const P11_TOOLTIP_TEXT = {
   pe_ratio: "本益比（P/E）= 股價 / 每股盈餘，用來衡量市場對獲利的定價水位。",
+  pbr: "股價淨值比（P/B）= 股價 / 每股淨值，用來觀察股價相對帳面價值的估值區間。",
+  per_abbr: "PER 為 Price-to-Earnings Ratio（本益比）縮寫。",
+  ttm_pe: "TTM 本益比使用近四季 EPS（Trailing Twelve Months）加總作分母。",
+  eps: "EPS 為每股盈餘（Earnings Per Share）縮寫。",
+  vwap: "VWAP 為成交量加權平均價（Volume Weighted Average Price）縮寫。",
   monthly_revenue: "月營收顯示公司每月營業收入，常用來觀察景氣循環與營運動能。",
   historical_dividend_pe:
     "歷史除息本益比以歷史本益比區間對照除息日，用於觀察估值與殖利率關係。",

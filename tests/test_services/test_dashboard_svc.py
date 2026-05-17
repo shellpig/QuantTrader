@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import threading
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -12,6 +13,10 @@ from src.services.dashboard_service import (
     DashboardError,
     DashboardPayload,
     build_dashboard_payload,
+    get_dividend_history_with_pe,
+    get_industry_per_table,
+    get_monthly_revenue,
+    get_valuation,
     _normalize_daily_df,
     _prepare_daily_data,
 )
@@ -224,3 +229,131 @@ def test_dashboard_error_has_code_and_message() -> None:
     err = DashboardError(code="CUSTOM_CODE", message="custom message")
     assert err.code == "CUSTOM_CODE"
     assert err.message == "custom message"
+
+
+def test_get_valuation_returns_latest_per_row() -> None:
+    per_df = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2026-05-15", "2026-05-16"]),
+            "per": [20.1, 20.5],
+            "pbr": [4.0, 4.1],
+            "dividend_yield": [2.2, 2.3],
+            "symbol": ["2330", "2330"],
+        }
+    )
+    stock_info_df = pd.DataFrame({"symbol": ["2330"], "name": ["台積電"], "industry": ["半導體"]})
+
+    with patch("src.services.dashboard_service.ParquetStorage") as mock_storage_cls, patch(
+        "src.services.dashboard_service._load_stock_info_table"
+    ) as mock_stock_info:
+        mock_storage = MagicMock()
+        mock_storage.load_per.return_value = per_df
+        mock_storage_cls.return_value = mock_storage
+        mock_stock_info.return_value = stock_info_df
+
+        data = get_valuation("2330", market="tw")
+        assert data["per"] == pytest.approx(20.5)
+        assert data["industry"] == "半導體"
+
+
+def test_get_monthly_revenue_calculates_yoy_and_mom() -> None:
+    dates = pd.date_range("2025-01-10", periods=14, freq="MS")
+    revenue = [100.0 + i for i in range(14)]
+    df = pd.DataFrame(
+        {
+            "date": dates,
+            "revenue": revenue,
+            "revenue_month": [d.month for d in dates],
+            "revenue_year": [d.year for d in dates],
+            "symbol": ["2330"] * len(dates),
+        }
+    )
+
+    with patch("src.services.dashboard_service.ParquetStorage") as mock_storage_cls:
+        mock_storage = MagicMock()
+        mock_storage.load_monthly_revenue.return_value = df
+        mock_storage_cls.return_value = mock_storage
+
+        data = get_monthly_revenue("2330", months=12, market="tw")
+        assert len(data["items"]) == 12
+        assert data["items"][-1]["mom"] is not None
+        assert data["items"][-1]["yoy"] is not None
+
+
+def test_get_dividend_history_with_pe_uses_latest_announced_4q() -> None:
+    dividends_df = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2026-06-15"]),
+            "cash_dividend": [3.5],
+            "stock_dividend": [0.0],
+            "symbol": ["2330"],
+        }
+    )
+    daily_df = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2026-06-15"]),
+            "open": [100.0],
+            "high": [101.0],
+            "low": [99.0],
+            "close": [100.0],
+            "volume": [1000],
+            "symbol": ["2330"],
+        }
+    )
+    eps_df = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2025-05-15", "2025-08-14", "2025-11-14", "2026-03-15"]),
+            "year": [2025, 2025, 2025, 2026],
+            "quarter": [1, 2, 3, 4],
+            "eps": [2.0, 2.0, 2.0, 2.0],
+            "symbol": ["2330"] * 4,
+            "report_date": pd.to_datetime(["2025-05-15", "2025-08-14", "2025-11-14", "2026-03-15"]),
+        }
+    )
+
+    with patch("src.services.dashboard_service.ParquetStorage") as mock_storage_cls:
+        mock_storage = MagicMock()
+        mock_storage.load_dividends.return_value = dividends_df
+        mock_storage.load_daily.return_value = daily_df
+        mock_storage.load_eps.return_value = eps_df
+        mock_storage_cls.return_value = mock_storage
+
+        data = get_dividend_history_with_pe("2330", count=5, market="tw")
+        assert len(data["items"]) == 1
+        assert data["items"][0]["ttm_pe"] == pytest.approx(12.5)
+
+
+def test_get_industry_per_table_uses_cache_hit(tmp_path) -> None:
+    cache_dir = tmp_path / "cache" / "industry_per"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_file = cache_dir / "semi_2026-05-17.parquet"
+    pd.DataFrame(
+        [
+            {"symbol": "2330", "name": "台積電", "date": "2026-05-17T00:00:00+08:00", "per": 20.0, "pbr": 4.0, "dividend_yield": 2.0},
+            {"symbol": "2303", "name": "聯電", "date": "2026-05-17T00:00:00+08:00", "per": 16.0, "pbr": 2.5, "dividend_yield": 3.0},
+        ]
+    ).to_parquet(cache_file, index=False)
+    info = pd.DataFrame(
+        {
+            "symbol": ["2330", "2303"],
+            "name": ["台積電", "聯電"],
+            "industry": ["Semi", "Semi"],
+        }
+    )
+
+    with patch("src.services.dashboard_service._load_stock_info_table") as mock_info, patch(
+        "src.services.dashboard_service._industry_cache_path"
+    ) as mock_cache_path, patch("src.services.dashboard_service._get_industry_lock") as mock_lock:
+        mock_info.return_value = info
+        mock_cache_path.return_value = cache_file
+        mock_lock.return_value = threading.Lock()
+        data = get_industry_per_table("2330", market="tw")
+
+        assert data["industry"] == "Semi"
+        assert data["median"] == pytest.approx(18.0)
+        assert data["mean"] == pytest.approx(18.0)
+        assert data["count"] == 2
+        assert data["cached_at"] is not None
+        assert len(data["items"]) == 2
+        current_rows = [row for row in data["items"] if row["symbol"] == "2330"]
+        assert current_rows and current_rows[0]["is_current"] is True

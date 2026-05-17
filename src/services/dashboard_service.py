@@ -6,8 +6,12 @@ No Streamlit calls are made here.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
+import re
+import threading
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -24,7 +28,7 @@ from src.analysis.pattern import (
     detect_chart_pattern,
 )
 from src.analysis.technical_summary import TechnicalSummary, generate_technical_summary
-from src.core.config import get_config
+from src.core.config import get_config, get_data_dir
 from src.core.exceptions import AICallError, AIDisabledError
 from src.core.market import get_market_spec, normalize_market
 from src.data.cleaner import DataCleaner
@@ -37,6 +41,9 @@ from src.data.fetcher import (
 from src.data.maintenance import DataMaintenance
 from src.data.realtime import BidAskStructure, RealtimeFetcher, RealtimeQuote
 from src.data.storage import DuckDBMeta, ParquetStorage
+
+_INDUSTRY_LOCK_REGISTRY: dict[str, threading.Lock] = {}
+_INDUSTRY_LOCK_REGISTRY_GUARD = threading.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -183,9 +190,401 @@ def build_dashboard_payload(
     )
 
 
+def get_valuation(symbol: str, market: str = "tw") -> dict[str, Any]:
+    normalized_market = normalize_market(market)
+    if normalized_market != "tw":
+        raise NotImplementedError("US not supported in P11.")
+
+    storage = ParquetStorage()
+    per_df = storage.load_per(symbol, market=normalized_market)
+    if per_df.empty:
+        return {
+            "symbol": symbol,
+            "market": normalized_market,
+            "date": None,
+            "per": None,
+            "pbr": None,
+            "dividend_yield": None,
+            "industry": None,
+        }
+
+    latest = per_df.sort_values("date").iloc[-1]
+    industry = _lookup_symbol_industry(symbol=symbol)
+    return {
+        "symbol": symbol,
+        "market": normalized_market,
+        "date": _to_iso_ts(latest.get("date")),
+        "per": _to_float_or_none(latest.get("per")),
+        "pbr": _to_float_or_none(latest.get("pbr")),
+        "dividend_yield": _to_float_or_none(latest.get("dividend_yield")),
+        "industry": industry,
+    }
+
+
+def get_monthly_revenue(symbol: str, months: int = 12, market: str = "tw") -> dict[str, Any]:
+    normalized_market = normalize_market(market)
+    if normalized_market != "tw":
+        raise NotImplementedError("US not supported in P11.")
+
+    storage = ParquetStorage()
+    revenue_df = storage.load_monthly_revenue(symbol, market=normalized_market)
+    if revenue_df.empty:
+        return {
+            "symbol": symbol,
+            "market": normalized_market,
+            "latest_month": None,
+            "latest_revenue": None,
+            "items": [],
+        }
+
+    out = revenue_df.sort_values(["revenue_year", "revenue_month"]).reset_index(drop=True).copy()
+    out["yoy"] = out["revenue"].pct_change(12) * 100
+    out["mom"] = out["revenue"].pct_change(1) * 100
+
+    window = out.tail(max(1, int(months)))
+    latest = window.iloc[-1]
+    items = [
+        {
+            "date": _to_iso_ts(row["date"]),
+            "revenue": _to_float_or_none(row["revenue"]),
+            "revenue_year": int(row["revenue_year"]),
+            "revenue_month": int(row["revenue_month"]),
+            "yoy": _to_float_or_none(row.get("yoy")),
+            "mom": _to_float_or_none(row.get("mom")),
+        }
+        for _, row in window.iterrows()
+    ]
+    return {
+        "symbol": symbol,
+        "market": normalized_market,
+        "latest_month": f"{int(latest['revenue_year']):04d}-{int(latest['revenue_month']):02d}",
+        "latest_revenue": _to_float_or_none(latest.get("revenue")),
+        "items": items,
+    }
+
+
+def get_dividend_history_with_pe(symbol: str, count: int = 5, market: str = "tw") -> dict[str, Any]:
+    normalized_market = normalize_market(market)
+    if normalized_market != "tw":
+        raise NotImplementedError("US not supported in P11.")
+
+    storage = ParquetStorage()
+    dividends_df = storage.load_dividends(symbol, market=normalized_market)
+    daily_df = storage.load_daily(symbol, market=normalized_market)
+    eps_df = storage.load_eps(symbol, market=normalized_market)
+
+    if dividends_df.empty:
+        return {"symbol": symbol, "market": normalized_market, "items": []}
+
+    work = dividends_df.copy()
+    work["date"] = pd.to_datetime(work["date"], errors="coerce")
+    work["cash_dividend"] = pd.to_numeric(work["cash_dividend"], errors="coerce").fillna(0.0)
+    work = work.dropna(subset=["date"]).sort_values("date", ascending=False)
+    work = work[work["cash_dividend"] > 0].head(max(1, int(count)))
+
+    daily = daily_df.copy()
+    if not daily.empty:
+        daily["date"] = pd.to_datetime(daily["date"], errors="coerce")
+        daily["close"] = pd.to_numeric(daily["close"], errors="coerce")
+        daily = daily.dropna(subset=["date", "close"]).copy()
+        daily["date_key"] = daily["date"].dt.strftime("%Y-%m-%d")
+    eps = eps_df.copy()
+    if not eps.empty:
+        if "date" not in eps.columns and "report_date" in eps.columns:
+            eps["date"] = eps["report_date"]
+        eps["date"] = pd.to_datetime(eps["date"], errors="coerce")
+        eps["eps"] = pd.to_numeric(eps["eps"], errors="coerce")
+        eps = eps.dropna(subset=["date", "eps"]).sort_values("date").copy()
+
+    items: list[dict[str, Any]] = []
+    for _, row in work.iterrows():
+        dividend_date = pd.to_datetime(row["date"], errors="coerce")
+        if pd.isna(dividend_date):
+            continue
+        date_key = dividend_date.strftime("%Y-%m-%d")
+
+        close_value: float | None = None
+        if not daily.empty:
+            same_day = daily[daily["date_key"] == date_key]
+            if not same_day.empty:
+                close_value = _to_float_or_none(same_day.iloc[-1].get("close"))
+
+        ttm_pe: float | None = None
+        if close_value is not None and not eps.empty:
+            candidates = eps[eps["date"] <= dividend_date].tail(4)
+            if len(candidates) == 4:
+                ttm_eps = float(candidates["eps"].sum())
+                if ttm_eps > 0:
+                    ttm_pe = close_value / ttm_eps
+
+        items.append(
+            {
+                "date": date_key,
+                "cash_dividend": _to_float_or_none(row.get("cash_dividend")),
+                "ttm_pe": _to_float_or_none(ttm_pe),
+            }
+        )
+
+    return {"symbol": symbol, "market": normalized_market, "items": items}
+
+
+def get_industry_per_table(symbol: str, market: str = "tw") -> dict[str, Any]:
+    normalized_market = normalize_market(market)
+    if normalized_market != "tw":
+        raise NotImplementedError("US not supported in P11.")
+
+    info = _load_stock_info_table()
+    if info.empty:
+        return {
+            "symbol": symbol,
+            "market": normalized_market,
+            "industry": None,
+            "median": None,
+            "mean": None,
+            "count": 0,
+            "items": [],
+            "cached_at": None,
+        }
+
+    target = info[info["symbol"] == symbol]
+    if target.empty:
+        return {
+            "symbol": symbol,
+            "market": normalized_market,
+            "industry": None,
+            "median": None,
+            "mean": None,
+            "count": 0,
+            "items": [],
+            "cached_at": None,
+        }
+
+    industry = str(target.iloc[0].get("industry", "")).strip() or None
+    if not industry:
+        return {
+            "symbol": symbol,
+            "market": normalized_market,
+            "industry": None,
+            "median": None,
+            "mean": None,
+            "count": 0,
+            "items": [],
+            "cached_at": None,
+        }
+
+    peers = info[info["industry"] == industry].copy()
+    peers = peers.drop_duplicates(subset=["symbol"], keep="first")
+    peers = peers[peers["symbol"].astype(str).str.strip() != ""]
+
+    cache_path = _industry_cache_path(industry=industry)
+    lock = _get_industry_lock(industry)
+    with lock:
+        if cache_path.exists():
+            cached = pd.read_parquet(cache_path)
+            cached_at = datetime.fromtimestamp(cache_path.stat().st_mtime, tz=ZoneInfo("Asia/Taipei")).isoformat()
+            return _build_industry_per_payload(
+                symbol=symbol,
+                market=normalized_market,
+                industry=industry,
+                df=cached,
+                cached_at=cached_at,
+            )
+
+        peer_rows = peers[["symbol", "name"]].to_dict(orient="records")
+        rows: list[dict[str, Any]] = []
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            futures = {
+                executor.submit(_fetch_peer_per_row, row["symbol"], row.get("name", "")): row["symbol"]
+                for row in peer_rows
+            }
+            for future in as_completed(futures):
+                rows.append(future.result())
+
+        df = pd.DataFrame(rows)
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        df.to_parquet(cache_path, index=False)
+        cached_at = datetime.now(ZoneInfo("Asia/Taipei")).isoformat()
+        return _build_industry_per_payload(
+            symbol=symbol,
+            market=normalized_market,
+            industry=industry,
+            df=df,
+            cached_at=cached_at,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers — these are pure Python, no st.* calls
 # ---------------------------------------------------------------------------
+
+
+def _to_iso_ts(value: Any) -> str | None:
+    ts = pd.to_datetime(value, errors="coerce")
+    if pd.isna(ts):
+        return None
+    if ts.tzinfo is None:
+        ts = ts.tz_localize("Asia/Taipei")
+    return ts.isoformat()
+
+
+def _to_float_or_none(value: Any) -> float | None:
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return None
+    if pd.isna(num):
+        return None
+    return num
+
+
+def _load_stock_info_table() -> pd.DataFrame:
+    cache_path = get_data_dir() / "stock_info_tw.parquet"
+    if cache_path.exists():
+        try:
+            cached = pd.read_parquet(cache_path)
+            if {"symbol", "name", "industry"}.issubset(cached.columns):
+                out = cached[["symbol", "name", "industry"]].copy()
+                out["symbol"] = out["symbol"].astype(str).str.strip()
+                out["name"] = out["name"].fillna("").astype(str).str.strip()
+                out["industry"] = out["industry"].fillna("").astype(str).str.strip()
+                return out[out["symbol"] != ""].drop_duplicates(subset=["symbol"], keep="first")
+        except Exception:  # noqa: BLE001
+            pass
+
+    try:
+        fetcher = FinMindFetcher()
+        info = fetcher.fetch_stock_info()
+    except Exception:  # noqa: BLE001
+        return pd.DataFrame(columns=["symbol", "name", "industry"])
+
+    if info.empty:
+        return pd.DataFrame(columns=["symbol", "name", "industry"])
+
+    out = info.copy()
+    for col in ("symbol", "name", "industry"):
+        if col not in out.columns:
+            out[col] = ""
+        out[col] = out[col].fillna("").astype(str).str.strip()
+    out = out[out["symbol"] != ""].drop_duplicates(subset=["symbol"], keep="first")
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    out[["symbol", "name", "industry"]].to_parquet(cache_path, index=False)
+    return out[["symbol", "name", "industry"]]
+
+
+def _lookup_symbol_industry(symbol: str) -> str | None:
+    info = _load_stock_info_table()
+    if info.empty:
+        return None
+    row = info[info["symbol"] == symbol]
+    if row.empty:
+        return None
+    value = str(row.iloc[0].get("industry", "")).strip()
+    return value or None
+
+
+def _slugify(value: str) -> str:
+    slug = re.sub(r"[^\w\-]+", "_", value.strip().lower())
+    slug = re.sub(r"_+", "_", slug).strip("_")
+    return slug or "unknown"
+
+
+def _industry_cache_path(industry: str) -> Path:
+    today = datetime.now(ZoneInfo("Asia/Taipei")).strftime("%Y-%m-%d")
+    slug = _slugify(industry)
+    return get_data_dir() / "cache" / "industry_per" / f"{slug}_{today}.parquet"
+
+
+def _get_industry_lock(industry: str) -> threading.Lock:
+    key = _slugify(industry)
+    with _INDUSTRY_LOCK_REGISTRY_GUARD:
+        lock = _INDUSTRY_LOCK_REGISTRY.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _INDUSTRY_LOCK_REGISTRY[key] = lock
+    return lock
+
+
+def _fetch_peer_per_row(symbol: str, name: str) -> dict[str, Any]:
+    try:
+        fetcher = FinMindFetcher()
+        end = datetime.now(ZoneInfo("Asia/Taipei")).strftime("%Y-%m-%d")
+        start = "2015-01-01"
+        per_df = fetcher.fetch_per(symbol=symbol, start=start, end=end)
+        if per_df.empty:
+            return {
+                "symbol": symbol,
+                "name": name,
+                "date": None,
+                "per": None,
+                "pbr": None,
+                "dividend_yield": None,
+            }
+        latest = per_df.sort_values("date").iloc[-1]
+        return {
+            "symbol": symbol,
+            "name": name,
+            "date": _to_iso_ts(latest.get("date")),
+            "per": _to_float_or_none(latest.get("per")),
+            "pbr": _to_float_or_none(latest.get("pbr")),
+            "dividend_yield": _to_float_or_none(latest.get("dividend_yield")),
+        }
+    except Exception:  # noqa: BLE001
+        return {
+            "symbol": symbol,
+            "name": name,
+            "date": None,
+            "per": None,
+            "pbr": None,
+            "dividend_yield": None,
+        }
+
+
+def _build_industry_per_payload(
+    symbol: str,
+    market: str,
+    industry: str,
+    df: pd.DataFrame,
+    cached_at: str | None,
+) -> dict[str, Any]:
+    work = df.copy()
+    for col in ("symbol", "name", "date", "per", "pbr", "dividend_yield"):
+        if col not in work.columns:
+            work[col] = None
+    work["symbol"] = work["symbol"].astype(str)
+    work["name"] = work["name"].fillna("").astype(str)
+    work["per"] = pd.to_numeric(work["per"], errors="coerce")
+    work["pbr"] = pd.to_numeric(work["pbr"], errors="coerce")
+    work["dividend_yield"] = pd.to_numeric(work["dividend_yield"], errors="coerce")
+
+    valid_per = work["per"].dropna()
+    median_value = float(valid_per.median()) if not valid_per.empty else None
+    mean_value = float(valid_per.mean()) if not valid_per.empty else None
+
+    items = []
+    for _, row in work.iterrows():
+        row_symbol = str(row.get("symbol", "")).strip()
+        items.append(
+            {
+                "symbol": row_symbol,
+                "name": str(row.get("name", "")).strip(),
+                "date": row.get("date"),
+                "per": _to_float_or_none(row.get("per")),
+                "pbr": _to_float_or_none(row.get("pbr")),
+                "dividend_yield": _to_float_or_none(row.get("dividend_yield")),
+                "is_current": row_symbol == symbol,
+            }
+        )
+
+    return {
+        "symbol": symbol,
+        "market": market,
+        "industry": industry,
+        "median": median_value,
+        "mean": mean_value,
+        "count": int(len(items)),
+        "items": items,
+        "cached_at": cached_at,
+    }
 
 
 def _prepare_daily_data(

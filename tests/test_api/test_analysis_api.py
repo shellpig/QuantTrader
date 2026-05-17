@@ -175,6 +175,63 @@ def test_analysis_section_technical(mock_build) -> None:
     assert resp.json()["data"]["trend_direction"] == "多頭趨勢"
 
 
+@patch("api.routers.analysis.get_valuation")
+def test_p11_valuation_endpoint_hits_handler(mock_get_valuation) -> None:
+    mock_get_valuation.return_value = {"symbol": "2330", "market": "tw", "per": 20.5}
+    resp = client.get("/api/analysis/p11/valuation", params={"symbol": "2330", "market": "tw"})
+    assert resp.status_code == 200
+    assert resp.json()["data"]["per"] == 20.5
+
+
+@patch("api.routers.analysis.get_monthly_revenue")
+def test_p11_monthly_revenue_endpoint_returns_items(mock_get_monthly) -> None:
+    mock_get_monthly.return_value = {"symbol": "2330", "market": "tw", "items": [{"revenue": 1.0}]}
+    resp = client.get("/api/analysis/p11/monthly-revenue", params={"symbol": "2330", "market": "tw"})
+    assert resp.status_code == 200
+    assert isinstance(resp.json()["data"]["items"], list)
+
+
+@patch("api.routers.analysis.get_dividend_history_with_pe")
+def test_p11_dividend_history_endpoint_returns_items(mock_get_dividend) -> None:
+    mock_get_dividend.return_value = {"symbol": "2330", "market": "tw", "items": [{"date": "2026-06-15"}]}
+    resp = client.get("/api/analysis/p11/dividend-history", params={"symbol": "2330", "market": "tw"})
+    assert resp.status_code == 200
+    assert resp.json()["data"]["items"][0]["date"] == "2026-06-15"
+
+
+@patch("api.routers.analysis.get_industry_per_table")
+def test_p11_industry_per_endpoint_returns_payload(mock_get_industry) -> None:
+    mock_get_industry.return_value = {
+        "symbol": "2330",
+        "market": "tw",
+        "industry": "Semi",
+        "median": 18.0,
+        "mean": 19.0,
+        "count": 2,
+        "items": [],
+        "cached_at": "2026-05-17T00:00:00+08:00",
+    }
+    resp = client.get("/api/analysis/p11/industry-per", params={"symbol": "2330", "market": "tw"})
+    assert resp.status_code == 200
+    assert resp.json()["data"]["industry"] == "Semi"
+
+
+@patch("api.routers.analysis.get_valuation")
+def test_p11_us_market_returns_501(mock_get_valuation) -> None:
+    mock_get_valuation.side_effect = NotImplementedError("US not supported in P11.")
+    resp = client.get("/api/analysis/p11/valuation", params={"symbol": "AAPL", "market": "us"})
+    assert resp.status_code == 501
+    assert resp.json()["detail"]["error"]["code"] == "P11_US_UNSUPPORTED"
+
+
+@patch("api.routers.analysis.build_dashboard_payload")
+def test_analysis_p11foo_still_hits_unknown_section(mock_build) -> None:
+    mock_build.return_value = _sample_payload(market="tw")
+    resp = client.get("/api/analysis/p11foo", params={"symbol": "2330", "market": "tw"})
+    assert resp.status_code == 404
+    assert resp.json()["detail"]["error"]["code"] == "UNKNOWN_SECTION"
+
+
 @patch("api.routers.realtime.build_dashboard_payload")
 def test_realtime_tw_endpoint(mock_build) -> None:
     mock_build.return_value = _sample_payload(market="tw")

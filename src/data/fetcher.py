@@ -13,8 +13,12 @@ import yfinance as yf
 
 from src.core.config import get_config
 from src.core.constants import (
+    DIVIDENDS_COLUMNS,
+    EPS_COLUMNS,
     INSTITUTIONAL_COLUMNS,
     MARGIN_COLUMNS,
+    MONTHLY_REVENUE_COLUMNS,
+    PER_COLUMNS,
     SPLITS_COLUMNS,
     STANDARD_COLUMNS,
     TAIPEI_TZ,
@@ -45,7 +49,7 @@ def _empty_dividends_dataframe() -> pd.DataFrame:
             "stock_dividend": pd.Series(dtype="float64"),
             "symbol": pd.Series(dtype="object"),
         }
-    )[["date", "cash_dividend", "stock_dividend", "symbol"]]
+    )[DIVIDENDS_COLUMNS]
 
 
 def _empty_splits_dataframe() -> pd.DataFrame:
@@ -62,13 +66,38 @@ def _empty_splits_dataframe() -> pd.DataFrame:
 def _empty_eps_dataframe() -> pd.DataFrame:
     return pd.DataFrame(
         {
+            "date": pd.Series(dtype=f"datetime64[ns, {TAIPEI_TZ}]"),
             "year": pd.Series(dtype="int64"),
             "quarter": pd.Series(dtype="int64"),
             "eps": pd.Series(dtype="float64"),
             "symbol": pd.Series(dtype="object"),
             "report_date": pd.Series(dtype=f"datetime64[ns, {TAIPEI_TZ}]"),
         }
-    )[["year", "quarter", "eps", "symbol", "report_date"]]
+    )[[*EPS_COLUMNS, "report_date"]]
+
+
+def _empty_per_dataframe() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "date": pd.Series(dtype=f"datetime64[ns, {TAIPEI_TZ}]"),
+            "per": pd.Series(dtype="float64"),
+            "pbr": pd.Series(dtype="float64"),
+            "dividend_yield": pd.Series(dtype="float64"),
+            "symbol": pd.Series(dtype="object"),
+        }
+    )[PER_COLUMNS]
+
+
+def _empty_monthly_revenue_dataframe() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "date": pd.Series(dtype=f"datetime64[ns, {TAIPEI_TZ}]"),
+            "revenue": pd.Series(dtype="float64"),
+            "revenue_month": pd.Series(dtype="int64"),
+            "revenue_year": pd.Series(dtype="int64"),
+            "symbol": pd.Series(dtype="object"),
+        }
+    )[MONTHLY_REVENUE_COLUMNS]
 
 
 def _empty_institutional_dataframe() -> pd.DataFrame:
@@ -225,6 +254,14 @@ class IDataFetcher(ABC):
     def fetch_minute(self, symbol: str, start: str, end: str, freq: str = "1") -> pd.DataFrame:
         """Fetch minute bars."""
 
+    @abstractmethod
+    def fetch_per(self, symbol: str, start: str, end: str) -> pd.DataFrame:
+        """Fetch PER/PBR/dividend-yield time series."""
+
+    @abstractmethod
+    def fetch_monthly_revenue(self, symbol: str, start: str, end: str) -> pd.DataFrame:
+        """Fetch monthly revenue time series."""
+
 
 class FinMindFetcher(IDataFetcher):
     """FinMind data source fetcher."""
@@ -280,6 +317,28 @@ class FinMindFetcher(IDataFetcher):
             }
         )
         return self._normalize_finmind(raw, symbol=symbol)
+
+    def fetch_per(self, symbol: str, start: str, end: str) -> pd.DataFrame:
+        raw = self._request_data(
+            {
+                "dataset": "TaiwanStockPER",
+                "data_id": symbol,
+                "start_date": start,
+                "end_date": end,
+            }
+        )
+        return self._normalize_per(raw, symbol=symbol)
+
+    def fetch_monthly_revenue(self, symbol: str, start: str, end: str) -> pd.DataFrame:
+        raw = self._request_data(
+            {
+                "dataset": "TaiwanStockMonthRevenue",
+                "data_id": symbol,
+                "start_date": start,
+                "end_date": end,
+            }
+        )
+        return self._normalize_monthly_revenue(raw, symbol=symbol)
 
     def fetch_stock_info(self) -> pd.DataFrame:
         """Fetch Taiwan stock metadata for UI symbol lookup."""
@@ -518,7 +577,7 @@ class FinMindFetcher(IDataFetcher):
         normalized = localize_to_taipei(normalized, col="date")
         normalized["cash_dividend"] = normalized["cash_dividend"].astype("float64")
         normalized["stock_dividend"] = normalized["stock_dividend"].astype("float64")
-        normalized = normalized[["date", "cash_dividend", "stock_dividend", "symbol"]]
+        normalized = normalized[DIVIDENDS_COLUMNS]
         normalized = normalized.sort_values("date").drop_duplicates(subset=["date", "symbol"], keep="last").reset_index(drop=True)
         return normalized
 
@@ -579,6 +638,7 @@ class FinMindFetcher(IDataFetcher):
 
         normalized = pd.DataFrame(
             {
+                "date": report_date,
                 "year": year,
                 "quarter": quarter,
                 "eps": eps,
@@ -604,7 +664,72 @@ class FinMindFetcher(IDataFetcher):
         )
         normalized = normalized.drop_duplicates(subset=["year", "quarter", "symbol"], keep="first")
         normalized = normalized.sort_values(["year", "quarter"]).reset_index(drop=True)
-        return normalized[["year", "quarter", "eps", "symbol", "report_date"]]
+        return normalized[[*EPS_COLUMNS, "report_date"]]
+
+    def _normalize_per(self, raw: pd.DataFrame, symbol: str) -> pd.DataFrame:
+        if raw.empty:
+            return _empty_per_dataframe()
+
+        out = raw.copy()
+        for col in ("date", "stock_id", "PER", "PBR", "dividend_yield"):
+            if col not in out.columns:
+                out[col] = pd.NA
+
+        normalized = pd.DataFrame(
+            {
+                "date": out["date"],
+                "per": pd.to_numeric(out["PER"], errors="coerce"),
+                "pbr": pd.to_numeric(out["PBR"], errors="coerce"),
+                "dividend_yield": pd.to_numeric(out["dividend_yield"], errors="coerce"),
+                "symbol": out["stock_id"].fillna(symbol).astype(str),
+            }
+        )
+        normalized["date"] = pd.to_datetime(normalized["date"], errors="coerce")
+        normalized = normalized.dropna(subset=["date"]).copy()
+        if normalized.empty:
+            return _empty_per_dataframe()
+
+        normalized = localize_to_taipei(normalized, col="date")
+        normalized["per"] = normalized["per"].astype("float64")
+        normalized["pbr"] = normalized["pbr"].astype("float64")
+        normalized["dividend_yield"] = normalized["dividend_yield"].astype("float64")
+        normalized = normalized[PER_COLUMNS]
+        normalized = normalized.sort_values("date").drop_duplicates(subset=["date", "symbol"], keep="last").reset_index(drop=True)
+        return normalized
+
+    def _normalize_monthly_revenue(self, raw: pd.DataFrame, symbol: str) -> pd.DataFrame:
+        if raw.empty:
+            return _empty_monthly_revenue_dataframe()
+
+        out = raw.copy()
+        for col in ("date", "stock_id", "revenue", "revenue_month", "revenue_year"):
+            if col not in out.columns:
+                out[col] = pd.NA
+
+        normalized = pd.DataFrame(
+            {
+                "date": out["date"],
+                "revenue": pd.to_numeric(out["revenue"], errors="coerce"),
+                "revenue_month": pd.to_numeric(out["revenue_month"], errors="coerce"),
+                "revenue_year": pd.to_numeric(out["revenue_year"], errors="coerce"),
+                "symbol": out["stock_id"].fillna(symbol).astype(str),
+            }
+        )
+        normalized["date"] = pd.to_datetime(normalized["date"], errors="coerce")
+        normalized = normalized.dropna(subset=["date"]).copy()
+        if normalized.empty:
+            return _empty_monthly_revenue_dataframe()
+
+        normalized = localize_to_taipei(normalized, col="date")
+        normalized["revenue"] = normalized["revenue"].astype("float64")
+        normalized = normalized.dropna(subset=["revenue_month", "revenue_year"]).copy()
+        if normalized.empty:
+            return _empty_monthly_revenue_dataframe()
+        normalized["revenue_month"] = normalized["revenue_month"].astype("int64")
+        normalized["revenue_year"] = normalized["revenue_year"].astype("int64")
+        normalized = normalized[MONTHLY_REVENUE_COLUMNS]
+        normalized = normalized.sort_values("date").drop_duplicates(subset=["date", "symbol"], keep="last").reset_index(drop=True)
+        return normalized
 
     def _normalize_splits(self, raw: pd.DataFrame, symbol: str) -> pd.DataFrame:
         if raw.empty:
@@ -843,6 +968,12 @@ class YFinanceFetcher(IDataFetcher):
             return self._normalize_yfinance(raw, symbol=normalized_symbol)
         except ValueError:
             raise
+
+    def fetch_per(self, symbol: str, start: str, end: str) -> pd.DataFrame:
+        raise NotImplementedError("US not supported in P11.")
+
+    def fetch_monthly_revenue(self, symbol: str, start: str, end: str) -> pd.DataFrame:
+        raise NotImplementedError("US not supported in P11.")
 
     def _download_ohlcv(
         self,

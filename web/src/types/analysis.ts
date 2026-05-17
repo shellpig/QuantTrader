@@ -176,3 +176,63 @@ export interface ApiError {
     message: string;
   };
 }
+
+export interface P11ValuationResponse {
+  symbol: string;
+  market: Market;
+  date: string | null;
+  per: number | null;
+  pbr: number | null;
+  dividend_yield: number | null;
+  industry: string | null;
+}
+
+export interface P11MonthlyRevenueItem {
+  date: string;
+  revenue: number | null;
+  revenue_year: number;
+  revenue_month: number;
+  yoy: number | null;
+  mom: number | null;
+}
+
+export interface P11MonthlyRevenueResponse {
+  symbol: string;
+  market: Market;
+  latest_month: string | null;
+  latest_revenue: number | null;
+  items: P11MonthlyRevenueItem[];
+}
+
+export interface P11DividendHistoryItem {
+  date: string;
+  cash_dividend: number | null;
+  ttm_pe: number | null;
+}
+
+export interface P11DividendHistoryResponse {
+  symbol: string;
+  market: Market;
+  items: P11DividendHistoryItem[];
+}
+
+export interface P11IndustryPerItem {
+  symbol: string;
+  name: string;
+  date: string | null;
+  per: number | null;
+  pbr: number | null;
+  dividend_yield: number | null;
+  is_current: boolean;
+}
+
+export interface P11IndustryPerResponse {
+  symbol: string;
+  market: Market;
+  industry: string | null;
+  median: number | null;
+  mean: number | null;
+  count: number;
+  items: P11IndustryPerItem[];
+  cached_at: string | null;
+}

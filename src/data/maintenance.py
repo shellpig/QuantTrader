@@ -37,6 +37,43 @@ def _empty_splits() -> pd.DataFrame:
     )
 
 
+def _empty_per() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "date": pd.Series(dtype="datetime64[ns]"),
+            "per": pd.Series(dtype="float64"),
+            "pbr": pd.Series(dtype="float64"),
+            "dividend_yield": pd.Series(dtype="float64"),
+            "symbol": pd.Series(dtype="object"),
+        }
+    )
+
+
+def _empty_monthly_revenue() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "date": pd.Series(dtype="datetime64[ns]"),
+            "revenue": pd.Series(dtype="float64"),
+            "revenue_month": pd.Series(dtype="int64"),
+            "revenue_year": pd.Series(dtype="int64"),
+            "symbol": pd.Series(dtype="object"),
+        }
+    )
+
+
+def _empty_eps() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "date": pd.Series(dtype="datetime64[ns]"),
+            "year": pd.Series(dtype="int64"),
+            "quarter": pd.Series(dtype="int64"),
+            "eps": pd.Series(dtype="float64"),
+            "symbol": pd.Series(dtype="object"),
+            "report_date": pd.Series(dtype="datetime64[ns]"),
+        }
+    )
+
+
 class DataMaintenance:
     """
     Data maintenance operations.
@@ -90,6 +127,8 @@ class DataMaintenance:
         self.storage.save_daily(symbol, cleaned_df, market=normalized_market)
         self._rebuild_adjusted_from_raw(symbol=symbol, raw_df=cleaned_df, market=normalized_market)
         self._update_meta(symbol=symbol, freq="daily", source=self._source_name(), df=cleaned_df, market=normalized_market)
+        if normalized_market == "tw":
+            self._rebuild_p11_datasets_best_effort(symbol=symbol, market=normalized_market)
         return report
 
     def rebuild_adj_factors(self, symbol: str, market: str = "tw") -> None:
@@ -187,6 +226,8 @@ class DataMaintenance:
         merged = self.storage.load_daily(symbol, market=normalized_market)
         self._rebuild_adjusted_from_raw(symbol=symbol, raw_df=merged, market=normalized_market)
         self._update_meta(symbol=symbol, freq="daily", source=self._source_name(), df=merged, market=normalized_market)
+        if normalized_market == "tw":
+            self._rebuild_p11_datasets_best_effort(symbol=symbol, market=normalized_market)
         return max(0, len(merged) - before_count)
 
     def _rebuild_adjusted_from_raw(self, symbol: str, raw_df: pd.DataFrame, market: str) -> None:
@@ -212,6 +253,85 @@ class DataMaintenance:
         if callable(method):
             return method(symbol=symbol)
         return _empty_splits()
+
+    def _fetch_per(self, symbol: str, start: str, end: str) -> pd.DataFrame:
+        method = getattr(self.fetcher, "fetch_per", None)
+        if not callable(method):
+            return _empty_per()
+        try:
+            return method(symbol=symbol, start=start, end=end)
+        except NotImplementedError:
+            return _empty_per()
+
+    def _fetch_monthly_revenue(self, symbol: str, start: str, end: str) -> pd.DataFrame:
+        method = getattr(self.fetcher, "fetch_monthly_revenue", None)
+        if not callable(method):
+            return _empty_monthly_revenue()
+        try:
+            return method(symbol=symbol, start=start, end=end)
+        except NotImplementedError:
+            return _empty_monthly_revenue()
+
+    def _fetch_eps(self, symbol: str, start_date: str) -> pd.DataFrame:
+        method = getattr(self.fetcher, "fetch_eps", None)
+        if not callable(method):
+            return _empty_eps()
+        try:
+            return method(symbol=symbol, start_date=start_date)
+        except NotImplementedError:
+            return _empty_eps()
+
+    def _rebuild_p11_datasets(self, symbol: str, market: str) -> None:
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        source = self._source_name()
+
+        per_df = self._fetch_per(symbol=symbol, start="2015-01-01", end=today)
+        self.storage.save_per(symbol, per_df, market=market)
+        self._update_meta(symbol=symbol, freq="per", source=source, df=self.storage.load_per(symbol, market=market), market=market)
+
+        monthly_df = self._fetch_monthly_revenue(symbol=symbol, start="2015-01-01", end=today)
+        self.storage.save_monthly_revenue(symbol, monthly_df, market=market)
+        self._update_meta(
+            symbol=symbol,
+            freq="monthly_revenue",
+            source=source,
+            df=self.storage.load_monthly_revenue(symbol, market=market),
+            market=market,
+        )
+
+        dividends_df = self._fetch_dividends(symbol=symbol)
+        if not dividends_df.empty:
+            dividend_dates = pd.to_datetime(dividends_df["date"], errors="coerce")
+            threshold = pd.Timestamp("2015-01-01")
+            if getattr(dividend_dates.dt, "tz", None) is not None:
+                threshold = threshold.tz_localize(dividend_dates.dt.tz)
+            dividends_df = dividends_df.loc[dividend_dates >= threshold].reset_index(drop=True)
+        self.storage.save_dividends(symbol, dividends_df, market=market)
+        self._update_meta(
+            symbol=symbol,
+            freq="dividends",
+            source=source,
+            df=self.storage.load_dividends(symbol, market=market),
+            market=market,
+        )
+
+        eps_df = self._fetch_eps(symbol=symbol, start_date="2015-01-01")
+        self.storage.save_eps(symbol, eps_df, market=market)
+        self._update_meta(
+            symbol=symbol,
+            freq="eps",
+            source=source,
+            df=self.storage.load_eps(symbol, market=market),
+            market=market,
+        )
+
+    def _rebuild_p11_datasets_best_effort(self, symbol: str, market: str) -> None:
+        # P11 datasets are additive for dashboard analytics. Failures should not
+        # block the primary daily update/rebuild pipeline.
+        try:
+            self._rebuild_p11_datasets(symbol=symbol, market=market)
+        except Exception:  # noqa: BLE001
+            return
 
     def _source_name(self) -> str:
         cls = self.fetcher.__class__.__name__.lower()

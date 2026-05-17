@@ -6,7 +6,13 @@ import pandas as pd
 import pytest
 
 from src.core.config import get_config
-from src.core.constants import STANDARD_COLUMNS, TAIPEI_TZ
+from src.core.constants import (
+    EPS_COLUMNS,
+    MONTHLY_REVENUE_COLUMNS,
+    PER_COLUMNS,
+    STANDARD_COLUMNS,
+    TAIPEI_TZ,
+)
 from src.core.market import get_market_spec
 from src.core.exceptions import FetcherError
 from src.data.fetcher import FinMindFetcher, YFinanceFetcher, localize_to_taipei
@@ -341,10 +347,91 @@ def test_finmind_fetch_eps_normalization_prefers_basic_eps() -> None:
     fetcher = FinMindFetcher(token="dummy-token", session=DummySession())
     eps_df = fetcher.fetch_eps(symbol="2330", start_date="2024-01-01")
 
-    assert eps_df.columns.tolist() == ["year", "quarter", "eps", "symbol", "report_date"]
+    assert eps_df.columns.tolist() == [*EPS_COLUMNS, "report_date"]
     assert list(zip(eps_df["year"], eps_df["quarter"], strict=True)) == [(2024, 4), (2025, 1), (2025, 2)]
     assert eps_df.loc[(eps_df["year"] == 2025) & (eps_df["quarter"] == 2), "eps"].iloc[0] == pytest.approx(1.50)
     assert TAIPEI_TZ in str(eps_df["report_date"].dtype)
+    assert TAIPEI_TZ in str(eps_df["date"].dtype)
+
+
+def test_finmind_fetch_per_normalizes_schema() -> None:
+    class DummyResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "data": [
+                    {
+                        "date": "2026-05-16",
+                        "stock_id": "2330",
+                        "PER": "20.5",
+                        "PBR": "4.1",
+                        "dividend_yield": "2.3",
+                    }
+                ]
+            }
+
+    class DummySession:
+        def get(self, *args, **kwargs) -> DummyResponse:  # noqa: ANN002, ANN003
+            return DummyResponse()
+
+    fetcher = FinMindFetcher(token="dummy-token", session=DummySession())
+    per_df = fetcher.fetch_per(symbol="2330", start="2026-01-01", end="2026-05-17")
+
+    assert per_df.columns.tolist() == PER_COLUMNS
+    assert len(per_df) == 1
+    assert per_df.loc[0, "symbol"] == "2330"
+    assert per_df.loc[0, "per"] == pytest.approx(20.5)
+    assert per_df.loc[0, "pbr"] == pytest.approx(4.1)
+    assert per_df.loc[0, "dividend_yield"] == pytest.approx(2.3)
+    assert str(per_df["date"].dtype) == f"datetime64[ns, {TAIPEI_TZ}]"
+
+
+def test_finmind_fetch_monthly_revenue_normalizes_schema() -> None:
+    class DummyResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "data": [
+                    {
+                        "date": "2026-04-10",
+                        "stock_id": "2330",
+                        "revenue": "300000000000",
+                        "revenue_month": "3",
+                        "revenue_year": "2026",
+                    }
+                ]
+            }
+
+    class DummySession:
+        def get(self, *args, **kwargs) -> DummyResponse:  # noqa: ANN002, ANN003
+            return DummyResponse()
+
+    fetcher = FinMindFetcher(token="dummy-token", session=DummySession())
+    rev_df = fetcher.fetch_monthly_revenue(symbol="2330", start="2025-01-01", end="2026-05-17")
+
+    assert rev_df.columns.tolist() == MONTHLY_REVENUE_COLUMNS
+    assert len(rev_df) == 1
+    assert rev_df.loc[0, "symbol"] == "2330"
+    assert rev_df.loc[0, "revenue"] == pytest.approx(300000000000.0)
+    assert rev_df.loc[0, "revenue_month"] == 3
+    assert rev_df.loc[0, "revenue_year"] == 2026
+    assert str(rev_df["date"].dtype) == f"datetime64[ns, {TAIPEI_TZ}]"
+
+
+def test_yfinance_fetch_per_not_supported_in_p11() -> None:
+    fetcher = YFinanceFetcher(downloader=lambda *args, **kwargs: pd.DataFrame(), market="us")
+    with pytest.raises(NotImplementedError, match="US not supported in P11."):
+        fetcher.fetch_per("AAPL", "2026-01-01", "2026-05-17")
+
+
+def test_yfinance_fetch_monthly_revenue_not_supported_in_p11() -> None:
+    fetcher = YFinanceFetcher(downloader=lambda *args, **kwargs: pd.DataFrame(), market="us")
+    with pytest.raises(NotImplementedError, match="US not supported in P11."):
+        fetcher.fetch_monthly_revenue("AAPL", "2026-01-01", "2026-05-17")
 
 
 def test_finmind_fetch_splits_normalizes_schema() -> None:

@@ -10,13 +10,13 @@
 
 台股 / 美股 US-1 量化交易研究工具（個人版），運行於 Windows 11 本機。聚焦資料管線、研究、回測與 AI 分析，不接實盤。
 
-2026-05-17 Phase 11 規格已從草案正式寫入三份文件：`量化交易系統規格書_shellpig版.md`（V3.0）、`開發設計方針.md`、`測試指南.md`。Phase 11 擴充 dashboard 個股分析頁的基本面與事件資訊，拆為 11-A 版面 placeholder、11-B 估值 / 獲利、11-C 籌碼 / 事件、11-D 待定；執行順序固定 11-A → 11-B → 11-C → 11-D。11-A 已完成並由使用者實機驗證通過。
+2026-05-17 Phase 11 規格已從草案正式寫入三份文件：`量化交易系統規格書_shellpig版.md`（V3.0）、`開發設計方針.md`、`測試指南.md`。Phase 11 擴充 dashboard 個股分析頁的基本面與事件資訊，拆為 11-A 版面 placeholder、11-B 估值 / 獲利、11-C 籌碼 / 事件、11-D 待定；執行順序固定 11-A → 11-B → 11-C → 11-D。11-A / 11-B 已完成並驗證通過。
 
 2026-05-14 Phase 10 規格已完成並寫入正式文件：前端架構從 Streamlit 遷移至 Next.js (React) + FastAPI，拆為 10-A~10-H 八個子階段。新增 `src/services/`（服務層）、`api/`（FastAPI 後端）、`web/`（Next.js 前端）。核心演算法不重寫。Phase 9-G（美股 intraday）為前置條件。
 
 - Phase 1–9 全部完成（含美股 US-1 / 9-G intraday）。
 - Phase 10 全部完成（10-A ~ 10-H-2）；舊 Streamlit UI 已移除。
-- Phase 11 規格已完成並寫入正式文件；11-A 已完成，11-B 尚未開始。
+- Phase 11 規格已完成並寫入正式文件；11-A / 11-B 已完成，11-C 尚未開始。
 - Phase 10-F-2（AI 問答接 LLM）延後，不卡主線。
 
 ## 技術棧
@@ -236,7 +236,7 @@ risk:
 | 10-H-1 | ✅ 完成 | 收尾前置補強：Playwright E2E smoke 5 spec（desktop + mobile 兩 project、共 48 case）、手機 <768px 底部 Tab Bar（`sidebar.tsx` 拆 Desktop / Mobile + `pb-14`）、`web/src/tests/lib/theme-vars.test.ts` 補 `test_themes.py` CSS 變數驗證；測試遷移檢查表 7 行全部打勾。順手 bug fix：`backtest_service.py` `load_backtest_data` tz-aware filter、`StrategyPresetSelect.tsx` API URL 加 `NEXT_PUBLIC_API_URL` 前綴、`uv.lock` 同步 0.2.0。Gate：pytest 588 passed / vitest 48 files / 307 tests / tsc 0 errors / Playwright 48 tests pass |
 | 10-H-2 | ✅ 完成 | 實際移除與全專案回歸：刪 `src/ui/`、`run_quanttrader.bat`、`pyproject.toml` streamlit 三套件、7 個 Streamlit pytest 檔；`src/ai/advisor.py` 保留（10-F-2 + dashboard analysis 仍使用）；`src/backtest/report.py` `_apply_theme` 去除 ui 依賴 |
 | 11-A | ✅ 完成 | Dashboard 版面調整：chart 高度 400px → 300px；移除 K 線圖 KD / RSI / MACD 下方副圖但保留成交量；左欄 chart 下方新增兩塊、共 6 個 dashed placeholder panel；market=us 時 P11 下方兩塊隱藏；籌碼面板買賣力道與融資 / 融券壓成單行；關鍵價位小數顯示修正；使用者實機驗證通過 |
-| 11-B | 📝 規格完成，待實作 | 估值 / 獲利區塊：本益比、股價淨值比、殖利率、月營收、歷史除息本益比、同產業本益比 Modal；新增 PER / 月營收 fetcher，補 dividends / EPS storage + `data_meta` |
+| 11-B | ✅ 完成 | 估值 / 獲利區塊：本益比、股價淨值比、殖利率、月營收、歷史除息本益比、同產業本益比 Modal；新增 PER / 月營收 fetcher，補 dividends / EPS storage + `data_meta`；P11 API namespace、service、frontend hooks / panels / Modal、同產業 PER cache + lock、US market 501 邊界與 route regression 已補 |
 | 11-C | 📝 規格完成，待實作 | 籌碼 / 事件區塊：法人持股成本、事件行事曆（除息 + 股東會）、股東會手動覆蓋 Modal；新增 TWSE / TPEx 股東會全市場資料源、獨立 metadata JSON、manual override CSV；股東會不進 `data_meta` |
 | 11-D | 📝 佔位，待定 | 散戶多空比或其他資訊，11-C 完成後再定義 |
 
@@ -244,14 +244,17 @@ risk:
 
 見 `驗證後已知問題.md`（每次必讀）。
 
-主線：**Phase 1–10 全部完成（含 10-H-2 Streamlit 完整移除 + 全專案回歸）。Phase 11 規格已正式併入三份文件，11-A 已完成，下一步是 11-B。** 10-F-2（AI 問答接 LLM）延後，不卡主線。專案已完全遷移至 Next.js + FastAPI；Streamlit 程式碼與套件已從 codebase 移除。
+主線：**Phase 1–10 全部完成（含 10-H-2 Streamlit 完整移除 + 全專案回歸）。Phase 11 規格已正式併入三份文件，11-A / 11-B 已完成，下一步是 11-C。** 10-F-2（AI 問答接 LLM）延後，不卡主線。專案已完全遷移至 Next.js + FastAPI；Streamlit 程式碼與套件已從 codebase 移除。
 
-2026-05-17 狀態（Phase 11-A 完成）：
+2026-05-17 狀態（Phase 11-B 完成）：
+- **P11-B 已完成並驗證通過**：新增 PER / monthly revenue fetcher；補 per / monthly_revenue / dividends / eps storage roundtrip 與 `data_meta`；dashboard service 新增 valuation / monthly revenue / dividend history with PE / industry PER；API 新增 `/api/analysis/p11/valuation`、`monthly-revenue`、`dividend-history`、`industry-per` 並放在動態 route 前；前端新增 valuation / monthly revenue / dividend history panel 與同產業 PER Modal；US market 回 501，frontend 隱藏 P11 區塊。
+- **P11-B 已修正驗證中發現的 4 個缺口**：industry PER response contract 改為 `median / mean / count / cached_at`；補 4 個 P11 component tests + tooltip coverage；PER / PBR / TTM 顯示與 tooltip 對齊規格；P11 資料補抓改 best-effort，不阻塞 daily pipeline。
+- **P11-B 驗證結果**：Python gate `tests/test_fetcher.py tests/test_storage.py tests/test_maintenance.py tests/test_services/test_dashboard_svc.py tests/test_api/test_analysis_api.py` 為 **94 passed, 8 deselected**；frontend `npx tsc --noEmit` 0 errors；P11 frontend targeted tests **6 files / 17 tests passed**；full vitest **49 files / 321 tests passed**。
 - **P11-A 已完成並由使用者實機驗證通過**：Dashboard chart 高度改為 300px；TW 左欄 chart 下方新增 6 個 dashed placeholder；US market 隱藏 P11 下方區塊；K 線圖移除 KD / RSI / MACD 副圖並保留成交量；籌碼面板買賣力道與融資 / 融券壓成單行；關鍵價位面板恢復小數顯示。
 - **P11 規格草案已正式寫入三份文件**：`量化交易系統規格書_shellpig版.md` 新增 V3.0 與 Phase 11 章節；`開發設計方針.md` 新增 Phase 11 實作設計；`測試指南.md` 新增 Phase 11 測試矩陣與 gate。
 - **P11 執行順序**：11-A（版面 placeholder）→ 11-B（估值 / 獲利）→ 11-C（籌碼 / 事件）→ 11-D（待定），不可並行。
 - **P11 API 規則**：所有新 endpoint 掛 `/api/analysis/p11/*`，且需補 regression 防止被既有 `/api/analysis/{section}` 動態路由吃掉。
-- **P11-B 資料層重點**：新增 PER / monthly_revenue；既有 `fetch_dividends()` / `fetch_eps()` 已在 `FinMindFetcher`，但 11-B 要補 `save/load`、parquet path、`data_meta` 註冊與測試。
+- **P11-B 邊界決定**：同產業 PER cache miss 使用 `ThreadPoolExecutor(max_workers=8)`，每個 worker 建立獨立 `FinMindFetcher`；cache path 為 `data/cache/industry_per/{slug(industry)}_{YYYY-MM-DD}.parquet`；個別 peer 失敗以 `per/pbr/dividend_yield=null` 回傳，不阻塞整體結果。
 - **P11-C 股東會決策**：股東會是全市場單一 parquet，不進 `data_meta`，不用 sentinel symbol，不改 `DuckDBMeta` schema；使用 `data/raw/tw/shareholder_meeting.meta.json` 管 once-per-day guard，manual override 放 `data/manual/shareholder_meeting_override.csv`。
 - **P11 同產業 PER Modal UX**：採同步 REST + `ThreadPoolExecutor(max_workers=8)` + cache；cache miss 可能 8–25 秒，前端需用 skeleton + 半透明遮罩 + 中央「資料讀取中」訊息，完成後一次替換表格。
 
@@ -473,7 +476,7 @@ risk:
 
 ### 未涵蓋資料項目.md
 
-列管目前 fetcher / storage 不抓不存的資料。Phase 8 已接入法人買賣超與融資融券；Phase 11 規格已涵蓋月營收、股利/除息、EPS 與股東會，其中 11-A 只完成前端版面，不新增資料層；11-B / 11-C 資料層尚未實作。剩餘項目（財報細項、股權分散、散戶多空比、融資維持率、外資期貨未平倉、大盤指數等）仍需先擴規格再走管線。
+列管目前 fetcher / storage 不抓不存的資料。Phase 8 已接入法人買賣超與融資融券；Phase 11-B 已接入月營收、股利/除息、EPS 與 PER/PBR/殖利率資料層；Phase 11-C 股東會與事件資料層尚未實作。剩餘項目（財報細項、股權分散、散戶多空比、融資維持率、外資期貨未平倉、大盤指數等）仍需先擴規格再走管線。
 
 ## 測試速查
 

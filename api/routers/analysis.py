@@ -12,7 +12,15 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from api.deps import get_manager
 from api.job_manager import JobManager
-from src.services.dashboard_service import DashboardError, DashboardPayload, build_dashboard_payload
+from src.services.dashboard_service import (
+    DashboardError,
+    DashboardPayload,
+    build_dashboard_payload,
+    get_dividend_history_with_pe,
+    get_industry_per_table,
+    get_monthly_revenue,
+    get_valuation,
+)
 
 router = APIRouter(tags=["analysis"])
 
@@ -114,6 +122,72 @@ async def get_dashboard_payload(
         "data": _serialize_payload(payload),
         "meta": {"symbol": payload.symbol, "market": payload.market},
     }
+
+
+@router.get("/api/analysis/p11/valuation")
+def get_p11_valuation(
+    symbol: str,
+    market: str = "tw",
+) -> dict[str, Any]:
+    try:
+        data = get_valuation(symbol=symbol, market=market)
+    except NotImplementedError as exc:
+        raise HTTPException(
+            status_code=501,
+            detail={"error": {"code": "P11_US_UNSUPPORTED", "message": str(exc)}},
+        ) from exc
+
+    return {"data": _to_jsonable(data), "meta": {"section": "p11_valuation", "symbol": symbol, "market": market}}
+
+
+@router.get("/api/analysis/p11/monthly-revenue")
+def get_p11_monthly_revenue(
+    symbol: str,
+    months: int = 12,
+    market: str = "tw",
+) -> dict[str, Any]:
+    try:
+        data = get_monthly_revenue(symbol=symbol, months=months, market=market)
+    except NotImplementedError as exc:
+        raise HTTPException(
+            status_code=501,
+            detail={"error": {"code": "P11_US_UNSUPPORTED", "message": str(exc)}},
+        ) from exc
+
+    return {"data": _to_jsonable(data), "meta": {"section": "p11_monthly_revenue", "symbol": symbol, "market": market}}
+
+
+@router.get("/api/analysis/p11/dividend-history")
+def get_p11_dividend_history(
+    symbol: str,
+    count: int = 5,
+    market: str = "tw",
+) -> dict[str, Any]:
+    try:
+        data = get_dividend_history_with_pe(symbol=symbol, count=count, market=market)
+    except NotImplementedError as exc:
+        raise HTTPException(
+            status_code=501,
+            detail={"error": {"code": "P11_US_UNSUPPORTED", "message": str(exc)}},
+        ) from exc
+
+    return {"data": _to_jsonable(data), "meta": {"section": "p11_dividend_history", "symbol": symbol, "market": market}}
+
+
+@router.get("/api/analysis/p11/industry-per")
+def get_p11_industry_per(
+    symbol: str,
+    market: str = "tw",
+) -> dict[str, Any]:
+    try:
+        data = get_industry_per_table(symbol=symbol, market=market)
+    except NotImplementedError as exc:
+        raise HTTPException(
+            status_code=501,
+            detail={"error": {"code": "P11_US_UNSUPPORTED", "message": str(exc)}},
+        ) from exc
+
+    return {"data": _to_jsonable(data), "meta": {"section": "p11_industry_per", "symbol": symbol, "market": market}}
 
 
 @router.get("/api/analysis/{section}")

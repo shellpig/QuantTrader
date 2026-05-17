@@ -205,29 +205,75 @@ vi.mock("@/components/stock-selector", () => ({
   ),
 }));
 
-describe("P11 placeholders", () => {
+vi.mock("@/lib/hooks/useP11Valuation", () => ({
+  useP11Valuation: () => ({
+    data: { symbol: "2330", market: "tw", date: "2026-05-17", per: 20.5, pbr: 4.1, dividend_yield: 2.3, industry: "半導體" },
+  }),
+}));
+
+vi.mock("@/lib/hooks/useP11MonthlyRevenue", () => ({
+  useP11MonthlyRevenue: () => ({
+    data: {
+      symbol: "2330",
+      market: "tw",
+      latest_month: "2026-04",
+      latest_revenue: 300000000000,
+      items: Array.from({ length: 12 }, (_, i) => ({
+        date: `2026-${String(i + 1).padStart(2, "0")}-10`,
+        revenue: 200000000000 + i * 1000000000,
+        revenue_year: 2026,
+        revenue_month: i + 1,
+        yoy: 5 + i,
+        mom: i - 2,
+      })),
+    },
+  }),
+}));
+
+vi.mock("@/lib/hooks/useP11DividendHistory", () => ({
+  useP11DividendHistory: () => ({
+    data: {
+      symbol: "2330",
+      market: "tw",
+      items: [{ date: "2026-06-15", cash_dividend: 3.5, ttm_pe: 12.5 }],
+    },
+  }),
+}));
+
+vi.mock("@/lib/hooks/useP11IndustryPer", () => ({
+  useP11IndustryPer: () => ({
+    data: {
+      symbol: "2330",
+      market: "tw",
+      industry: "半導體",
+      median: 18,
+      mean: 19,
+      count: 1,
+      items: [
+        { symbol: "2330", name: "台積電", date: "2026-05-17", per: 20, pbr: 4, dividend_yield: 2, is_current: true },
+      ],
+      cached_at: "2026-05-17T10:00:00+08:00",
+    },
+    isLoading: false,
+  }),
+}));
+
+describe("P11 panels", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockLoading = false;
   });
 
-  it("renders six P11 placeholder panels for TW market", () => {
+  it("renders three P11-B panels and keeps C/D placeholders for TW market", () => {
     render(<DashboardPageClient />);
 
-    const panelIds = [
-      "p11-panel-pe-ratio",
-      "p11-panel-monthly-revenue",
-      "p11-panel-historical-dividend-pe",
-      "p11-panel-institutional-cost",
-      "p11-panel-event-calendar",
-      "p11-panel-retail-sentiment",
-    ];
-    panelIds.forEach((id) => {
-      const panel = screen.getByTestId(id);
-      expect(panel).toHaveClass("border-dashed");
-    });
-
-    expect(screen.getByText("本益比")).toBeInTheDocument();
+    expect(screen.getByTestId("p11-panel-pe-ratio")).toBeInTheDocument();
+    expect(screen.getByTestId("p11-panel-monthly-revenue")).toBeInTheDocument();
+    expect(screen.getByTestId("p11-panel-historical-dividend-pe")).toBeInTheDocument();
+    expect(screen.getByTestId("p11-panel-institutional-cost")).toHaveClass("border-dashed");
+    expect(screen.getByTestId("p11-panel-event-calendar")).toHaveClass("border-dashed");
+    expect(screen.getByTestId("p11-panel-retail-sentiment")).toHaveClass("border-dashed");
+    expect(screen.getAllByText("本益比").length).toBeGreaterThan(0);
     expect(screen.getByText("月營收")).toBeInTheDocument();
     expect(screen.getByText("歷史除息本益比")).toBeInTheDocument();
     expect(screen.getByText("法人持股成本")).toBeInTheDocument();
@@ -235,19 +281,20 @@ describe("P11 placeholders", () => {
     expect(screen.getByText("散戶多空比")).toBeInTheDocument();
   });
 
-  it("renders tooltip trigger for every P11 panel title", () => {
+  it("renders tooltip trigger for each 11-B panel title", () => {
     render(<DashboardPageClient />);
 
-    Object.values(P11_TOOLTIP_TEXT).forEach((tooltipText) => {
-      expect(screen.getByLabelText(tooltipText)).toBeInTheDocument();
-    });
+    expect(screen.getByLabelText(P11_TOOLTIP_TEXT.pe_ratio)).toBeInTheDocument();
+    expect(screen.getByLabelText(P11_TOOLTIP_TEXT.monthly_revenue)).toBeInTheDocument();
+    expect(screen.getByLabelText(P11_TOOLTIP_TEXT.historical_dividend_pe)).toBeInTheDocument();
   });
 
-  it("renders same-industry button without triggering API call in 11-A", () => {
+  it("opens same-industry modal without triggering dashboard mutate", () => {
     render(<DashboardPageClient />);
 
     fireEvent.click(screen.getByRole("button", { name: "同產業 ->" }));
     expect(mockMutate).not.toHaveBeenCalled();
+    expect(screen.getByText("同產業本益比 · 半導體")).toBeInTheDocument();
   });
 
   it("does not render P11 placeholders in US market", () => {

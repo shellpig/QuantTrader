@@ -4,7 +4,7 @@ import duckdb
 import pandas as pd
 import pytest
 
-from src.core.constants import STANDARD_COLUMNS, TAIPEI_TZ
+from src.core.constants import DIVIDENDS_COLUMNS, EPS_COLUMNS, MONTHLY_REVENUE_COLUMNS, PER_COLUMNS, STANDARD_COLUMNS, TAIPEI_TZ
 from src.core.exceptions import StorageError
 from src.core.market import get_market_spec
 from src.data.storage import DuckDBMeta, ParquetStorage
@@ -41,6 +41,53 @@ def _make_splits_df(symbol: str, timezone: str = TAIPEI_TZ) -> pd.DataFrame:
             "symbol": [symbol, symbol],
         }
     )
+
+
+def _make_per_df(symbol: str, timezone: str = TAIPEI_TZ) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "date": pd.Series(pd.to_datetime(["2026-05-15", "2026-05-16"]).tz_localize(timezone)).astype(f"datetime64[ns, {timezone}]"),
+            "per": [20.1, 20.4],
+            "pbr": [4.0, 4.1],
+            "dividend_yield": [2.2, 2.3],
+            "symbol": [symbol, symbol],
+        }
+    )[PER_COLUMNS]
+
+
+def _make_monthly_revenue_df(symbol: str, timezone: str = TAIPEI_TZ) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "date": pd.Series(pd.to_datetime(["2026-04-10", "2026-05-10"]).tz_localize(timezone)).astype(f"datetime64[ns, {timezone}]"),
+            "revenue": [300_000_000_000.0, 320_000_000_000.0],
+            "revenue_month": [3, 4],
+            "revenue_year": [2026, 2026],
+            "symbol": [symbol, symbol],
+        }
+    )[MONTHLY_REVENUE_COLUMNS]
+
+
+def _make_dividends_df(symbol: str, timezone: str = TAIPEI_TZ) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "date": pd.Series(pd.to_datetime(["2026-06-15"]).tz_localize(timezone)).astype(f"datetime64[ns, {timezone}]"),
+            "cash_dividend": [3.5],
+            "stock_dividend": [0.0],
+            "symbol": [symbol],
+        }
+    )[DIVIDENDS_COLUMNS]
+
+
+def _make_eps_df(symbol: str, timezone: str = TAIPEI_TZ) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "report_date": pd.Series(pd.to_datetime(["2026-05-15", "2026-08-14"]).tz_localize(timezone)).astype(f"datetime64[ns, {timezone}]"),
+            "year": [2026, 2026],
+            "quarter": [1, 2],
+            "eps": [3.1, 3.4],
+            "symbol": [symbol, symbol],
+        }
+    )[["report_date", "year", "quarter", "eps", "symbol"]]
 
 
 def test_save_and_load_daily_roundtrip(tmp_path) -> None:
@@ -87,6 +134,43 @@ def test_save_and_load_splits_roundtrip(tmp_path) -> None:
 
     expected = source.sort_values("date").reset_index(drop=True)
     pd.testing.assert_frame_equal(loaded, expected)
+
+
+def test_save_and_load_per_roundtrip(tmp_path) -> None:
+    storage = ParquetStorage(data_dir=tmp_path)
+    source = _make_per_df(symbol="2330")
+    storage.save_per("2330", source)
+    loaded = storage.load_per("2330")
+    expected = source.sort_values("date").reset_index(drop=True)
+    pd.testing.assert_frame_equal(loaded, expected)
+
+
+def test_save_and_load_monthly_revenue_roundtrip(tmp_path) -> None:
+    storage = ParquetStorage(data_dir=tmp_path)
+    source = _make_monthly_revenue_df(symbol="2330")
+    storage.save_monthly_revenue("2330", source)
+    loaded = storage.load_monthly_revenue("2330")
+    expected = source.sort_values("date").reset_index(drop=True)
+    pd.testing.assert_frame_equal(loaded, expected)
+
+
+def test_save_and_load_dividends_roundtrip(tmp_path) -> None:
+    storage = ParquetStorage(data_dir=tmp_path)
+    source = _make_dividends_df(symbol="2330")
+    storage.save_dividends("2330", source)
+    loaded = storage.load_dividends("2330")
+    expected = source.sort_values("date").reset_index(drop=True)
+    pd.testing.assert_frame_equal(loaded, expected)
+
+
+def test_save_eps_copies_report_date_to_date(tmp_path) -> None:
+    storage = ParquetStorage(data_dir=tmp_path)
+    source = _make_eps_df(symbol="2330")
+    storage.save_eps("2330", source)
+    loaded = storage.load_eps("2330")
+    assert loaded.columns.tolist() == [*EPS_COLUMNS, "report_date"]
+    assert loaded["date"].equals(loaded["report_date"])
+    assert list(zip(loaded["year"], loaded["quarter"], strict=True)) == [(2026, 1), (2026, 2)]
 
 
 @pytest.mark.parametrize(
