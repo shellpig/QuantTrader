@@ -4020,6 +4020,14 @@ Once-per-day guard：
 - 若 `shareholder_meeting.meta.json.last_updated_at` 是 Asia/Taipei 今天，跳過。
 - TWSE 或 TPEx 任一失敗時，不寫部分結果、不更新 meta，下次 job 可重試。
 
+資料管理頁互動規則：
+
+- 單一標的刪除只刪 `data/raw/{market}/{symbol}/`、`data/processed/{market}/{symbol}/` 與該 symbol 的 `data_meta` rows；不得刪除全市場 `shareholder_meeting.parquet` / `.meta.json`。
+- Manual override 是使用者手動輸入資料，預設不因單一標的刪除自動移除；若未來產品語意改成「刪除標的 = 完全忘記該 symbol」，必須明確規格化同步刪除 `shareholder_meeting_override.csv` 內該 symbol rows。
+- 「全部更新」與「全部重建」在 market=`tw` 時，於所有 symbol loop 完成後執行一次股東會 auto layer refresh；market=`us` 不觸發。
+- 乾淨重測若要清除 11-C 全部資料，需同時移除 `data/raw/tw/shareholder_meeting.parquet`、`data/raw/tw/shareholder_meeting.meta.json` 與 `data/manual/shareholder_meeting_override.csv`；資料管理頁逐筆刪除 symbol 不等於清空全域股東會資料。
+- 股東會 auto parquet / meta 與 manual CSV 寫入需避免半寫入檔案；manual CSV POST / DELETE 建議採 temp file + atomic replace，並避免同時寫入互踩。
+
 事件行事曆顯示：
 
 | 狀態 | 規格 |
