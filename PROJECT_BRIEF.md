@@ -10,21 +10,24 @@
 
 台股 / 美股 US-1 量化交易研究工具（個人版），運行於 Windows 11 本機。聚焦資料管線、研究、回測與 AI 分析，不接實盤。
 
+2026-05-17 Phase 11 規格已從草案正式寫入三份文件：`量化交易系統規格書_shellpig版.md`（V3.0）、`開發設計方針.md`、`測試指南.md`。Phase 11 擴充 dashboard 個股分析頁的基本面與事件資訊，拆為 11-A 版面 placeholder、11-B 估值 / 獲利、11-C 籌碼 / 事件、11-D 待定；執行順序固定 11-A → 11-B → 11-C → 11-D。
+
 2026-05-14 Phase 10 規格已完成並寫入正式文件：前端架構從 Streamlit 遷移至 Next.js (React) + FastAPI，拆為 10-A~10-H 八個子階段。新增 `src/services/`（服務層）、`api/`（FastAPI 後端）、`web/`（Next.js 前端）。核心演算法不重寫。Phase 9-G（美股 intraday）為前置條件。
 
 - Phase 1–9 全部完成（含美股 US-1 / 9-G intraday）。
 - Phase 10 全部完成（10-A ~ 10-H-2）；舊 Streamlit UI 已移除。
+- Phase 11 規格已完成並寫入正式文件；尚未開始實作。
 - Phase 10-F-2（AI 問答接 LLM）延後，不卡主線。
 
 ## 技術棧
 
 - **語言 / 套件管理：** Python 3.12+、uv（`pyproject.toml`）
 - **資料處理：** pandas、pandas-ta
-- **資料來源：** 台股 FinMind API + yfinance 備援；美股日 K / 1m intraday 使用 yfinance
+- **資料來源：** 台股 FinMind API + yfinance 備援；美股日 K / 1m intraday 使用 yfinance；Phase 11-C 股東會使用 TWSE / TPEx OpenAPI
 - **儲存：** DuckDB + Parquet（零伺服器）
 - **後端：** FastAPI、uvicorn、httpx；SSE 以 FastAPI `StreamingResponse` 實作
 - **前端：** Next.js 15+、React 19+、TypeScript 5+、Tailwind CSS v4、SWR、Lightweight Charts、Radix UI、sonner、cmdk、shadcn/ui pattern
-- **舊 UI：** Streamlit + Plotly（Phase 10-H 前保留，Phase 10-H 移除）
+- **舊 UI：** Streamlit 已於 Phase 10-H 移除；Plotly 僅保留於 `src/backtest/report.py` 報告生成
 - **AI：** OpenAI / Anthropic / Gemini（provider-neutral）
 - **測試：** pytest（固定 `.venv\Scripts\python.exe`）、Vitest、Playwright
 
@@ -84,7 +87,12 @@ tests/
 
 data/                （gitignore，執行時自動建立）
   raw/tw/{symbol}/       daily.parquet, minute.parquet,
-                         institutional.parquet, margin.parquet
+                         institutional.parquet, margin.parquet,
+                         per.parquet, monthly_revenue.parquet,
+                         dividends.parquet, eps.parquet（Phase 11-B 規格）
+  raw/tw/                shareholder_meeting.parquet,
+                         shareholder_meeting.meta.json（Phase 11-C 規格；不進 data_meta）
+  manual/                shareholder_meeting_override.csv（Phase 11-C 規格）
   processed/tw/{symbol}/ adj_daily.parquet
   raw/us/{symbol}/       daily.parquet（Phase 9-B 已實作）
   processed/us/{symbol}/ adj_daily.parquet（Phase 9-B 已實作）
@@ -166,11 +174,11 @@ strategies:              # 8 種 preset，詳見 config.yaml
     type: moving_average_cross
     params: { short_window: 20, long_window: 60 }
 ai:
-  enabled: true
+  enabled: false
   provider: anthropic
   model: claude-sonnet-4-6
 ui:
-  theme: warm_sepia
+  theme: midnight_blue
   use_extras: true
   use_option_menu: true
 realtime:
@@ -227,12 +235,24 @@ risk:
 | 10-G-2 | ✅ 完成 | 設定頁 4 分區：API key write-only UI（5 provider）、策略 preset CRUD（`POST/DELETE/restore` 三端點 + Dialog）、Dark↔Light 主題切換（沿用既有自製 `theme-provider.tsx`，**未引入 `next-themes`**，等價支援 `class="dark"` + localStorage）、AI toggle disabled + Radix Tooltip；pytest `test_config_api.py + test_config_svc.py` 28 passed（+6 strategy endpoints / +3 `delete_strategy_preset_by_name`）+ vitest **46 files / 290 tests passed**（+5 settings 元件測試 + use-config hook）+ tsc 0 errors |
 | 10-H-1 | ✅ 完成 | 收尾前置補強：Playwright E2E smoke 5 spec（desktop + mobile 兩 project、共 48 case）、手機 <768px 底部 Tab Bar（`sidebar.tsx` 拆 Desktop / Mobile + `pb-14`）、`web/src/tests/lib/theme-vars.test.ts` 補 `test_themes.py` CSS 變數驗證；測試遷移檢查表 7 行全部打勾。順手 bug fix：`backtest_service.py` `load_backtest_data` tz-aware filter、`StrategyPresetSelect.tsx` API URL 加 `NEXT_PUBLIC_API_URL` 前綴、`uv.lock` 同步 0.2.0。Gate：pytest 588 passed / vitest 48 files / 307 tests / tsc 0 errors / Playwright 48 tests pass |
 | 10-H-2 | ✅ 完成 | 實際移除與全專案回歸：刪 `src/ui/`、`run_quanttrader.bat`、`pyproject.toml` streamlit 三套件、7 個 Streamlit pytest 檔；`src/ai/advisor.py` 保留（10-F-2 + dashboard analysis 仍使用）；`src/backtest/report.py` `_apply_theme` 去除 ui 依賴 |
+| 11-A | 📝 規格完成，待實作 | Dashboard 版面調整：chart 高度 400px → 300px；左欄 chart 下方新增兩塊、共 6 個 dashed placeholder panel；market=us 時 P11 下方兩塊隱藏 |
+| 11-B | 📝 規格完成，待實作 | 估值 / 獲利區塊：本益比、股價淨值比、殖利率、月營收、歷史除息本益比、同產業本益比 Modal；新增 PER / 月營收 fetcher，補 dividends / EPS storage + `data_meta` |
+| 11-C | 📝 規格完成，待實作 | 籌碼 / 事件區塊：法人持股成本、事件行事曆（除息 + 股東會）、股東會手動覆蓋 Modal；新增 TWSE / TPEx 股東會全市場資料源、獨立 metadata JSON、manual override CSV；股東會不進 `data_meta` |
+| 11-D | 📝 佔位，待定 | 散戶多空比或其他資訊，11-C 完成後再定義 |
 
 ## 當前待辦
 
 見 `驗證後已知問題.md`（每次必讀）。
 
-主線：**Phase 1–10 全部完成（含 10-H-2 Streamlit 完整移除 + 全專案回歸）。** 10-F-2（AI 問答接 LLM）延後，不卡主線。專案已完全遷移至 Next.js + FastAPI；Streamlit 程式碼與套件已從 codebase 移除。
+主線：**Phase 1–10 全部完成（含 10-H-2 Streamlit 完整移除 + 全專案回歸）。Phase 11 規格已正式併入三份文件，尚未實作。** 10-F-2（AI 問答接 LLM）延後，不卡主線。專案已完全遷移至 Next.js + FastAPI；Streamlit 程式碼與套件已從 codebase 移除。
+
+2026-05-17 狀態（Phase 11 規格整併）：
+- **P11 規格草案已正式寫入三份文件**：`量化交易系統規格書_shellpig版.md` 新增 V3.0 與 Phase 11 章節；`開發設計方針.md` 新增 Phase 11 實作設計；`測試指南.md` 新增 Phase 11 測試矩陣與 gate。
+- **P11 執行順序**：11-A（版面 placeholder）→ 11-B（估值 / 獲利）→ 11-C（籌碼 / 事件）→ 11-D（待定），不可並行。
+- **P11 API 規則**：所有新 endpoint 掛 `/api/analysis/p11/*`，且需補 regression 防止被既有 `/api/analysis/{section}` 動態路由吃掉。
+- **P11-B 資料層重點**：新增 PER / monthly_revenue；既有 `fetch_dividends()` / `fetch_eps()` 已在 `FinMindFetcher`，但 11-B 要補 `save/load`、parquet path、`data_meta` 註冊與測試。
+- **P11-C 股東會決策**：股東會是全市場單一 parquet，不進 `data_meta`，不用 sentinel symbol，不改 `DuckDBMeta` schema；使用 `data/raw/tw/shareholder_meeting.meta.json` 管 once-per-day guard，manual override 放 `data/manual/shareholder_meeting_override.csv`。
+- **P11 同產業 PER Modal UX**：採同步 REST + `ThreadPoolExecutor(max_workers=8)` + cache；cache miss 可能 8–25 秒，前端需用 skeleton + 半透明遮罩 + 中央「資料讀取中」訊息，完成後一次替換表格。
 
 2026-05-16 狀態（10-H-1）：
 - **10-H-1 實作 + 驗證完成**：實作於 worktree `claude/peaceful-dewdney-33117e`，驗證通過後以 fast-forward 合進 main（commit `e7c6af2` + `e5c8a09`），uv.lock 同步 0.2.0 以 cherry-pick 進 main（`d346d49`）。新增 `web/playwright.config.ts`（desktop-chromium 1280×800 + mobile-chromium Pixel 5 兩 project）；新增 5 個 e2e spec（`navigation` / `backtest-single` / `backtest-cancel` / `csv-download` / `mobile-tabbar`）；新增 `web/src/tests/lib/theme-vars.test.ts` + `web/src/tests/components/mobile-tabbar.test.tsx`；`web/src/components/sidebar.tsx` 拆 `DesktopSidebar` + `MobileTabBar`（fixed bottom h-14 + grid-cols-5）；`web/src/app/layout.tsx` 加 `pb-14 lg:pb-0`；`web/src/app/globals.css` 補 `--chart-up` / `--chart-down` 與 `.light` class。順手修：`load_backtest_data` tz-aware filter、`StrategyPresetSelect` API URL 加絕對前綴。驗證：pytest **588 passed**、vitest **48 files / 307 tests pass**、tsc 0 errors、Playwright **48 tests pass**（24 desktop + 24 mobile）。測試遷移檢查表 7 行全打勾（見 `驗證後已知問題.md` [P10-H-1]）。
@@ -347,11 +367,11 @@ risk:
 
 ## 規格文件索引
 
-### 量化交易系統規格書_shellpig版.md（~3755 行）
+### 量化交易系統規格書_shellpig版.md（~4140 行）
 
 | 區段 | 行範圍 | 何時讀 |
 |:---|:---|:---|
-| 修訂歷史 | 3-27 | 查版本變更，最新為 `V2.8`（Phase 10-H 拆為 10-H-1 收尾前置補強 + 10-H-2 實際移除；前置補強含 Playwright E2E desktop+mobile、手機 <768px 底部 Tab Bar、`test_themes.py` 對應 Vitest CSS 變數測試） |
+| 修訂歷史 | 3-28 | 查版本變更，最新為 `V3.0`（Phase 11 Dashboard 基本面與事件擴充；11-A 版面、11-B 估值/獲利、11-C 籌碼/事件、11-D 待定） |
 | 專案願景與目標 | 47-62 | 理解定位 |
 | 技術語言與套件選型 | 64-91 | 技術決策參考 |
 | 系統架構（四層架構圖） | 93-177 | 理解整體結構 |
@@ -368,15 +388,18 @@ risk:
 | Phase 7 策略擴充（7-A~7-D） | 1224-1933 | 策略、研究工作台、參數掃描、WFA |
 | Phase 8 個股綜合分析儀表板（8-A~8-G） | 1935-2366 | 實作 analysis/ / realtime / dashboard / 說明文字時必讀 |
 | Phase 9 美股 US-1 / 9-G 支援 | 2369-2693 | 美股日 K、調整後價格、回測、技術分析、多市場架構、yfinance 1m intraday 時必讀 |
-| **Phase 10 前端架構重構（10-A~10-H）** | **2699-3676** | **Streamlit → Next.js + FastAPI 遷移、服務層抽離、API 設計、圖表、Responsive、主題系統時必讀。10-E / 10-G 細部規格詳於此區段** |
-| 子階段總覽 | 2663-2675 | Phase 總覽（含 Phase 10） |
-| 費用估算 | 2677-2695 | API / yfinance / Next.js / US-2 資料源成本 |
-| 10-E：回測研究工作台 | 2935-3368 | 實作 10-E-1~4、Job lifecycle、SSE、取消、CSV、toast/skeleton/error boundary/command palette 整合時必讀 |
-| 10-G：設定頁 + 全局整合 | 3427-3629 | 實作 10-G-1 toast/error boundary/skeleton/command palette，或 10-G-2 settings/secrets/theme/strategy preset 時必讀 |
-| 附錄 A：免責聲明全文 | 3678-3697 | 免責聲明文案 |
-| 附錄 B：架構決策補充 | 3699-3755 | 美股邊界與 AI provider 抽象 |
+| **Phase 10 前端架構重構（10-A~10-H）** | **2705-3756** | **Streamlit → Next.js + FastAPI 遷移、服務層抽離、API 設計、圖表、Responsive、主題系統時必讀。10-E / 10-G 細部規格詳於此區段** |
+| **Phase 11 Dashboard 基本面與事件擴充（11-A~11-D）** | **3768-4050** | **Dashboard 新增估值/獲利與籌碼/事件資訊時必讀；含 `/api/analysis/p11/*` namespace、PER/月營收/dividends/EPS、股東會 metadata、同產業 PER Modal UX** |
+| 子階段總覽 | 2666-2680 | Phase 總覽（含 Phase 11） |
+| 費用估算 | 2685-2703 | API / yfinance / TWSE / TPEx / Next.js / US-2 資料源成本 |
+| 10-E：回測研究工作台 | 2942-3387 | 實作 10-E-1~4、Job lifecycle、SSE、取消、CSV、toast/skeleton/error boundary/command palette 整合時必讀 |
+| 10-G：設定頁 + 全局整合 | 3447-3649 | 實作 10-G-1 toast/error boundary/skeleton/command palette，或 10-G-2 settings/secrets/theme/strategy preset 時必讀 |
+| 11-B：估值 / 獲利區塊 | 3871-3937 | 實作 PER / 月營收 / dividends / EPS 落地、valuation API、同產業 PER Modal 時必讀 |
+| 11-C：籌碼 / 事件區塊 | 3938-4041 | 實作法人持股成本、股東會 TWSE/TPEx fetcher、manual override、event calendar 時必讀 |
+| 附錄 A：免責聲明全文 | 4063-4083 | 免責聲明文案 |
+| 附錄 B：架構決策補充 | 4084-4140 | 美股邊界與 AI provider 抽象 |
 
-### 開發設計方針.md（~8180 行）
+### 開發設計方針.md（~8871 行）
 
 | 區段 | 行範圍 | 何時讀 |
 |:---|:---|:---|
@@ -395,11 +418,14 @@ risk:
 | Phase 8-A~8-F 個股綜合分析儀表板 | 4171-5258 | 實作 analysis/ / realtime / dashboard 時必讀 |
 | Phase 8-G 新手友善說明文字 | 5260-5683 | 實作儀表板說明文字時必讀 |
 | Phase 9 美股 US-1 / 9-G 支援 | 5685-6290 | 實作多市場基礎、美股資料管線、回測、dashboard、資料管理頁、美股 intraday snapshot 前必讀 |
-| **Phase 10 前端架構重構（10-A~10-H）** | **6293-8180** | **服務層抽離、FastAPI 骨架、Next.js 前端、API 端點、圖表元件、Job manager、config 安全、測試遷移檢查表實作時必讀。10-C / 10-E / 10-G 細部設計皆在此段** |
+| **Phase 10 前端架構重構（10-A~10-H）** | **6293-8405** | **服務層抽離、FastAPI 骨架、Next.js 前端、API 端點、圖表元件、Job manager、config 安全、測試遷移檢查表實作時必讀。10-C / 10-E / 10-G 細部設計皆在此段** |
+| **Phase 11 Dashboard 基本面與事件擴充** | **8406-8871** | **實作 P11 前必讀：11-A 前端 placeholder、11-B data/service/API/frontend、11-C TWSEFetcher/股東會 metadata/manual override/event calendar、11-D 佔位** |
 | 10-E 回測研究工作台 | 6920-7480 | 實作 backtest jobs、partial cancellation、CSV blob、共用 hook/元件時必讀 |
 | 10-G 設定頁 + 全局整合 | 7649-8119 | 實作 toast、Error Boundary、Skeleton、Command Palette、settings/secrets/theme/preset CRUD 時必讀 |
+| 11-B 資料層 / Service / API / 前端 | 8509-8705 | 實作 PER、monthly_revenue、dividends/EPS storage、valuation/monthly/dividend/industry PER API 與 panel 時必讀 |
+| 11-C 股東會 / 事件 / 法人成本 | 8706-8868 | 實作 TWSEFetcher、shareholder_meeting parquet/meta、once-per-day guard、manual override、event calendar 與 institutional cost 時必讀 |
 
-### 測試指南.md（~3275 行）
+### 測試指南.md（~3741 行）
 
 | 區段 | 行範圍 | 何時讀 |
 |:---|:---|:---|
@@ -418,11 +444,12 @@ risk:
 | Phase 8-G 測試 | 2128-2174 | 儀表板說明文字測試 |
 | Phase 8 全階段回歸 | 2176-2194 | Phase 8 完成後 |
 | Phase 9 測試（9-A~9-G） | 2196-2603 | 美股 US-1 與 9-G intraday 實作與驗收時必讀 |
-| **Phase 10 測試（10-A~10-H）** | **2606-3164** | **服務層、API 端點、前端 Vitest、E2E Playwright、測試遷移檢查表。10-E / 10-G 測試規格已拆段** |
+| **Phase 10 測試（10-A~10-H）** | **2606-3238** | **服務層、API 端點、前端 Vitest、E2E Playwright、測試遷移檢查表。10-E / 10-G 測試規格已拆段** |
+| **Phase 11 測試（11-A~11-D）** | **3239-3639** | **P11 自動測試 / 手動驗收 / Gate；含 fetcher、storage、maintenance、service、API、frontend、namespace regression、股東會 metadata 測試** |
 | 10-E 回測工作台測試 | 2786-2939 | 驗 10-E-1~4：backtest jobs、cancelled partial result、CSV、toast/skeleton/error panel |
 | 10-G 設定頁 + 全局整合測試 | 3005-3092 | 驗 10-G-1 toast/error boundary/skeleton/command palette 與 10-G-2 settings |
-| 全專案最終回歸 | 3179-3219 | Phase 完成後 |
-| 測試數量統計總覽 | 3221-3275 | 測試統計（含 Phase 10 估算） |
+| 全專案最終回歸 | 3640-3680 | Phase 完成後 |
+| 測試數量統計總覽 | 3682-3741 | 測試統計（含 Phase 11 估算） |
 
 ### web/_design/ — 10-C 視覺設計稿（Phase 10-C 實作必讀）
 
@@ -445,7 +472,7 @@ risk:
 
 ### 未涵蓋資料項目.md
 
-列管目前 fetcher / storage 不抓不存的資料。Phase 8 已接入法人買賣超與融資融券；剩餘項目（財報、股權分散等）仍需先擴規格再走管線。
+列管目前 fetcher / storage 不抓不存的資料。Phase 8 已接入法人買賣超與融資融券；Phase 11 規格已涵蓋月營收、股利/除息、EPS 與股東會，但尚未實作。剩餘項目（財報細項、股權分散、散戶多空比、融資維持率、外資期貨未平倉、大盤指數等）仍需先擴規格再走管線。
 
 ## 測試速查
 
@@ -462,25 +489,22 @@ risk:
 # 覆蓋率
 .\.venv\Scripts\python.exe -m pytest tests/ --cov=src --cov-report=term-missing -m "not integration"
 
-# 啟動 Streamlit UI（Phase 10-H 前可用）
-.\.venv\Scripts\python.exe -m streamlit run src/ui/app.py
-
-# Phase 10：啟動 FastAPI 後端
+# Phase 10+：啟動 FastAPI 後端
 .\.venv\Scripts\python.exe -m uvicorn api.main:app --reload --port 8000
 
-# Phase 10：啟動 Next.js 前端（在 web/ 目錄）
+# Phase 10+：啟動 Next.js 前端（在 web/ 目錄）
 cd web && pnpm dev
 
-# Phase 10：服務層測試
+# Phase 10+：服務層測試
 .\.venv\Scripts\python.exe -m pytest tests/test_services/ -v -m "not integration"
 
-# Phase 10：API 端點測試
+# Phase 10+：API 端點測試
 .\.venv\Scripts\python.exe -m pytest tests/test_api/ -v -m "not integration"
 
-# Phase 10：前端測試（在 web/ 目錄）
+# Phase 10+：前端測試（在 web/ 目錄）
 cd web && pnpm test
 
-# Phase 10：E2E smoke test（在 web/ 目錄）
+# Phase 10+：E2E smoke test（在 web/ 目錄）
 cd web && pnpm exec playwright test
 ```
 

@@ -25,6 +25,7 @@
 | **V2.5** | 2026/05/15 | Phase 10-E 拆分為 **10-E-1（單次回測）/ 10-E-2（策略比較）/ 10-E-3（參數掃描）/ 10-E-4（Walk-Forward）** 四個子階段：四段共用 Job lifecycle + SSE 進度 + 取消、共用 K 線 + Markers chart 元件、共用 tearsheet 5 metric card；後端 dispatcher 比照 10-C-2 `_run_data_job` 樣板擴充。**明確不做老 Streamlit 的「歷史結果」tab**（Next.js SWR cache 後切頁狀態不會掉，迫切性降低）；**Heatmap 採「排名表 + 顏色背景」為主，僅當 sweep 為恰好 2 個參數時加 2D heatmap（自製 CSS Grid + Tailwind 色階，不引入 heatmap 套件）**；**多策略 equity curve 疊圖用 lightweight-charts 多個 LineSeries 同圖（不引入 Recharts）**；**WFA CSV 由後端產生 blob、前端 `<a download>` 觸發下載**。取消行為：服務層 `run_*_job` 在迴圈點檢查 `manager.get_job(job.id).status == "cancelled"` 後 break，比照 10-C-2 模式。**實作順序調整：10-G 將拆為 10-G-1（基礎設施先行：Toast 系統 + Error Boundary + Loading Skeleton + Command Palette）與 10-G-2（設定頁主功能），執行順序改為 10-G-1 → 10-E（4 段）→ 10-G-2 → 10-H；10-E 4 個子階段假設 10-G-1 已就位，job complete / cancel / error 通知統一走 toast、SSE 中載入態統一用 skeleton、頁面/股票導航支援 Command Palette。10-G-1 / 10-G-2 細部規格將於後續 V2.6 補上。** |
 | **V2.9** | 2026/05/17 | **Phase 10-H-2 完成，Phase 10 全部收束。** 刪 `src/ui/`（app.py / themes.py / pages/*）、`run_quanttrader.bat`；`pyproject.toml` 移除 `streamlit` / `streamlit-extras` / `streamlit-option-menu`；刪 7 個 Streamlit pytest 替代測試（test_dashboard_page / test_backtest_page / test_data_management_page / test_stock_selector / test_themes / test_config_ui_section / test_settings_page）；`src/backtest/report.py` `_apply_theme` 去除 `src.ui.themes` 依賴。全專案回歸通過，Streamlit 完整退場。`src/ai/advisor.py` 保留（10-F-2 + dashboard analysis 使用）。 |
 | **V2.8** | 2026/05/16 | **Phase 10-H 拆為 10-H-1（收尾前置補強）+ 10-H-2（實際移除與回歸）**。理由：規格動作清單中「移除 `src/ui/` + 套件 + 文件」屬機械操作，但同段隱含三項**新建工**——(a) Playwright E2E smoke（desktop + mobile，V2.7 已說明「E2E 統一在 10-E-4 後撰寫」）、(b) 手機 <768px 底部 Tab Bar（10-D round-4 延後項，[驗證後已知問題.md] 已記錄）、(c) `test_themes.py` 對應的前端 Vitest CSS 變數替代測試。三者若與「按下刪除」混在同一段，破壞舊 UI 後才發現替代測試或 E2E 沒寫好會造成回頭工。**10-H-1**：完成 Playwright E2E smoke（5 頁可達 / SSE 收結果 / CSV 下載 / 取消 job，desktop 1280×800 + mobile 375×667 兩 viewport）+ 手機底部 Tab Bar 元件 + `test_themes.py` → Vitest CSS 變數測試；驗收條件：7 行測試遷移檢查表全部打勾、Playwright smoke 全綠、`run_quanttraderV2.bat` 在 375px viewport 可達 5 頁。**10-H-2**：刪 `src/ui/`、`run_quanttrader.bat`、`pyproject.toml` 移除 `streamlit` / `streamlit-extras` / `streamlit-option-menu`、刪已有替代的 Streamlit pytest 檔（`test_dashboard_page.py` / `test_backtest_page.py` / `test_data_management_page.py` / `test_stock_selector.py` / `test_themes.py` / `test_config_ui_section.py` / `test_settings_page.py`）、更新四份文件、全專案 pytest 回歸（測試總數不低於移除前的 svc + API 部分；扣除被移除的 7 個 Streamlit 測試檔後計算）。**10-H-2 不得在 10-H-1 未通過前啟動**；10-H-1 失敗時不准走捷徑刪檔。 |
+| **V3.0** | 2026/05/17 | 新增 **Phase 11 Dashboard 基本面與事件擴充**。11-A 先做版面調整（chart 400px→300px，左欄底部新增兩塊、共 6 個 placeholder）；11-B 實作估值 / 獲利區塊（本益比、股價淨值比、殖利率、月營收、歷史除息本益比、同產業本益比 Modal），新增 PER / 月營收 fetcher 與 PER / monthly_revenue / dividends / EPS 落地；11-C 實作籌碼 / 事件區塊（法人持股成本、除息與股東會事件行事曆、股東會手動覆蓋 Modal），新增 TWSE + TPEx 股東會全市場資料源與 manual override CSV。所有 P11 API 走 `/api/analysis/p11/*`，避免與既有 `/api/analysis/{section}` 動態路由衝突。股東會為全市場單一 parquet，不進 `data_meta`，改用獨立 JSON metadata。美股 P11 功能暫不支援，market=us 時隱藏下方兩塊。 |
 | **V2.7** | 2026/05/16 | **10-E 規格審查補丁**（12 項）：(1) `JobManager.finish_cancelled_job()` 新增（含 `cancel_job()` race condition 修正——只設 status、不關 queue）；(2) `GET /api/jobs/{id}/result` 擴充允許 cancelled + partial result；(3) 取消 `api/routers/backtest.py` 冗餘端點，前端直接用 `GET /api/config` 取 preset 清單；(4) `initial_capital` 預設 `1000000`，需新增為 `run_backtest_job()` 參數並注入引擎；(5) DCA 序列化映射補充（equity_curve / trades / metrics null 欄位）；(6) `sweep-defaults.ts` 完整內容 + `PARAM_TYPES` 型別表；(7) WFA 特化 `WfaProgress` interface 補充；(8) CSV blob 函式位置指定 `src/services/backtest_service.py`；(9) E2E Playwright 統一在 10-E-4 後撰寫；(10) **交易數量單位統一顯示「股」（shares），不做 1000 股→1 張轉換**（與舊 Streamlit 回測頁一致；「張」僅用於 10-D 儀表板的日成交量與籌碼顯示）；(11) 切換市場時 reset state（清空回測結果）；(12) DCA 批次比較 error message 明確定義為「DCA 不支援批次比較（請至單次回測使用）」。 |
 
 ---
@@ -2676,7 +2677,8 @@ You must reply entirely in Traditional Chinese (zh-TW).
 | **8** 個股綜合分析儀表板 | 8-A → 8-G（7 段） | 11.5-18 天 | ✅ |
 | **9** 美股 US-1/9-G 支援 | 9-A → 9-G（7 段） | 9.5-15.5 天 | ✅ |
 | **10** 前端架構重構 | 10-A → 10-H（8 段） | 15-25 天 | ✅ |
-| **合計** | 47 個子階段 | **79-109.5 天（約 16-22 週）** | |
+| **11** Dashboard 基本面與事件擴充 | 11-A → 11-D（4 段） | 6-11 天 | ✅ |
+| **合計** | 51 個子階段 | **85-120.5 天（約 17-24 週）** | |
 
 ---
 
@@ -2687,6 +2689,7 @@ You must reply entirely in Traditional Chinese (zh-TW).
 | **FinMind API（免費層）** | 免費 | 每日 3,000 次請求；初期夠用 |
 | **LLM API（AI 問答）** | 約 $1-5 USD/月 | 依 provider、模型與問答頻率而定 |
 | **yfinance** | 免費 | 非官方 API；台股 fallback 與 Phase 9 美股 US-1 日 K 資料源，使用量大時有被封或欄位變動風險 |
+| **TWSE / TPEx OpenAPI** | 免費 | Phase 11-C 股東會資料來源；無 token，一次抓上市 + 上櫃全市場資料 |
 | **美股付費資料源（US-2 以後可選）** | 暫不納入 | US-1 不採購；若 yfinance 品質不足，再評估 Polygon、Alpha Vantage 或其他供應商 |
 | **Streamlit（本機）** | 免費 | 本機 localhost 運行；Phase 10-H 移除後不再使用 |
 | **Next.js + FastAPI（本機）** | 免費 | Phase 10 起取代 Streamlit，本機 localhost 運行 |
@@ -3759,6 +3762,301 @@ SettingsPage
 | FastAPI 與 src/ import 整合 | 10-A 優先驗證 |
 | OneDrive + Node.js 相容性 | `.npmrc` 設 `package-import-method=copy`；fallback npm |
 | DuckDB 並發存取 | Job manager 限制同時 1 個寫入型 job |
+
+---
+
+### Phase 11：Dashboard 基本面與事件擴充
+
+#### Phase 11 定位
+
+Phase 11 在既有 Next.js + FastAPI dashboard 個股分析頁上，補上投資判斷常用的基本面、估值、籌碼與事件資訊。目標是讓使用者不離開個股頁，就能同時看到技術線圖、估值水位、月營收動能、除息紀錄、法人持股成本，以及近期除息 / 股東會事件。
+
+Phase 11 不改回測核心、不接實盤、不擴大美股功能；所有新增資料與 UI 先限定台股 market=`tw`。market=`us` 時，後端 P11 endpoint 回 `501 Not Implemented`，前端隱藏 P11 下方兩塊，不顯示「尚未支援」或 placeholder，保持 chart 下方留白。
+
+#### Phase 11 子階段與依賴
+
+| 子階段 | 名稱 | 內容 | 新增資料層 |
+|:---|:---|:---|:---|
+| 11-A | 版面調整 | Dashboard chart 高度 400px→300px；左欄 chart 下方新增兩塊區域，共 6 個 placeholder panel | 否 |
+| 11-B | 估值 / 獲利 | 本益比、股價淨值比、殖利率、月營收、歷史除息本益比、同產業本益比 Modal | 是：PER、月營收、dividends、EPS |
+| 11-C | 籌碼 / 事件 | 法人持股成本、事件行事曆（除息 + 股東會）、股東會手動編輯 | 是：TWSE / TPEx 股東會全市場資料 + manual override |
+| 11-D | 待定 | 散戶多空比或其他資訊，11-C 完成後再定義 | 待定 |
+
+執行順序固定為：
+
+```text
+11-A -> 11-B -> 11-C -> 11-D
+```
+
+11-B 與 11-C 雖然資料層可分開設計，但 UI integration 共用 `dashboard-page-client.tsx`、`dashboard_service.py`、`api/routers/analysis.py`，因此不得並行實作，避免互相覆蓋。
+
+#### P11 共通 UI 與文字規則
+
+新增區塊需遵守繁體中文優先：
+
+1. 有中文慣用詞時，只顯示中文。
+2. 無慣用中文或保留英文縮寫時，必須加 `?` tooltip。
+3. 所有 tooltip 使用既有 `HelpTooltip`，文字集中於 `web/src/components/dashboard/tooltip-text.ts`，P11 文字以 `P11_` 前綴管理。
+
+詞彙表：
+
+| 詞彙 | 顯示文字 | Tooltip |
+|:---|:---|:---|
+| PE / P/E | 本益比 | 無 |
+| PBR / P/B | 股價淨值比 | 無 |
+| Dividend Yield | 殖利率 | 無 |
+| YoY | 年增率 | 無 |
+| MoM | 月增率 | 無 |
+| TTM | 近四季 | 「以最近 4 季合計計算，避免單季波動影響」 |
+| TTM EPS | 近四季 EPS | 「最近 4 季每股盈餘加總」 |
+| EPS | EPS | 「每股盈餘」 |
+| VWAP | 加權均價 | 「以成交量加權的平均成交價」 |
+| Median | 中位數 | 無 |
+
+著色規則採台股慣例：
+
+| 場景 | 規則 |
+|:---|:---|
+| 年增率 / 月增率正值 | 紅色 |
+| 年增率 / 月增率負值 | 綠色 |
+| 法人浮盈虧正 | 紅色 |
+| 法人浮盈虧負 | 綠色 |
+| 倒數天數 < 7 | 紅色 |
+| 倒數天數 < 30 | 黃色 |
+| 倒數天數 >= 30 | 灰色 |
+
+#### P11 API 命名空間
+
+既有 `api/routers/analysis.py` 已有：
+
+```python
+@router.get("/api/analysis/{section}")
+def get_analysis_section(section: str, symbol: str, ...): ...
+```
+
+P11 所有新 endpoint 一律掛在 `/api/analysis/p11/*`，並在 router 檔案中放在動態路由之前，避免被 `{section}` 吃掉。
+
+P11 API 清單：
+
+| 方法 / 路徑 | 子階段 | 回傳 |
+|:---|:---|:---|
+| `GET /api/analysis/p11/valuation?symbol={s}` | 11-B | `{ per, pbr, dividend_yield, industry, date }` |
+| `GET /api/analysis/p11/monthly-revenue?symbol={s}&months=12` | 11-B | `{ items: [{ date, revenue, yoy, mom }, ...] }` |
+| `GET /api/analysis/p11/dividend-history?symbol={s}&count=5` | 11-B | `{ items: [{ date, cash_dividend, ttm_pe }, ...] }` |
+| `GET /api/analysis/p11/industry-per?symbol={s}` | 11-B | `{ industry, median, mean, count, items, cached_at }` |
+| `GET /api/analysis/p11/institutional-cost?symbol={s}&days=30` | 11-C | `{ foreign, trust, dealer }` |
+| `GET /api/analysis/p11/event-calendar?symbol={s}` | 11-C | `{ next_ex_dividend, last_ex_dividend, next_shareholder_meeting, last_shareholder_meeting }` |
+| `POST /api/analysis/p11/shareholder-meeting/override` | 11-C | body `{ symbol, date, meeting_type }`，寫入 manual override |
+| `DELETE /api/analysis/p11/shareholder-meeting/override?symbol={s}` | 11-C | 清除該 symbol 手動覆蓋 |
+
+Regression 必補：`/api/analysis/p11/valuation` 必須命中新 handler；`/api/analysis/p11foo` 應仍走 `{section}` 並回 `UNKNOWN_SECTION`，用測試固定路由行為。
+
+#### 11-A：Dashboard 版面調整
+
+11-A 只做前端版面，不新增資料與 API。
+
+變更：
+
+| 項目 | 規格 |
+|:---|:---|
+| Chart 高度 | `candlestick-chart.tsx` 從 400px 改 300px，容器 `h-[400px]` 改 `h-[300px]` |
+| 新增區域 | 左欄 chart 下方新增 `grid-cols-2 gap-3` 雙塊 |
+| 區塊 1 | 本益比、月營收、歷史除息本益比 |
+| 區塊 2 | 法人持股成本、事件行事曆、P11-D 預留 panel |
+| 中欄 / 右欄 | 不動 |
+| 美股 | market=`us` 時兩塊整體隱藏 |
+
+11-A placeholder 每格需使用 dashed border，標題列先就位，內容顯示 `(P11-B-1 待實作)` 或對應待實作文案。本益比 panel 右側先放「同產業 ->」按鈕，但按下無動作。
+
+#### 11-B：估值 / 獲利區塊
+
+11-B 新增四類資料落地：
+
+| 資料 | 路徑 | `data_meta.freq` |
+|:---|:---|:---|
+| PER 日級時序 | `data/raw/tw/{symbol}/per.parquet` | `per` |
+| 月營收 | `data/raw/tw/{symbol}/monthly_revenue.parquet` | `monthly_revenue` |
+| 除息事件 | `data/raw/tw/{symbol}/dividends.parquet` | `dividends` |
+| EPS | `data/raw/tw/{symbol}/eps.parquet` | `eps` |
+
+`FinMindFetcher.fetch_dividends()` 與 `FinMindFetcher.fetch_eps()` 已存在，但目前尚未進 storage / maintenance。11-B 必須補齊 dividends / EPS 的 save/load、parquet path、`data_meta` 註冊與測試，不能只新增 PER / 月營收。
+
+新增 fetcher：
+
+| 方法 | FinMind dataset | 原始欄位 | normalized 欄位 |
+|:---|:---|:---|:---|
+| `fetch_per` | `TaiwanStockPER` | `date, stock_id, PER, PBR, dividend_yield` | `date, per, pbr, dividend_yield, symbol` |
+| `fetch_monthly_revenue` | `TaiwanStockMonthRevenue` | `date, stock_id, country, revenue, revenue_month, revenue_year` | `date, revenue, revenue_month, revenue_year, symbol` |
+
+`YFinanceFetcher` 對 P11 新方法統一 `raise NotImplementedError("US not supported in P11.")`。
+
+Schema：
+
+```python
+PER_COLUMNS = ["date", "per", "pbr", "dividend_yield", "symbol"]
+MONTHLY_REVENUE_COLUMNS = ["date", "revenue", "revenue_month", "revenue_year", "symbol"]
+DIVIDENDS_COLUMNS = ["date", "cash_dividend", "stock_dividend", "symbol"]
+EPS_COLUMNS = ["date", "year", "quarter", "eps", "symbol"]
+```
+
+資料規範：
+
+- 所有 `date` 欄位為 `datetime64[ns, Asia/Taipei]`。
+- 月營收 `revenue` 單位為「元」，前端顯示時除以 `100_000_000` 換算為「億」。
+- `revenue_year` / `revenue_month` 為西元 int64。
+- EPS 既有 fetcher 回傳 `report_date`，落地前需複製成 canonical `date` 欄；`report_date` 保留作原始參考，`data_meta.first_date / last_date` 取 `date`。
+
+11-B panel：
+
+| Panel | 顯示 |
+|:---|:---|
+| 本益比 | 本益比、股價淨值比、殖利率；右側「同產業 ->」開 Modal |
+| 月營收 | 最新月份、營收（億）、年增率、月增率、12 個月 sparkline |
+| 歷史除息本益比 | 近 5 次除息日、現金股息、當日本益比 |
+
+月營收 YoY / MoM 由 service 層計算，不存入 storage：
+
+```python
+df = df.sort_values(["revenue_year", "revenue_month"]).reset_index(drop=True)
+df["yoy"] = df["revenue"].pct_change(12) * 100
+df["mom"] = df["revenue"].pct_change(1) * 100
+```
+
+歷史除息本益比使用除息日當天收盤價除以除息日前已公告的最近 4 季 EPS 加總；不足 4 季時回 `null`，前端顯示 `—`。
+
+同產業本益比 Modal：
+
+- 開啟時從 `stock_info_tw.parquet` 篩出同產業 peer 清單。
+- 同時呼叫 `GET /api/analysis/p11/industry-per`。
+- 後端使用 `ThreadPoolExecutor(max_workers=8)` 平行抓 PER；每個 worker 內建立獨立 `FinMindFetcher` / `requests.Session`，不得跨 thread 共用 session。
+- 結果 cache 至 `data/cache/industry_per/{slug(industry)}_{YYYY-MM-DD}.parquet`；同一產業同一天第二次 hit cache 秒回。
+- Cache miss 預估 80 檔 8-12 秒，150 檔 15-25 秒。
+- 單一 REST response 一次回完，不做漸進填值；個別 peer 失敗時該列 `per=null`，不阻擋其他 peer。
+- Modal 載入時，表格區顯示 skeleton，外加半透明遮罩壓暗背景，中央訊息框顯示「資料讀取中，正在整理同產業本益比...」與「首次載入約 8-25 秒，完成後會一次更新」。
+- Modal 寬度 `max-w-[1800px]`、高度 `90vh`、三欄表格、sticky 表頭、排序、目標股黃底標示「← 當前」。
+
+#### 11-C：籌碼 / 事件區塊
+
+11-C 包含法人持股成本與事件行事曆。
+
+法人持股成本不新增 fetcher，使用既有 institutional + daily OHLCV。計算邏輯：
+
+1. 取近 N 日（預設 30）法人買賣超。
+2. 與日 K 用日期 join。
+3. 每日近似加權均價為 `(high + low + close) / 3`。
+4. 只取該法人淨買為正的日期做加權平均成本。
+5. 浮盈虧 = `(current_price - weighted_cost) / weighted_cost * 100`。
+
+若期間內該法人全為淨賣或 0，回 `null`，前端顯示 `—`。
+
+股東會資料源：
+
+| 來源 | URL | 說明 |
+|:---|:---|:---|
+| TWSE 上市 | `https://openapi.twse.com.tw/v1/opendata/t187ap41_L` | 無 token，全市場一次抓 |
+| TPEx 上櫃 | `https://www.tpex.org.tw/openapi/v1/t187ap41_O` | 無 token，全市場一次抓 |
+
+新增 `TWSEFetcher`，獨立於 `IDataFetcher`。理由：股東會 endpoint 是全市場一次抓，語意不同於既有 per-symbol fetcher，不應塞入 `IDataFetcher` 抽象。
+
+股東會只存：
+
+```python
+SHAREHOLDER_MEETING_COLUMNS = ["date", "symbol", "meeting_type", "source", "updated_at"]
+```
+
+不存公司地址、開會地點、改選董監、聯絡電話、股務單位等欄位。
+
+股東會採雙層儲存：
+
+| Layer | 路徑 | 說明 |
+|:---|:---|:---|
+| Auto | `data/raw/tw/shareholder_meeting.parquet` | TWSE + TPEx 自動抓取，source=`auto` |
+| Manual | `data/manual/shareholder_meeting_override.csv` | 使用者手動覆蓋，source=`manual` |
+
+Manual CSV schema：
+
+```csv
+symbol,date,meeting_type,updated_at
+2330,2026-06-04,常會,2026-05-17T10:30:00+08:00
+6505,2026-07-08,臨時會,2026-05-17T11:00:00+08:00
+```
+
+Service 合併規則採 P3「後更新者優先」：
+
+| 場景 | 顯示 |
+|:---|:---|
+| 只有 auto | auto |
+| 只有 manual | manual + `[手動設定]` |
+| auto 與 manual 都有，manual.updated_at 較新 | manual + `[手動設定]` |
+| auto 與 manual 都有，auto.updated_at 較新 | auto |
+
+Auto `updated_at` 只在內容變動時更新：同一 symbol 日期不變時保留原 `updated_at`，避免 TWSE 每日出表 refresh 覆蓋 manual override；日期改變時才 bump。
+
+股東會不進 `data_meta`。原因是 `data_meta` 既有 schema 為 per-symbol `PRIMARY KEY (market, symbol, freq)` 且 `symbol NOT NULL`；股東會是全市場單一 parquet。規格決定：
+
+- 不建立 `symbol="__market__"` sentinel row。
+- 不修改 `DuckDBMeta` schema。
+- 不污染 `list_symbols()`、資料管理頁與 `data_meta.list_all()`。
+- 股東會使用獨立 metadata：`data/raw/tw/shareholder_meeting.meta.json`。
+
+Metadata schema：
+
+```json
+{
+  "last_updated_at": "2026-05-17T15:30:00+08:00",
+  "row_count": 1994,
+  "twse_row_count": 1091,
+  "tpex_row_count": 903,
+  "source_endpoints": {
+    "twse": "https://openapi.twse.com.tw/v1/opendata/t187ap41_L",
+    "tpex": "https://www.tpex.org.tw/openapi/v1/t187ap41_O"
+  }
+}
+```
+
+Once-per-day guard：
+
+- 觸發點在 `data_update` / `data_rebuild` job 尾端，不在 per-symbol loop 內。
+- 若 `shareholder_meeting.meta.json.last_updated_at` 是 Asia/Taipei 今天，跳過。
+- TWSE 或 TPEx 任一失敗時，不寫部分結果、不更新 meta，下次 job 可重試。
+
+事件行事曆顯示：
+
+| 狀態 | 規格 |
+|:---|:---|
+| 即將除息 | 日期、倒數天數、現金股息 |
+| 上次除息 | 日期、現金股息 |
+| 即將股東會 | 日期、倒數天數、常會 / 臨時會、手動 chip（若 source=manual） |
+| 上次股東會 | 日期、常會 / 臨時會；不顯示倒數 |
+| 無股東會資料 | 顯示「撈不到資料，需要手動填入」與編輯 icon |
+
+股東會手動編輯 Modal：
+
+- 由事件行事曆股東會列的編輯 icon 開啟。
+- 顯示股票、日期 input、常會 / 臨時會 radio、目前生效來源。
+- 有 manual override 時顯示「清除手動」。
+- 儲存走 `POST /api/analysis/p11/shareholder-meeting/override`。
+- 清除走 `DELETE /api/analysis/p11/shareholder-meeting/override`。
+- 日期必填，且不可早於今天前一年。
+
+#### Phase 11 不做
+
+- 不支援美股 P11 基本面 / 事件資料。
+- 不做手機 <768px 的完整 P11 排版優化；11-A 可先隱藏或保守堆疊，後續依實測調整。
+- 不做散戶多空比演算法；11-D 才定義。
+- 不做全市場融資維持率、外資期貨未平倉、大盤指數等資料。
+- 同產業本益比 Modal 11-B 不做 SSE 漸進填值；若 UX 不佳，11-D 後再評估改 read job + SSE。
+
+#### Phase 11 風險
+
+| 風險 | 緩解 |
+|:---|:---|
+| FinMind 同產業 PER 大量呼叫撞 quota | cache by industry + date；同一天同產業只抓一次；個別 peer 失敗不阻擋整體 |
+| 同產業 Modal 首次等待 8-25 秒 | skeleton + 半透明遮罩 + 中央等待訊息；cache hit 後秒回 |
+| TWSE / TPEx endpoint 變更或 SSL 問題 | 失敗時保留既有 parquet 與 meta，不寫部分結果；後續 reactive 改規格 |
+| Manual override 被 auto daily refresh 蓋掉 | auto `updated_at` 只在內容變動時 bump |
+| EPS `date=report_date` 與會計期間語意不同 | 接受；metadata 記錄資料公告範圍，會計期間仍保留 `year/quarter` |
+| Dashboard 高度增加 | chart 縮至 300px；若 1080p 仍需 scroll，先接受 |
 
 ---
 
