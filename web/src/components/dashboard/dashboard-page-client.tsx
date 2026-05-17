@@ -7,7 +7,11 @@ import { MarketSwitcher } from "@/components/market-switcher";
 import { StockSelector } from "@/components/stock-selector";
 import { CandlestickChart } from "@/components/dashboard/candlestick-chart";
 import { HelpTooltip } from "@/components/dashboard/help-tooltip";
-import { DASHBOARD_TOOLTIP_TEXT, PATTERN_DETAILS } from "@/components/dashboard/tooltip-text";
+import {
+  DASHBOARD_TOOLTIP_TEXT,
+  P11_TOOLTIP_TEXT,
+  PATTERN_DETAILS,
+} from "@/components/dashboard/tooltip-text";
 import { useDashboard } from "@/lib/hooks/useDashboard";
 import { changeColor, formatNumber, formatPct } from "@/lib/formatters";
 import type {
@@ -44,6 +48,23 @@ function normalizeSymbol(raw: string): string {
 
 function renderRatio(ratio: number): string {
   return `${(ratio * 100).toFixed(2)}%`;
+}
+
+function twTickSize(price: number): number {
+  if (price < 10) return 0.01;
+  if (price < 50) return 0.05;
+  if (price < 100) return 0.1;
+  if (price < 500) return 0.5;
+  if (price < 1000) return 1;
+  return 5;
+}
+
+function formatLevelPrice(value: number, market: Market): string {
+  if (market === "us") return formatNumber(value, 2);
+  const tick = twTickSize(value);
+  if (tick >= 1) return formatNumber(value, 0);
+  if (tick >= 0.1) return formatNumber(value, 1);
+  return formatNumber(value, 2);
 }
 
 function mapPatternRows(
@@ -226,7 +247,13 @@ function TechnicalPanel({ technical }: { technical: TechnicalSummary }) {
   );
 }
 
-function LevelsPanel({ technical }: { technical: TechnicalSummary }) {
+function LevelsPanel({
+  technical,
+  market,
+}: {
+  technical: TechnicalSummary;
+  market: Market;
+}) {
   return (
     <section className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
       <h3 className="mb-2 text-sm font-semibold text-slate-100">關鍵價位</h3>
@@ -238,7 +265,7 @@ function LevelsPanel({ technical }: { technical: TechnicalSummary }) {
           </div>
           <div className="min-w-0 text-right text-base font-semibold text-rise [font-family:var(--font-mono)]">
             {technical.resistance_levels
-              .map((item) => formatNumber(item.value, 0))
+              .map((item) => formatLevelPrice(item.value, market))
               .join(" / ")}
           </div>
         </div>
@@ -249,7 +276,7 @@ function LevelsPanel({ technical }: { technical: TechnicalSummary }) {
           </div>
           <div className="min-w-0 text-right text-base font-semibold text-fall [font-family:var(--font-mono)]">
             {technical.support_levels
-              .map((item) => formatNumber(item.value, 0))
+              .map((item) => formatLevelPrice(item.value, market))
               .join(" / ")}
           </div>
         </div>
@@ -344,16 +371,18 @@ function ChipPanel({
       </div>
 
       {bidAsk ? (
-        <div className="mb-3 rounded-lg border border-slate-800 bg-slate-900/60 p-3">
-          <div className="mb-1 flex items-center gap-1 text-xs text-slate-300">
-            買賣力道
-            <HelpTooltip text={DASHBOARD_TOOLTIP_TEXT.bid_ask} />
-          </div>
-          <div className="text-sm [font-family:var(--font-mono)] text-slate-100">
-            {bidAsk.label}
-          </div>
-          <div className="text-xs text-slate-400 [font-family:var(--font-mono)]">
-            買方 {renderRatio(bidAsk.bid_ratio)} / 賣方 {renderRatio(bidAsk.ask_ratio)}
+        <div className="mb-2 rounded-lg border border-slate-800 bg-slate-900/60 p-2">
+          <div className="flex items-center justify-between gap-2 text-xs" data-testid="chip-bid-ask-inline">
+            <div className="flex shrink-0 items-center gap-1 text-slate-300">
+              買賣力道
+              <HelpTooltip text={DASHBOARD_TOOLTIP_TEXT.bid_ask} />
+            </div>
+            <div className="min-w-0 text-right [font-family:var(--font-mono)]">
+              <span className="text-slate-100">{bidAsk.label}</span>
+              <span className="ml-2 whitespace-nowrap text-slate-400">
+                買方 {renderRatio(bidAsk.bid_ratio)} / 賣方 {renderRatio(bidAsk.ask_ratio)}
+              </span>
+            </div>
           </div>
         </div>
       ) : null}
@@ -388,23 +417,31 @@ function ChipPanel({
         </div>
       </div>
 
-      <div className="my-3 grid grid-cols-2 gap-2 rounded-lg border border-slate-800 bg-slate-900/40 p-3 text-sm">
-        <div>
-          <div className="mb-1 flex items-center gap-1 text-xs text-slate-400">
-            融資
-            <HelpTooltip text={DASHBOARD_TOOLTIP_TEXT.margin_balance} />
+      <div className="my-2 rounded-lg border border-slate-800 bg-slate-900/40 p-2 text-xs">
+        <div className="flex items-center gap-6" data-testid="chip-financing-inline-row">
+          <div
+            className="flex items-center gap-1 whitespace-nowrap text-slate-400"
+            data-testid="chip-margin-inline"
+          >
+            <span className="inline-flex items-center gap-1">
+              融資
+              <HelpTooltip text={DASHBOARD_TOOLTIP_TEXT.margin_balance} />
+            </span>
+            <span className={`[font-family:var(--font-mono)] ${changeColor(chip.margin_balance_change, "tw")}`}>
+              {formatSignedValue(chip.margin_balance_change, 0)} 張
+            </span>
           </div>
-          <div className={`[font-family:var(--font-mono)] ${changeColor(chip.margin_balance_change, "tw")}`}>
-            {formatSignedValue(chip.margin_balance_change, 0)} 張
-          </div>
-        </div>
-        <div>
-          <div className="mb-1 flex items-center gap-1 text-xs text-slate-400">
-            融券
-            <HelpTooltip text={DASHBOARD_TOOLTIP_TEXT.short_balance} />
-          </div>
-          <div className={`[font-family:var(--font-mono)] ${changeColor(chip.short_balance_change, "tw")}`}>
-            {formatSignedValue(chip.short_balance_change, 0)} 張
+          <div
+            className="flex items-center gap-1 whitespace-nowrap text-slate-400"
+            data-testid="chip-short-inline"
+          >
+            <span className="inline-flex items-center gap-1">
+              融券
+              <HelpTooltip text={DASHBOARD_TOOLTIP_TEXT.short_balance} />
+            </span>
+            <span className={`[font-family:var(--font-mono)] ${changeColor(chip.short_balance_change, "tw")}`}>
+              {formatSignedValue(chip.short_balance_change, 0)} 張
+            </span>
           </div>
         </div>
       </div>
@@ -654,6 +691,36 @@ function ChartSection({
   );
 }
 
+function P11PlaceholderPanel({
+  title,
+  tooltip,
+  placeholder,
+  action,
+  testId,
+}: {
+  title: string;
+  tooltip: string;
+  placeholder: string;
+  action?: React.ReactNode;
+  testId: string;
+}) {
+  return (
+    <section
+      className="rounded-lg border border-dashed border-slate-700 bg-slate-950/40 p-3"
+      data-testid={testId}
+    >
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1">
+          <h3 className="text-sm font-semibold text-slate-100">{title}</h3>
+          <HelpTooltip text={tooltip} />
+        </div>
+        {action}
+      </div>
+      <p className="text-sm italic text-slate-500">{placeholder}</p>
+    </section>
+  );
+}
+
 export default function DashboardPageClient() {
   const [market, setMarket] = useState<Market>("tw");
   const [pendingSymbol, setPendingSymbol] = useState("2330");
@@ -765,7 +832,10 @@ export default function DashboardPageClient() {
             ) : null}
 
             {isLoading ? (
-              <div className="h-[400px] animate-pulse rounded-xl bg-slate-900/80" />
+              <div
+                className="h-[300px] animate-pulse rounded-xl bg-slate-900/80"
+                data-testid="dashboard-chart-skeleton"
+              />
             ) : null}
 
             {error ? (
@@ -787,7 +857,64 @@ export default function DashboardPageClient() {
                   interval={interval}
                   onIntervalChange={setInterval}
                 />
-                {/* Q4: chart 下方暫時留白，後續新增資訊區塊 */}
+                {market === "tw" ? (
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <div
+                      className="space-y-3"
+                      data-testid="p11-placeholder-grid-left"
+                    >
+                      <P11PlaceholderPanel
+                        title="本益比"
+                        tooltip={P11_TOOLTIP_TEXT.pe_ratio}
+                        placeholder="(P11-B-1 待實作)"
+                        action={(
+                          <button
+                            type="button"
+                            className="rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-300"
+                          >
+                            同產業 -&gt;
+                          </button>
+                        )}
+                        testId="p11-panel-pe-ratio"
+                      />
+                      <P11PlaceholderPanel
+                        title="月營收"
+                        tooltip={P11_TOOLTIP_TEXT.monthly_revenue}
+                        placeholder="(P11-B-2 待實作)"
+                        testId="p11-panel-monthly-revenue"
+                      />
+                      <P11PlaceholderPanel
+                        title="歷史除息本益比"
+                        tooltip={P11_TOOLTIP_TEXT.historical_dividend_pe}
+                        placeholder="(P11-B-3 待實作)"
+                        testId="p11-panel-historical-dividend-pe"
+                      />
+                    </div>
+                    <div
+                      className="space-y-3"
+                      data-testid="p11-placeholder-grid-right"
+                    >
+                      <P11PlaceholderPanel
+                        title="法人持股成本"
+                        tooltip={P11_TOOLTIP_TEXT.institutional_cost}
+                        placeholder="(P11-C-1 待實作)"
+                        testId="p11-panel-institutional-cost"
+                      />
+                      <P11PlaceholderPanel
+                        title="事件行事曆"
+                        tooltip={P11_TOOLTIP_TEXT.event_calendar}
+                        placeholder="(P11-C-2 待實作)"
+                        testId="p11-panel-event-calendar"
+                      />
+                      <P11PlaceholderPanel
+                        title="散戶多空比"
+                        tooltip={P11_TOOLTIP_TEXT.retail_sentiment}
+                        placeholder="(P11-D 待定)"
+                        testId="p11-panel-retail-sentiment"
+                      />
+                    </div>
+                  </div>
+                ) : null}
               </>
             ) : null}
           </div>
@@ -796,7 +923,7 @@ export default function DashboardPageClient() {
           {data && !error ? (
             <div className="mt-3 space-y-2 xl:mt-0">
               <TechnicalPanel technical={data.technical} />
-              <LevelsPanel technical={data.technical} />
+              <LevelsPanel technical={data.technical} market={market} />
               {market === "tw" ? (
                 <ChipPanel
                   chip={data.chip}

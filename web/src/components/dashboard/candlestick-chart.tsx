@@ -157,104 +157,6 @@ function buildSma(rows: ChartBar[], window: number): LineData<Time>[] {
   return out;
 }
 
-function buildRsi(rows: ChartBar[], period = 14): LineData<Time>[] {
-  if (rows.length <= period) return [];
-  let avgGain = 0;
-  let avgLoss = 0;
-  for (let i = 1; i <= period; i += 1) {
-    const diff = rows[i].close - rows[i - 1].close;
-    avgGain += diff > 0 ? diff : 0;
-    avgLoss += diff < 0 ? Math.abs(diff) : 0;
-  }
-  avgGain /= period;
-  avgLoss /= period;
-
-  const out: LineData<Time>[] = [];
-  const firstRs = avgLoss === 0 ? 100 : avgGain / avgLoss;
-  out.push({
-    time: rows[period].time,
-    value: Number((100 - 100 / (1 + firstRs)).toFixed(4)),
-  });
-
-  for (let i = period + 1; i < rows.length; i += 1) {
-    const diff = rows[i].close - rows[i - 1].close;
-    const gain = diff > 0 ? diff : 0;
-    const loss = diff < 0 ? Math.abs(diff) : 0;
-    avgGain = (avgGain * (period - 1) + gain) / period;
-    avgLoss = (avgLoss * (period - 1) + loss) / period;
-    const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
-    out.push({
-      time: rows[i].time,
-      value: Number((100 - 100 / (1 + rs)).toFixed(4)),
-    });
-  }
-  return out;
-}
-
-function buildStochasticKD(
-  rows: ChartBar[],
-  period = 9,
-): { k: LineData<Time>[]; d: LineData<Time>[] } {
-  if (rows.length < period) return { k: [], d: [] };
-  const kData: LineData<Time>[] = [];
-  const dData: LineData<Time>[] = [];
-  let kPrev = 50;
-  let dPrev = 50;
-
-  for (let i = period - 1; i < rows.length; i += 1) {
-    const window = rows.slice(i - period + 1, i + 1);
-    const highest = Math.max(...window.map((row) => row.high));
-    const lowest = Math.min(...window.map((row) => row.low));
-    const close = rows[i].close;
-    const rsv = highest === lowest ? 50 : ((close - lowest) / (highest - lowest)) * 100;
-    const k = (2 / 3) * kPrev + (1 / 3) * rsv;
-    const d = (2 / 3) * dPrev + (1 / 3) * k;
-    kPrev = k;
-    dPrev = d;
-    kData.push({ time: rows[i].time, value: Number(k.toFixed(4)) });
-    dData.push({ time: rows[i].time, value: Number(d.toFixed(4)) });
-  }
-  return { k: kData, d: dData };
-}
-
-function buildEma(values: number[], period: number): number[] {
-  if (values.length === 0) return [];
-  const out: number[] = [values[0]];
-  const alpha = 2 / (period + 1);
-  for (let i = 1; i < values.length; i += 1) {
-    out.push(values[i] * alpha + out[i - 1] * (1 - alpha));
-  }
-  return out;
-}
-
-function buildMacd(
-  rows: ChartBar[],
-): { macd: LineData<Time>[]; signal: LineData<Time>[]; hist: HistogramData<Time>[] } {
-  if (rows.length < 26) return { macd: [], signal: [], hist: [] };
-  const closes = rows.map((row) => row.close);
-  const ema12 = buildEma(closes, 12);
-  const ema26 = buildEma(closes, 26);
-  const macdValues = closes.map((_, idx) => ema12[idx] - ema26[idx]);
-  const signalValues = buildEma(macdValues, 9);
-  const macd: LineData<Time>[] = [];
-  const signal: LineData<Time>[] = [];
-  const hist: HistogramData<Time>[] = [];
-
-  for (let i = 0; i < rows.length; i += 1) {
-    const m = macdValues[i];
-    const s = signalValues[i];
-    const h = m - s;
-    macd.push({ time: rows[i].time, value: Number(m.toFixed(4)) });
-    signal.push({ time: rows[i].time, value: Number(s.toFixed(4)) });
-    hist.push({
-      time: rows[i].time,
-      value: Number(h.toFixed(4)),
-      color: h >= 0 ? "rgba(239, 68, 68, 0.8)" : "rgba(34, 197, 94, 0.8)",
-    });
-  }
-  return { macd, signal, hist };
-}
-
 function fmtVol(v: number): string {
   if (v >= 1e8) return `${(v / 1e8).toFixed(1)}億`;
   if (v >= 1e4) return `${(v / 1e4).toFixed(0)}萬`;
@@ -283,12 +185,6 @@ export function CandlestickChart({
   const ma5Ref = useRef<ISeriesApi<"Line"> | null>(null);
   const ma20Ref = useRef<ISeriesApi<"Line"> | null>(null);
   const ma60Ref = useRef<ISeriesApi<"Line"> | null>(null);
-  const kdKRef = useRef<ISeriesApi<"Line"> | null>(null);
-  const kdDRef = useRef<ISeriesApi<"Line"> | null>(null);
-  const rsiRef = useRef<ISeriesApi<"Line"> | null>(null);
-  const macdRef = useRef<ISeriesApi<"Line"> | null>(null);
-  const macdSignalRef = useRef<ISeriesApi<"Line"> | null>(null);
-  const macdHistRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const priceLineRefsRef = useRef<IPriceLine[]>([]);
 
   // Refs for crosshair tooltip data lookup
@@ -307,7 +203,7 @@ export function CandlestickChart({
 
     const chart = createChart(containerRef.current, {
       autoSize: true,
-      height: 400,
+      height: 300,
       layout: {
         background: { type: ColorType.Solid, color: "transparent" },
         textColor: "#94a3b8",
@@ -325,7 +221,7 @@ export function CandlestickChart({
     });
 
     chart.priceScale("right").applyOptions({
-      scaleMargins: { top: 0.05, bottom: 0.52 },
+      scaleMargins: { top: 0.05, bottom: 0.30 },
     });
 
     const upColor = MARKET_UP_COLOR[market];
@@ -346,7 +242,7 @@ export function CandlestickChart({
       lastValueVisible: false,
       priceLineVisible: false,
     });
-    volume.priceScale().applyOptions({ scaleMargins: { top: 0.56, bottom: 0.34 } });
+    volume.priceScale().applyOptions({ scaleMargins: { top: 0.74, bottom: 0.03 } });
 
     const ma5 = chart.addSeries(LineSeries, {
       color: "#f59e0b",
@@ -367,64 +263,12 @@ export function CandlestickChart({
       priceLineVisible: false,
     });
 
-    const kdK = chart.addSeries(LineSeries, {
-      priceScaleId: "kd",
-      color: "#fb923c",
-      lineWidth: 1,
-      lastValueVisible: false,
-      priceLineVisible: false,
-    });
-    const kdD = chart.addSeries(LineSeries, {
-      priceScaleId: "kd",
-      color: "#60a5fa",
-      lineWidth: 1,
-      lastValueVisible: false,
-      priceLineVisible: false,
-    });
-    kdK.priceScale().applyOptions({ scaleMargins: { top: 0.69, bottom: 0.22 } });
-
-    const rsi = chart.addSeries(LineSeries, {
-      priceScaleId: "rsi",
-      color: "#f472b6",
-      lineWidth: 1,
-      lastValueVisible: false,
-      priceLineVisible: false,
-    });
-    rsi.priceScale().applyOptions({ scaleMargins: { top: 0.80, bottom: 0.11 } });
-
-    const macd = chart.addSeries(LineSeries, {
-      priceScaleId: "macd",
-      color: "#a78bfa",
-      lineWidth: 1,
-      lastValueVisible: false,
-      priceLineVisible: false,
-    });
-    const macdSignal = chart.addSeries(LineSeries, {
-      priceScaleId: "macd",
-      color: "#fbbf24",
-      lineWidth: 1,
-      lastValueVisible: false,
-      priceLineVisible: false,
-    });
-    const macdHist = chart.addSeries(HistogramSeries, {
-      priceScaleId: "macd",
-      lastValueVisible: false,
-      priceLineVisible: false,
-    });
-    macd.priceScale().applyOptions({ scaleMargins: { top: 0.89, bottom: 0.01 } });
-
     chartRef.current = chart;
     candleRef.current = candle;
     volRef.current = volume;
     ma5Ref.current = ma5;
     ma20Ref.current = ma20;
     ma60Ref.current = ma60;
-    kdKRef.current = kdK;
-    kdDRef.current = kdD;
-    rsiRef.current = rsi;
-    macdRef.current = macd;
-    macdSignalRef.current = macdSignal;
-    macdHistRef.current = macdHist;
 
     // Crosshair tooltip — created via useEffect to avoid SSR hydration mismatch
     const tooltip = document.createElement("div");
@@ -491,12 +335,6 @@ export function CandlestickChart({
       ma5Ref.current = null;
       ma20Ref.current = null;
       ma60Ref.current = null;
-      kdKRef.current = null;
-      kdDRef.current = null;
-      rsiRef.current = null;
-      macdRef.current = null;
-      macdSignalRef.current = null;
-      macdHistRef.current = null;
       priceLineRefsRef.current = [];
     };
   }, [market]);
@@ -526,21 +364,11 @@ export function CandlestickChart({
     ma20DataRef.current = sma20;
     ma60DataRef.current = sma60;
 
-    const kd = buildStochasticKD(bars);
-    const rsi = buildRsi(bars, 14);
-    const macd = buildMacd(bars);
-
     candleRef.current.setData(candleData);
     volRef.current.setData(volumeData);
     ma5Ref.current?.setData(sma5);
     ma20Ref.current?.setData(sma20);
     ma60Ref.current?.setData(sma60);
-    kdKRef.current?.setData(kd.k);
-    kdDRef.current?.setData(kd.d);
-    rsiRef.current?.setData(rsi);
-    macdRef.current?.setData(macd.macd);
-    macdSignalRef.current?.setData(macd.signal);
-    macdHistRef.current?.setData(macd.hist);
 
     // Remove stale S/R lines and redraw
     const candle = candleRef.current;
@@ -586,7 +414,7 @@ export function CandlestickChart({
   return (
     <div
       ref={containerRef}
-      className="relative h-[400px] w-full rounded-xl bg-slate-950/70"
+      className="relative h-[300px] w-full rounded-xl bg-slate-950/70"
       data-testid="candlestick-chart"
     />
   );

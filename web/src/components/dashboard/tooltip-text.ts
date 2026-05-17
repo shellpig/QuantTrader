@@ -59,3 +59,16 @@ export const PATTERN_DETAILS: Record<string, string> = {
   "W底（雙底）": "兩低點接近且突破頸線後成立，常作為中短期轉強訊號。",
   "M頭（雙頂）": "兩高點接近且跌破頸線後成立，常作為中短期轉弱訊號。",
 };
+
+export const P11_TOOLTIP_TEXT = {
+  pe_ratio: "本益比（P/E）= 股價 / 每股盈餘，用來衡量市場對獲利的定價水位。",
+  monthly_revenue: "月營收顯示公司每月營業收入，常用來觀察景氣循環與營運動能。",
+  historical_dividend_pe:
+    "歷史除息本益比以歷史本益比區間對照除息日，用於觀察估值與殖利率關係。",
+  institutional_cost:
+    "法人持股成本估算外資、投信、自營商近一段時間累積部位的平均成本區間。",
+  event_calendar:
+    "事件行事曆整合近期除息日與股東會，協助評估事件前後波動與部位規劃。",
+  retail_sentiment:
+    "散戶多空比為後續待定指標，11-A 僅保留版面位置，不提供計算結果。",
+} as const;
