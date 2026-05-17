@@ -218,6 +218,8 @@ class DataMaintenance:
         if new_df.empty:
             self._rebuild_adjusted_from_raw(symbol=symbol, raw_df=existing, market=normalized_market)
             self._update_meta(symbol=symbol, freq="daily", source=self._source_name(), df=existing, market=normalized_market)
+            if normalized_market == "tw" and self.meta.get_meta(symbol, "per", market=normalized_market) is None:
+                self._rebuild_p11_datasets_best_effort(symbol=symbol, market=normalized_market)
             return 0
 
         cleaned_new, _ = self.cleaner.clean(new_df, symbol=symbol)
@@ -282,6 +284,10 @@ class DataMaintenance:
             return _empty_eps()
 
     def _rebuild_p11_datasets(self, symbol: str, market: str) -> None:
+        # Clear stale P11 parquets before fetching so rebuild is a clean overwrite,
+        # not an upsert merge that may preserve incorrect historical data.
+        self.storage.clear_p11_parquets(symbol, market=market)
+
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         source = self._source_name()
 

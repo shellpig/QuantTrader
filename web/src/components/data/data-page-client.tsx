@@ -68,16 +68,17 @@ export function DataPageClient() {
 
   async function handleDeleteConfirm() {
     if (!deleteRow) return;
+    const target = deleteRow;
     setIsDeleting(true);
     try {
-      await apiDelete(`/api/data/${deleteRow.market}/${deleteRow.symbol}`);
-      setDeleteRow(null);
-      mutate();
-      toast.success(`已刪除：${deleteRow.symbol}`);
+      await apiDelete(`/api/data/${target.market}/${target.symbol}`);
+      toast.success(`已刪除：${target.symbol}`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "刪除失敗，請稍後再試");
     } finally {
       setIsDeleting(false);
+      setDeleteRow(null);
+      mutate();
     }
   }
 

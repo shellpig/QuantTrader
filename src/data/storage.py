@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import os
+import shutil
+import stat
+import time
 from pathlib import Path
 from typing import Any
 
@@ -911,6 +915,59 @@ class ParquetStorage:
             timezone=self._market_timezone(normalized_market),
         )
 
+    def clear_p11_parquets(self, symbol: str, market: str = "tw") -> None:
+        """Delete P11-specific parquets (per, monthly_revenue, dividends, eps) so that
+        a subsequent rebuild writes fresh data instead of merging with stale data."""
+        normalized_market = self._validate_market(market)
+        normalized_symbol = self._validate_symbol(symbol, normalized_market)
+        for path_fn in (
+            self._per_path,
+            self._monthly_revenue_path,
+            self._dividends_path,
+            self._eps_path,
+        ):
+            p = path_fn(normalized_symbol, normalized_market)
+            if p.exists():
+                p.unlink()
+
+    def delete_symbol(self, symbol: str, market: str = "tw") -> None:
+        """Delete all parquet files (raw/ and processed/) for a given symbol+market."""
+        normalized_market = self._validate_market(market)
+        normalized_symbol = self._validate_symbol(symbol, normalized_market)
+        for layer in ("raw", "processed"):
+            sym_dir = (self.data_dir / layer / normalized_market / normalized_symbol).resolve(strict=False)
+            try:
+                sym_dir.relative_to(self.data_dir)
+            except ValueError as exc:
+                raise StorageError(f"Resolved path escapes data_dir: {sym_dir}") from exc
+            if sym_dir.is_dir():
+                _rmtree_with_retry(sym_dir)
+
+
+def _clear_readonly_onexc(func: Any, path: str, exc: BaseException) -> None:
+    """onexc handler for shutil.rmtree: strip the Windows ReadOnly bit then retry."""
+    os.chmod(path, stat.S_IWRITE)
+    func(path)
+
+
+def _rmtree_with_retry(path: Path, max_attempts: int = 5) -> None:
+    """Remove a directory tree handling two common Windows failure modes:
+
+    1. ReadOnly attribute on dirs/files (WinError 5) — cleared by _clear_readonly_onexc.
+    2. Short-lived file locks held by antivirus / FastAPI reads — retried with
+       exponential backoff (total wait ≈ 3 s across 5 attempts).
+    """
+    delay = 0.2
+    for attempt in range(max_attempts):
+        try:
+            shutil.rmtree(path, onexc=_clear_readonly_onexc)
+            return
+        except PermissionError:
+            if attempt == max_attempts - 1:
+                raise
+            time.sleep(delay)
+            delay *= 2
+
 
 class DuckDBMeta:
     """
@@ -1053,6 +1110,14 @@ class DuckDBMeta:
             ORDER BY market, symbol, freq;
             """
         ).df()
+
+    def delete_symbol(self, symbol: str, market: str = "tw") -> None:
+        """Remove all metadata rows for a given symbol+market."""
+        normalized_market = normalize_market(market)
+        self._conn.execute(
+            "DELETE FROM data_meta WHERE market = ? AND symbol = ?;",
+            [normalized_market, symbol],
+        )
 
     def close(self) -> None:
         if hasattr(self, "_conn") and self._conn is not None:

@@ -46,10 +46,12 @@ export async function apiFetch<T>(
 
   if (!res.ok) {
     const body = await res.json().catch(() => null);
+    // FastAPI HTTPException wraps detail in body.detail; plain envelope uses body.error
+    const errorDetail = body?.detail?.error ?? body?.error;
     throw new ApiClientError(
       res.status,
-      body?.error?.code as string | undefined,
-      body?.error?.message as string | undefined,
+      errorDetail?.code as string | undefined,
+      errorDetail?.message as string | undefined,
     );
   }
 

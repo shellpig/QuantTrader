@@ -38,4 +38,16 @@ describe("ValuationPanel", () => {
     render(<ValuationPanel data={undefined} onOpenIndustry={() => undefined} />);
     expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(3);
   });
+
+  it("shows unsupported note when all valuation fields are null (ETF)", () => {
+    render(
+      <ValuationPanel
+        data={{ symbol: "0056", market: "tw", date: null, per: null, pbr: null, dividend_yield: null, industry: null }}
+        onOpenIndustry={() => undefined}
+      />,
+    );
+    expect(screen.getByTestId("p11-valuation-unsupported")).toBeInTheDocument();
+    expect(screen.getByText("資料源未提供此標的估值資料（如 ETF）")).toBeInTheDocument();
+    expect(screen.queryByText("股價淨值比")).not.toBeInTheDocument();
+  });
 });

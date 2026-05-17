@@ -17,6 +17,7 @@ from src.services.dashboard_service import (
     get_industry_per_table,
     get_monthly_revenue,
     get_valuation,
+    _lookup_nearest_close,
     _normalize_daily_df,
     _prepare_daily_data,
 )
@@ -321,6 +322,86 @@ def test_get_dividend_history_with_pe_uses_latest_announced_4q() -> None:
         data = get_dividend_history_with_pe("2330", count=5, market="tw")
         assert len(data["items"]) == 1
         assert data["items"][0]["ttm_pe"] == pytest.approx(12.5)
+        assert "payment_date" not in data["items"][0]
+        assert data["items"][0]["price_date"] == "2026-06-15"
+
+
+def test_lookup_nearest_close_returns_exact_match() -> None:
+    daily = pd.DataFrame(
+        {
+            "date_key": ["2026-06-13", "2026-06-16"],
+            "close": [98.0, 102.0],
+        }
+    )
+    close, price_date = _lookup_nearest_close(daily, "2026-06-16")
+    assert close == pytest.approx(102.0)
+    assert price_date == "2026-06-16"
+
+
+def test_lookup_nearest_close_falls_back_to_previous_trading_day() -> None:
+    """Ex-dividend date is a non-trading day (e.g. Saturday); should use the last available close."""
+    daily = pd.DataFrame(
+        {
+            "date_key": ["2026-06-12", "2026-06-13"],
+            "close": [99.0, 101.0],
+        }
+    )
+    # 2026-06-14 is Sunday — not in daily data
+    close, price_date = _lookup_nearest_close(daily, "2026-06-14")
+    assert close == pytest.approx(101.0)
+    assert price_date == "2026-06-13"
+
+
+def test_lookup_nearest_close_returns_none_when_no_earlier_date() -> None:
+    daily = pd.DataFrame({"date_key": ["2026-06-20"], "close": [100.0]})
+    close, price_date = _lookup_nearest_close(daily, "2026-06-15")
+    assert close is None
+    assert price_date is None
+
+
+def test_get_dividend_history_with_pe_uses_nearest_close_for_non_trading_day() -> None:
+    dividends_df = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2026-06-14"]),  # Sunday — no K-line
+            "cash_dividend": [3.0],
+            "stock_dividend": [0.0],
+            "symbol": ["2330"],
+        }
+    )
+    daily_df = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2026-06-12", "2026-06-13"]),
+            "open": [100.0, 100.0],
+            "high": [101.0, 101.0],
+            "low": [99.0, 99.0],
+            "close": [100.0, 104.0],
+            "volume": [1000, 1000],
+            "symbol": ["2330", "2330"],
+        }
+    )
+    eps_df = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2025-05-15", "2025-08-14", "2025-11-14", "2026-03-15"]),
+            "eps": [2.0, 2.0, 2.0, 2.0],
+            "symbol": ["2330"] * 4,
+            "report_date": pd.to_datetime(["2025-05-15", "2025-08-14", "2025-11-14", "2026-03-15"]),
+        }
+    )
+
+    with patch("src.services.dashboard_service.ParquetStorage") as mock_storage_cls:
+        mock_storage = MagicMock()
+        mock_storage.load_dividends.return_value = dividends_df
+        mock_storage.load_daily.return_value = daily_df
+        mock_storage.load_eps.return_value = eps_df
+        mock_storage_cls.return_value = mock_storage
+
+        data = get_dividend_history_with_pe("2330", count=5, market="tw")
+
+    assert len(data["items"]) == 1
+    item = data["items"][0]
+    # Nearest close is 2026-06-13 (104.0), TTM EPS = 8.0 → PE = 13.0
+    assert item["ttm_pe"] == pytest.approx(13.0)
+    assert item["price_date"] == "2026-06-13"
 
 
 def test_get_industry_per_table_uses_cache_hit(tmp_path) -> None:

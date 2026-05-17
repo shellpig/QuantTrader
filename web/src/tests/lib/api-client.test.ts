@@ -70,6 +70,39 @@ describe("apiFetch", () => {
     expect((err as ApiClientError).status).toBe(503);
   });
 
+  it("reads error from FastAPI detail envelope (body.detail.error)", async () => {
+    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      json: async () => ({
+        detail: { error: { code: "DELETE_PARTIAL", message: "刪除部分失敗：parquet: Permission denied" } },
+      }),
+    } as Response);
+
+    await expect(apiFetch("/api/data/tw/2330")).rejects.toMatchObject({
+      name: "ApiClientError",
+      status: 500,
+      code: "DELETE_PARTIAL",
+      message: "刪除部分失敗：parquet: Permission denied",
+    });
+  });
+
+  it("prefers detail.error over top-level error when both present", async () => {
+    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      json: async () => ({
+        detail: { error: { code: "WRITE_LOCK_BUSY", message: "正在進行資料操作" } },
+        error: { code: "OLD_CODE", message: "old message" },
+      }),
+    } as Response);
+
+    await expect(apiFetch("/api/data/tw/2330")).rejects.toMatchObject({
+      code: "WRITE_LOCK_BUSY",
+      message: "正在進行資料操作",
+    });
+  });
+
   it("includes Content-Type header in requests", async () => {
     (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       ok: true,

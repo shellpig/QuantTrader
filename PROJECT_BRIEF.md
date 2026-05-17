@@ -10,7 +10,7 @@
 
 台股 / 美股 US-1 量化交易研究工具（個人版），運行於 Windows 11 本機。聚焦資料管線、研究、回測與 AI 分析，不接實盤。
 
-2026-05-17 Phase 11 規格已從草案正式寫入三份文件：`量化交易系統規格書_shellpig版.md`（V3.0）、`開發設計方針.md`、`測試指南.md`。Phase 11 擴充 dashboard 個股分析頁的基本面與事件資訊，拆為 11-A 版面 placeholder、11-B 估值 / 獲利、11-C 籌碼 / 事件、11-D 待定；執行順序固定 11-A → 11-B → 11-C → 11-D。11-A / 11-B 已完成並驗證通過。
+2026-05-17 Phase 11 規格已從草案正式寫入三份文件：`量化交易系統規格書_shellpig版.md`（V3.0）、`開發設計方針.md`、`測試指南.md`。Phase 11 擴充 dashboard 個股分析頁的基本面與事件資訊，拆為 11-A 版面 placeholder、11-B 估值 / 獲利、11-C 籌碼 / 事件、11-D 待定；執行順序固定 11-A → 11-B → 11-C → 11-D。11-A / 11-B 已完成並驗證通過；11-B 後續發現的刪除 WinError、ETF 空資料說明與歷史除息 TTM PE 最近交易日價格修正也已驗證完成。
 
 2026-05-14 Phase 10 規格已完成並寫入正式文件：前端架構從 Streamlit 遷移至 Next.js (React) + FastAPI，拆為 10-A~10-H 八個子階段。新增 `src/services/`（服務層）、`api/`（FastAPI 後端）、`web/`（Next.js 前端）。核心演算法不重寫。Phase 9-G（美股 intraday）為前置條件。
 
@@ -236,7 +236,7 @@ risk:
 | 10-H-1 | ✅ 完成 | 收尾前置補強：Playwright E2E smoke 5 spec（desktop + mobile 兩 project、共 48 case）、手機 <768px 底部 Tab Bar（`sidebar.tsx` 拆 Desktop / Mobile + `pb-14`）、`web/src/tests/lib/theme-vars.test.ts` 補 `test_themes.py` CSS 變數驗證；測試遷移檢查表 7 行全部打勾。順手 bug fix：`backtest_service.py` `load_backtest_data` tz-aware filter、`StrategyPresetSelect.tsx` API URL 加 `NEXT_PUBLIC_API_URL` 前綴、`uv.lock` 同步 0.2.0。Gate：pytest 588 passed / vitest 48 files / 307 tests / tsc 0 errors / Playwright 48 tests pass |
 | 10-H-2 | ✅ 完成 | 實際移除與全專案回歸：刪 `src/ui/`、`run_quanttrader.bat`、`pyproject.toml` streamlit 三套件、7 個 Streamlit pytest 檔；`src/ai/advisor.py` 保留（10-F-2 + dashboard analysis 仍使用）；`src/backtest/report.py` `_apply_theme` 去除 ui 依賴 |
 | 11-A | ✅ 完成 | Dashboard 版面調整：chart 高度 400px → 300px；移除 K 線圖 KD / RSI / MACD 下方副圖但保留成交量；左欄 chart 下方新增兩塊、共 6 個 dashed placeholder panel；market=us 時 P11 下方兩塊隱藏；籌碼面板買賣力道與融資 / 融券壓成單行；關鍵價位小數顯示修正；使用者實機驗證通過 |
-| 11-B | ✅ 完成 | 估值 / 獲利區塊：本益比、股價淨值比、殖利率、月營收、歷史除息本益比、同產業本益比 Modal；新增 PER / 月營收 fetcher，補 dividends / EPS storage + `data_meta`；P11 API namespace、service、frontend hooks / panels / Modal、同產業 PER cache + lock、US market 501 邊界與 route regression 已補 |
+| 11-B | ✅ 完成 | 估值 / 獲利區塊：本益比、股價淨值比、殖利率、月營收、歷史除息本益比、同產業本益比 Modal；新增 PER / 月營收 fetcher，補 dividends / EPS storage + `data_meta`；P11 API namespace、service、frontend hooks / panels / Modal、同產業 PER cache + lock、US market 501 邊界與 route regression 已補；ETF 空資料說明、TTM PE 最近交易日價格、資料刪除 WinError 收尾皆已驗證完成 |
 | 11-C | 📝 規格完成，待實作 | 籌碼 / 事件區塊：法人持股成本、事件行事曆（除息 + 股東會）、股東會手動覆蓋 Modal；新增 TWSE / TPEx 股東會全市場資料源、獨立 metadata JSON、manual override CSV；股東會不進 `data_meta` |
 | 11-D | 📝 佔位，待定 | 散戶多空比或其他資訊，11-C 完成後再定義 |
 
@@ -249,6 +249,7 @@ risk:
 2026-05-17 狀態（Phase 11-B 完成）：
 - **P11-B 已完成並驗證通過**：新增 PER / monthly revenue fetcher；補 per / monthly_revenue / dividends / eps storage roundtrip 與 `data_meta`；dashboard service 新增 valuation / monthly revenue / dividend history with PE / industry PER；API 新增 `/api/analysis/p11/valuation`、`monthly-revenue`、`dividend-history`、`industry-per` 並放在動態 route 前；前端新增 valuation / monthly revenue / dividend history panel 與同產業 PER Modal；US market 回 501，frontend 隱藏 P11 區塊。
 - **P11-B 已修正驗證中發現的 4 個缺口**：industry PER response contract 改為 `median / mean / count / cached_at`；補 4 個 P11 component tests + tooltip coverage；PER / PBR / TTM 顯示與 tooltip 對齊規格；P11 資料補抓改 best-effort，不阻塞 daily pipeline。
+- **P11-B 收尾問題已驗證完成**：資料管理頁刪除遇 Windows `ReadOnly` / `WinError 5` 的錯誤解析與刪除耐受性已處理；ETF（如 0056）不適用 PER / 月營收 / EPS 時改以明確文案說明；歷史除息 TTM PE 改用除息日同日或最近可用交易日 close，並標記實際使用的 `price_date`。
 - **P11-B 驗證結果**：Python gate `tests/test_fetcher.py tests/test_storage.py tests/test_maintenance.py tests/test_services/test_dashboard_svc.py tests/test_api/test_analysis_api.py` 為 **94 passed, 8 deselected**；frontend `npx tsc --noEmit` 0 errors；P11 frontend targeted tests **6 files / 17 tests passed**；full vitest **49 files / 321 tests passed**。
 - **P11-A 已完成並由使用者實機驗證通過**：Dashboard chart 高度改為 300px；TW 左欄 chart 下方新增 6 個 dashed placeholder；US market 隱藏 P11 下方區塊；K 線圖移除 KD / RSI / MACD 副圖並保留成交量；籌碼面板買賣力道與融資 / 融券壓成單行；關鍵價位面板恢復小數顯示。
 - **P11 規格草案已正式寫入三份文件**：`量化交易系統規格書_shellpig版.md` 新增 V3.0 與 Phase 11 章節；`開發設計方針.md` 新增 Phase 11 實作設計；`測試指南.md` 新增 Phase 11 測試矩陣與 gate。

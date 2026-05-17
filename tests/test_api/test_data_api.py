@@ -182,6 +182,19 @@ def test_delete_symbol_409_when_write_lock_busy() -> None:
         mgr.release_write_lock()
 
 
+def test_delete_symbol_partial_failure_returns_500_with_message() -> None:
+    """DELETE_PARTIAL must surface the error message in body.detail.error so the frontend can display it."""
+    _reset_manager()
+    from src.services.data_service import DataServiceError
+    err = DataServiceError(code="DELETE_PARTIAL", message="刪除部分失敗：parquet: [Errno 13] Permission denied")
+    with patch("src.services.data_service.delete_symbol_data", return_value=err):
+        resp = client.delete("/api/data/tw/2330")
+    assert resp.status_code == 500
+    body = resp.json()
+    assert body["detail"]["error"]["code"] == "DELETE_PARTIAL"
+    assert "刪除部分失敗" in body["detail"]["error"]["message"]
+
+
 def test_delete_releases_write_lock_on_success() -> None:
     """Write lock must be released after a successful DELETE."""
     _reset_manager()

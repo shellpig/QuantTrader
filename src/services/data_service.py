@@ -282,9 +282,15 @@ def delete_symbol_data(
             errors.append(f"meta: {exc}")
 
         if errors:
+            raw_detail = " | ".join(errors)
+            hint = (
+                "（檔案可能正被後端、Dashboard 或防毒程式使用，請關閉相關頁面後稍等幾秒再試）"
+                if "WinError 5" in raw_detail or "Permission" in raw_detail
+                else ""
+            )
             return DataServiceError(
                 code="DELETE_PARTIAL",
-                message=f"刪除部分失敗：{' | '.join(errors)}",
+                message=f"刪除部分失敗：{raw_detail}{hint}",
             )
         return True
 

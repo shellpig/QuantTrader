@@ -208,6 +208,7 @@ export interface P11DividendHistoryItem {
   date: string;
   cash_dividend: number | null;
   ttm_pe: number | null;
+  price_date?: string | null;
 }
 
 export interface P11DividendHistoryResponse {

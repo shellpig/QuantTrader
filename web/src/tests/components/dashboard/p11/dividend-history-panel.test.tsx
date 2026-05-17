@@ -4,7 +4,7 @@ import { DividendHistoryPanel } from "@/components/dashboard/p11/dividend-histor
 import { P11_TOOLTIP_TEXT } from "@/components/dashboard/tooltip-text";
 
 describe("DividendHistoryPanel", () => {
-  it("renders rows and TTM tooltip", () => {
+  it("renders 3-column header and data rows", () => {
     render(
       <DividendHistoryPanel
         data={{
@@ -20,6 +20,9 @@ describe("DividendHistoryPanel", () => {
 
     expect(screen.getByTestId("p11-panel-historical-dividend-pe")).toBeInTheDocument();
     expect(screen.getByText("歷史除息本益比")).toBeInTheDocument();
+    expect(screen.getByText("除息日")).toBeInTheDocument();
+    expect(screen.queryByText("發放日")).not.toBeInTheDocument();
+    expect(screen.getByText("現金股息")).toBeInTheDocument();
     expect(screen.getByLabelText(P11_TOOLTIP_TEXT.historical_dividend_pe)).toBeInTheDocument();
     expect(screen.getByLabelText(P11_TOOLTIP_TEXT.ttm_pe)).toBeInTheDocument();
     expect(screen.getByText("2026-06-15")).toBeInTheDocument();
@@ -29,6 +32,7 @@ describe("DividendHistoryPanel", () => {
 
   it("renders placeholder rows when there is no data", () => {
     render(<DividendHistoryPanel data={{ symbol: "2330", market: "tw", items: [] }} />);
-    expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(10);
+    // 5 empty rows × 3 columns = 15 dashes
+    expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(15);
   });
 });

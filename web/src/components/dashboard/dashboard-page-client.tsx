@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { RefreshCw, Search, X } from "lucide-react";
 import { MarketSwitcher } from "@/components/market-switcher";
@@ -51,6 +51,26 @@ function scoreClass(score: number): string {
 
 function normalizeSymbol(raw: string): string {
   return raw.trim().toUpperCase();
+}
+
+const LS_SYMBOL = "qt-last-symbol";
+const LS_MARKET = "qt-last-market";
+
+function readLastSymbol(): string {
+  try {
+    return localStorage.getItem(LS_SYMBOL) ?? "2330";
+  } catch {
+    return "2330";
+  }
+}
+
+function readLastMarket(): Market {
+  try {
+    const v = localStorage.getItem(LS_MARKET);
+    return v === "us" ? "us" : "tw";
+  } catch {
+    return "tw";
+  }
 }
 
 function renderRatio(ratio: number): string {
@@ -699,12 +719,31 @@ function ChartSection({
 }
 
 export default function DashboardPageClient() {
+  // SSR-safe defaults: localStorage is only available on the client.
+  // Do NOT read localStorage in useState initializers — it causes hydration mismatch.
   const [market, setMarket] = useState<Market>("tw");
   const [pendingSymbol, setPendingSymbol] = useState("2330");
-  const [symbol, setSymbol] = useState<string | null>("2330");
+  const [symbol, setSymbol] = useState<string | null>(null);
   const [interval, setInterval] = useState<ChartInterval>("day");
   const [aiHint, setAiHint] = useState<string>("");
   const [industryModalOpen, setIndustryModalOpen] = useState(false);
+
+  // Restore last selection from localStorage after hydration.
+  useEffect(() => {
+    const savedMarket = readLastMarket();
+    const savedSymbol = readLastSymbol();
+    setMarket(savedMarket);
+    setPendingSymbol(savedSymbol);
+    setSymbol(savedSymbol);
+  }, []);
+
+  useEffect(() => {
+    if (symbol) localStorage.setItem(LS_SYMBOL, symbol);
+  }, [symbol]);
+
+  useEffect(() => {
+    localStorage.setItem(LS_MARKET, market);
+  }, [market]);
 
   const { data, error, isLoading, mutate } = useDashboard(symbol, market);
   const { data: valuation } = useP11Valuation(symbol, market);

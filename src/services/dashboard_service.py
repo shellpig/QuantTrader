@@ -263,6 +263,24 @@ def get_monthly_revenue(symbol: str, months: int = 12, market: str = "tw") -> di
     }
 
 
+def _lookup_nearest_close(daily: pd.DataFrame, target_key: str) -> tuple[float | None, str | None]:
+    """Return (close, date_str) for the nearest trading day on or before target_key (YYYY-MM-DD).
+
+    Uses string comparison on pre-computed date_key column to stay timezone-safe.
+    Falls back to None when daily is empty or no trading day exists before target.
+    """
+    if daily.empty or "date_key" not in daily.columns:
+        return None, None
+    candidates = daily[daily["date_key"] <= target_key].sort_values("date_key", ascending=False)
+    if candidates.empty:
+        return None, None
+    best = candidates.iloc[0]
+    close = _to_float_or_none(best.get("close"))
+    if close is None:
+        return None, None
+    return close, str(best["date_key"])
+
+
 def get_dividend_history_with_pe(symbol: str, count: int = 5, market: str = "tw") -> dict[str, Any]:
     normalized_market = normalize_market(market)
     if normalized_market != "tw":
@@ -303,11 +321,7 @@ def get_dividend_history_with_pe(symbol: str, count: int = 5, market: str = "tw"
             continue
         date_key = dividend_date.strftime("%Y-%m-%d")
 
-        close_value: float | None = None
-        if not daily.empty:
-            same_day = daily[daily["date_key"] == date_key]
-            if not same_day.empty:
-                close_value = _to_float_or_none(same_day.iloc[-1].get("close"))
+        close_value, price_date = _lookup_nearest_close(daily, date_key)
 
         ttm_pe: float | None = None
         if close_value is not None and not eps.empty:
@@ -322,6 +336,7 @@ def get_dividend_history_with_pe(symbol: str, count: int = 5, market: str = "tw"
                 "date": date_key,
                 "cash_dividend": _to_float_or_none(row.get("cash_dividend")),
                 "ttm_pe": _to_float_or_none(ttm_pe),
+                "price_date": price_date,
             }
         )
 

@@ -10,7 +10,7 @@ from src.core.market import get_market_spec
 from src.data.cleaner import DataCleaner
 import src.data.maintenance as maintenance_module
 from src.data.maintenance import DataMaintenance
-from src.data.storage import DuckDBMeta, ParquetStorage
+from src.data.storage import DuckDBMeta, ParquetStorage, _rmtree_with_retry
 from src.core.exceptions import FetcherError
 
 
@@ -366,6 +366,30 @@ def test_update_daily_rebuilds_adjusted_when_no_new_rows(tmp_path) -> None:
     assert adjusted_first == pytest.approx(95.0)
 
 
+def test_update_daily_tw_backfills_p11_when_missing_and_no_new_rows(tmp_path) -> None:
+    existing = _make_daily("2330", "2024-06-24", 2)
+    fetcher = StubFetcher(
+        full_daily=existing,
+        incremental_daily=pd.DataFrame(columns=STANDARD_COLUMNS),
+        dividends=pd.DataFrame(),
+    )
+    storage = ParquetStorage(data_dir=tmp_path / "data")
+    meta = DuckDBMeta(db_path=str(tmp_path / "meta.duckdb"))
+    cleaner = DataCleaner()
+    maintenance = DataMaintenance(fetcher, storage, meta, cleaner)
+
+    storage.save_daily("2330", existing)
+    assert meta.get_meta("2330", "per") is None  # P11-B not built yet
+
+    added = maintenance.update_daily("2330", market="tw")
+
+    assert added == 0
+    assert not storage.load_per("2330").empty
+    assert not storage.load_monthly_revenue("2330").empty
+    assert not storage.load_eps("2330").empty
+    assert meta.get_meta("2330", "per") is not None
+
+
 def test_maintenance_passes_market_to_storage(tmp_path) -> None:
     existing = _make_daily("AAPL", "2024-01-01", 2)
     incremental = _make_daily("AAPL", "2024-01-03", 1)
@@ -541,3 +565,89 @@ def test_maintenance_us_rate_limit_reports_provider_error(tmp_path) -> None:
 
     assert meta.get_meta("AAPL", "daily", market="us") is None
     assert storage.load_daily("AAPL", market="us").empty
+
+
+def test_storage_delete_symbol_removes_parquets(tmp_path) -> None:
+    """ParquetStorage.delete_symbol must remove all raw/ and processed/ files for the symbol."""
+    storage = ParquetStorage(data_dir=tmp_path / "data")
+    daily = _make_daily("2330", "2024-01-01", 3)
+    storage.save_daily("2330", daily)
+    assert not storage.load_daily("2330").empty
+
+    storage.delete_symbol("2330", market="tw")
+
+    assert storage.load_daily("2330").empty
+
+
+def test_meta_delete_symbol_removes_rows(tmp_path) -> None:
+    """DuckDBMeta.delete_symbol must remove all metadata rows for the symbol."""
+    meta = DuckDBMeta(db_path=str(tmp_path / "meta.duckdb"))
+    meta.upsert_meta("2330", "daily", "finmind", pd.Timestamp("2024-01-01"), pd.Timestamp("2024-12-31"), 250, market="tw")
+    meta.upsert_meta("2330", "per", "finmind", pd.Timestamp("2024-01-01"), pd.Timestamp("2024-12-31"), 250, market="tw")
+    assert meta.get_meta("2330", "daily", market="tw") is not None
+
+    meta.delete_symbol("2330", market="tw")
+
+    assert meta.get_meta("2330", "daily", market="tw") is None
+    assert meta.get_meta("2330", "per", market="tw") is None
+
+
+def test_rebuild_p11_replaces_stale_eps(tmp_path) -> None:
+    """_rebuild_p11_datasets must overwrite old EPS data instead of upsert-merging it,
+    so stale records with wrong dates do not survive a rebuild."""
+    existing = _make_daily("2330", "2024-01-01", 3)
+    fetcher = StubFetcher(
+        full_daily=existing,
+        incremental_daily=pd.DataFrame(columns=STANDARD_COLUMNS),
+        dividends=pd.DataFrame(),
+    )
+    storage = ParquetStorage(data_dir=tmp_path / "data")
+    meta = DuckDBMeta(db_path=str(tmp_path / "meta.duckdb"))
+    cleaner = DataCleaner()
+    maintenance = DataMaintenance(fetcher, storage, meta, cleaner)
+
+    # Seed stale EPS with a wrong year (simulating corrupt old data)
+    stale_eps = pd.DataFrame(
+        {
+            "report_date": pd.to_datetime(["2020-05-01"]),
+            "year": [1999],  # intentionally wrong
+            "quarter": [1],
+            "eps": [99.0],
+            "symbol": ["2330"],
+        }
+    )
+    storage.save_eps("2330", stale_eps)
+    loaded_before = storage.load_eps("2330")
+    assert 1999 in loaded_before["year"].values
+
+    # Rebuild should overwrite; StubFetcher.fetch_eps returns year=2026/Q1
+    storage.save_daily("2330", existing)
+    maintenance.rebuild_symbol("2330", market="tw")
+
+    loaded_after = storage.load_eps("2330")
+    # Stale year=1999 must be gone
+    assert 1999 not in loaded_after["year"].values
+    assert 2026 in loaded_after["year"].values
+
+
+# ---------------------------------------------------------------------------
+# _rmtree_with_retry — Windows ReadOnly attribute
+# ---------------------------------------------------------------------------
+
+
+def test_rmtree_with_retry_removes_readonly_directory(tmp_path: pytest.TempPathFactory) -> None:
+    import os
+    import stat
+
+    target = tmp_path / "readonly_dir"
+    target.mkdir()
+    (target / "file.txt").write_text("data")
+
+    # Mark directory and file as read-only (simulates Windows ReadOnly attribute)
+    for p in [target / "file.txt", target]:
+        current = os.stat(p).st_mode
+        os.chmod(p, current & ~stat.S_IWRITE)
+
+    # Plain rmtree would raise PermissionError on Windows; _rmtree_with_retry must succeed
+    _rmtree_with_retry(target)
+    assert not target.exists()

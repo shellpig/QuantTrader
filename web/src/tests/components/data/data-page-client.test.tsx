@@ -289,4 +289,20 @@ describe("DataPageClient toast migration", () => {
       expect(mockToastSuccess).toHaveBeenCalledWith("已刪除：2330");
     });
   });
+
+  it("on delete failure: closes dialog, refreshes list, shows error toast", async () => {
+    mockApiDelete.mockRejectedValueOnce(new Error("刪除部分失敗：parquet: [WinError 5]（檔案可能正被後端使用）"));
+    render(<DataPageClient />);
+    await userEvent.click(screen.getByRole("button", { name: "delete-2330" }));
+    await userEvent.click(screen.getByRole("button", { name: "confirm-delete" }));
+
+    await waitFor(() => {
+      // Dialog must be closed (confirm-delete button gone)
+      expect(screen.queryByRole("button", { name: "confirm-delete" })).not.toBeInTheDocument();
+      // List must be refreshed
+      expect(mockMutate).toHaveBeenCalled();
+      // Error toast shown
+      expect(mockToastError).toHaveBeenCalledWith(expect.stringContaining("WinError 5"));
+    });
+  });
 });
