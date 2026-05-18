@@ -18,7 +18,7 @@
 
 - Phase 1–9 全部完成（含美股 US-1 / 9-G intraday）。
 - Phase 10 全部完成（10-A ~ 10-H-2）；舊 Streamlit UI 已移除。
-- Phase 11 規格已完成並寫入正式文件；11-A / 11-B / 11-C 已完成並驗證通過，11-D 已定義為 Goodinfo 股利政策 fallback，正在實作 / 驗證。
+- Phase 11 全部完成（11-A / 11-B / 11-C / 11-D）並驗證通過；11-D Goodinfo 股利政策 fallback 已上線。
 - Phase 10-F-2（AI 問答接 LLM）延後，不卡主線。
 
 ## 技術棧
@@ -240,18 +240,18 @@ risk:
 | 11-A | ✅ 完成 | Dashboard 版面調整：chart 高度 400px → 300px；移除 K 線圖 KD / RSI / MACD 下方副圖但保留成交量；左欄 chart 下方新增兩塊、共 6 個 dashed placeholder panel；market=us 時 P11 下方兩塊隱藏；籌碼面板買賣力道與融資 / 融券壓成單行；關鍵價位小數顯示修正；使用者實機驗證通過 |
 | 11-B | ✅ 完成 | 估值 / 獲利區塊：本益比、股價淨值比、殖利率、月營收、歷史除息本益比、同產業本益比 Modal；新增 PER / 月營收 fetcher，補 dividends / EPS storage + `data_meta`；P11 API namespace、service、frontend hooks / panels / Modal、同產業 PER cache + lock、US market 501 邊界與 route regression 已補；ETF 空資料說明、TTM PE 最近交易日價格、資料刪除 WinError 收尾皆已驗證完成 |
 | 11-C | ✅ 完成 | 籌碼 / 事件區塊：法人持股成本、事件行事曆（除息 + 股東會）、股東會手動覆蓋 Modal；新增 TWSE / TPEx 股東會全市場資料源、獨立 metadata JSON、manual override CSV；股東會不進 `data_meta`；資料管理頁單檔刪除不動全市場股東會資料，`data_update` / `data_rebuild` 尾端只 refresh 一次；使用者已驗證完成 |
-| 11-D | 🔄 實作 / 驗證中 | Goodinfo 股利政策 fallback：事件行事曆無正式未來除息資料時，不再顯示去年資料推估的 `[預估]`，改抓 Goodinfo 股利政策表；優先顯示「股利發放期間=未定」且較舊的待發放明細（如 `25H2` / `25Q4`）與現金 / 股票股利；過期或失敗顯示查無今年股利資料 |
+| 11-D | ✅ 完成 | Goodinfo 股利政策 fallback：事件行事曆無正式未來除息資料時，不再顯示去年資料推估的 `[預估]`，改抓 Goodinfo 股利政策表；只顯示「股利發放期間=未定」或日期落在未來的待發放明細與現金 / 股票股利；過期或失敗顯示查無今年股利資料；使用者已驗證通過 |
 
 ## 當前待辦
 
 見 `驗證後已知問題.md`（每次必讀）。
 
-主線：**Phase 1–10 全部完成（含 10-H-2 Streamlit 完整移除 + 全專案回歸）。Phase 11 規格已正式併入三份文件，11-A / 11-B / 11-C 已完成並驗證通過，下一步是 11-D Goodinfo 股利政策 fallback。** 10-F-2（AI 問答接 LLM）延後，不卡主線。專案已完全遷移至 Next.js + FastAPI；Streamlit 程式碼與套件已從 codebase 移除。
+主線：**Phase 1–11 全部完成（含 10-H-2 Streamlit 完整移除 + 全專案回歸、11-D Goodinfo 股利政策 fallback 已驗證通過）。** 10-F-2（AI 問答接 LLM）延後，不卡主線。專案已完全遷移至 Next.js + FastAPI；Streamlit 程式碼與套件已從 codebase 移除。
 
-2026-05-18 狀態（Phase 11-C 完成 + 11-D 規格更新）：
+2026-05-18 狀態（Phase 11 全部完成）：
+- **P11-D 已完成並由使用者驗證通過**：Goodinfo 股利政策 fallback 上線；只顯示「股利發放期間=未定」或日期落在未來的待發放明細，避免誤把已發放的舊資料當未來除息；`fetch_failed` 不寫每日 cache、舊 schema cache 自動失效；requests-first 處理 `CLIENT_KEY` / `REINIT`，Playwright 為 optional fallback。
 - **P11-C 已完成並由使用者驗證通過**：法人持股成本、事件行事曆、TWSE / TPEx 股東會全市場資料、獨立 `shareholder_meeting.meta.json`、manual override CSV、股東會手動編輯 Modal、資料管理頁 lifecycle / refresh 規則皆已落地。
-- **P11-D 規格已正式改寫**：原「散戶多空比」先不做；11-D 改為 Goodinfo 股利政策 fallback，文件已同步更新 `量化交易系統規格書_shellpig版.md`、`開發設計方針.md`、`測試指南.md`。
-- **P11-D 核心決策**：有正式未來除息資料時顯示正式資料且不查 Goodinfo；沒有正式未來除息資料時，不再用上一筆資料推估日期 / 股利，改查 `https://goodinfo.tw/tw/StockDividendPolicy.asp?STOCK_ID={symbol}`。Goodinfo fallback 使用 requests-first，處理 `CLIENT_KEY` / `REINIT` 初始化頁，Playwright 僅作 optional fallback；優先選「股利發放期間=未定」且較舊的待發放明細，顯示股利所屬期間、現金股利、股票股利與來源確認註記；抓不到或年份過期則顯示「查無今年股利資料」。`fetch_failed` 不寫每日 cache，舊 schema cache 自動失效。
+- **P11-D 規格背景**：原「散戶多空比」先不做；11-D 改為 Goodinfo 股利政策 fallback，文件已同步更新 `量化交易系統規格書_shellpig版.md`、`開發設計方針.md`、`測試指南.md`。
 
 2026-05-17 狀態（Phase 11-B 完成）：
 - **P11-B 已完成並驗證通過**：新增 PER / monthly revenue fetcher；補 per / monthly_revenue / dividends / eps storage roundtrip 與 `data_meta`；dashboard service 新增 valuation / monthly revenue / dividend history with PE / industry PER；API 新增 `/api/analysis/p11/valuation`、`monthly-revenue`、`dividend-history`、`industry-per` 並放在動態 route 前；前端新增 valuation / monthly revenue / dividend history panel 與同產業 PER Modal；US market 回 501，frontend 隱藏 P11 區塊。
@@ -522,3 +522,41 @@ cd web && pnpm exec playwright test
 ```
 
 注意：Windows/OneDrive 路徑下 pytest 暫存目錄可能出現 `PermissionError: [WinError 5]`，視為環境問題，不影響測試結果。
+
+---
+
+## 未來：打包成 Windows 安裝檔（規劃中，未動工）
+
+目標：使用者下載一個檔 → 點擊安裝 → 點擊執行檔即可用。FINMIND_TOKEN 改由 app 首次執行偵測 `.env` 缺失時跳設定頁（非安裝期處理）。
+
+**推薦方案**：Inno Setup 離線安裝包，內含可攜式 Python + 可攜式 Node + 預下載 wheels + 預 build 前端。安裝到 `%LOCALAPPDATA%\QuantTrader\`（per-user，免 UAC）。Launcher 啟動 uvicorn + `node server.js`，開瀏覽器到 dashboard。
+
+**注意事項**：
+- `.venv` 有絕對路徑（`pyvenv.cfg`），不能直接打包搬移；必須在使用者機器上用 bundled wheels 重建
+- 未簽章會觸發 SmartScreen 警告；code signing cert 約 USD 100–300/年
+- `node_modules` 路徑長，需開 Windows LongPathsEnabled
+- 解除安裝 / 重灌時 user data（`.env`、`data/`）必須保留
+
+### 體積優化清單（從預估 ~1 GB 壓到 ~200 MB）
+
+打包時依序套用，**現在不需要動程式碼**：
+
+1. **Next.js standalone output**（最大效益，省 ~520 MB）
+   - `web/next.config.ts` 加 `output: 'standalone'`
+   - 已確認 web/ 無 middleware、無 API route、無 SSR-only feature，安全
+   - 純 build-time 設定，dev / test / 寫程式 0 影響，要做安裝檔時再加
+   - 打包腳本要多 copy `public/` 與 `.next/static/` 到 standalone 旁邊
+2. **plotly 改 optional dependency**（省 ~20 MB）
+   - 只 [src/backtest/report.py](src/backtest/report.py) 用到，改 lazy import
+3. **剝 Python 套件 tests / `__pycache__` / `pyarrow/include/`**（省 ~60 MB）
+4. **精簡 portable Node**（省 ~30 MB）
+   - 只留 `node.exe`，刪 npm / npx / corepack
+5. **python-build-standalone 用 `install_only` 變體**（省 ~10 MB）
+6. **Inno Setup 壓縮**：`Compression=lzma2/ultra64` + `SolidCompression=yes`
+7. **加分項**：移除 `docs/`、`舊文件/`、`web/_design/`、多餘 `*.md`
+
+**進階選項（評估時再決定）**：
+- 純靜態前端：`output: 'export'` + FastAPI `StaticFiles` 直接 serve，可完全拿掉 Node runtime（前提：web/ 仍維持無 server-only feature）
+- Hybrid 線上安裝：Setup.exe ~50 MB，首次執行去 GitHub Release 抓 runtime bundle
+
+建議分三階段：A. 可攜式 runtime 在乾淨 VM 跑通 → B. Inno Setup 包裝 + 捷徑 + 解除安裝 → C. Launcher 美化（系統匣、無黑視窗）
