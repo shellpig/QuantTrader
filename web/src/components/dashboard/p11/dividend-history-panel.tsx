@@ -22,6 +22,7 @@ export function DividendHistoryPanel({ data }: { data: P11DividendHistoryRespons
             <tr>
               <th className="px-2 py-1.5 text-left">除息日</th>
               <th className="px-2 py-1.5 text-right">現金股息</th>
+              <th className="px-2 py-1.5 text-right">股票股利</th>
               <th className="px-2 py-1.5 text-right">
                 <span className="inline-flex items-center gap-1">
                   TTM 本益比
@@ -36,6 +37,9 @@ export function DividendHistoryPanel({ data }: { data: P11DividendHistoryRespons
                 <td className="px-2 py-1.5 text-slate-100 [font-family:var(--font-mono)]">{row?.date ?? "—"}</td>
                 <td className="px-2 py-1.5 text-right text-slate-100 [font-family:var(--font-mono)]">
                   {row ? renderValue(row.cash_dividend, 2) : "—"}
+                </td>
+                <td className="px-2 py-1.5 text-right text-slate-100 [font-family:var(--font-mono)]">
+                  {row ? renderValue(row.stock_dividend ?? 0, 2) : "—"}
                 </td>
                 <td className="px-2 py-1.5 text-right text-slate-100 [font-family:var(--font-mono)]">
                   {row ? renderValue(row.ttm_pe, 2) : "—"}

@@ -50,6 +50,42 @@ describe("EventCalendarPanel", () => {
     expect(screen.getByTestId("p11-last-shareholder-row")).not.toHaveTextContent("倒數 99 天");
   });
 
+  it("shows stock_dividend in dividend line when > 0", () => {
+    render(
+      <EventCalendarPanel
+        onEdit={() => undefined}
+        data={{
+          symbol: "3293",
+          market: "tw",
+          next_ex_dividend: { date: "2026-07-24", cash_dividend: 35.0, stock_dividend: 10.0, days_until: 30, is_estimated: false },
+          last_ex_dividend: { date: "2024-07-24", cash_dividend: 35.0, stock_dividend: 10.0 },
+          next_shareholder_meeting: null,
+          last_shareholder_meeting: null,
+          missing_shareholder_meeting: true,
+        }}
+      />,
+    );
+    expect(screen.getAllByText(/股票股利 10\.00/).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("does not show stock_dividend when 0 or absent", () => {
+    render(
+      <EventCalendarPanel
+        onEdit={() => undefined}
+        data={{
+          symbol: "2330",
+          market: "tw",
+          next_ex_dividend: { date: "2026-06-20", cash_dividend: 3.5, stock_dividend: 0, days_until: 10, is_estimated: false },
+          last_ex_dividend: { date: "2025-06-15", cash_dividend: 3.2 },
+          next_shareholder_meeting: null,
+          last_shareholder_meeting: null,
+          missing_shareholder_meeting: true,
+        }}
+      />,
+    );
+    expect(screen.queryByText(/股票股利/)).not.toBeInTheDocument();
+  });
+
   it("appends ETF note when symbol is an ETF and shareholder data is missing", () => {
     render(
       <EventCalendarPanel

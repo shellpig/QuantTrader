@@ -29,6 +29,9 @@ function DividendLine({ entry, showCountdown }: { entry: P11EventCalendarEntry |
     <div className="flex flex-wrap items-center gap-2">
       <span className="text-slate-100 [font-family:var(--font-mono)]">{entry.date}</span>
       <span className="text-slate-300">現金股利 {entry.cash_dividend == null ? "—" : formatNumber(entry.cash_dividend, 2)}</span>
+      {entry.stock_dividend != null && entry.stock_dividend > 0 ? (
+        <span className="text-slate-300">股票股利 {formatNumber(entry.stock_dividend, 2)}</span>
+      ) : null}
       {entry.is_estimated ? <span className="text-amber-300">[預估]</span> : null}
       {showCountdown ? <span className="text-slate-400">{renderCountdown(entry.days_until)}</span> : null}
     </div>

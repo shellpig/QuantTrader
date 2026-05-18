@@ -297,6 +297,10 @@ def get_dividend_history_with_pe(symbol: str, count: int = 5, market: str = "tw"
     work = dividends_df.copy()
     work["date"] = pd.to_datetime(work["date"], errors="coerce")
     work["cash_dividend"] = pd.to_numeric(work["cash_dividend"], errors="coerce").fillna(0.0)
+    if "stock_dividend" in work.columns:
+        work["stock_dividend"] = pd.to_numeric(work["stock_dividend"], errors="coerce").fillna(0.0)
+    else:
+        work["stock_dividend"] = 0.0
     work = work.dropna(subset=["date"]).sort_values("date", ascending=False)
     work = work[work["cash_dividend"] > 0].head(max(1, int(count)))
 
@@ -335,6 +339,7 @@ def get_dividend_history_with_pe(symbol: str, count: int = 5, market: str = "tw"
             {
                 "date": date_key,
                 "cash_dividend": _to_float_or_none(row.get("cash_dividend")),
+                "stock_dividend": float(row.get("stock_dividend", 0.0)),
                 "ttm_pe": _to_float_or_none(ttm_pe),
                 "price_date": price_date,
             }
@@ -549,6 +554,10 @@ def get_event_calendar(symbol: str, market: str = "tw") -> dict[str, Any]:
         else:
             dividends["date"] = dividends["date"].dt.tz_convert("Asia/Taipei")
         dividends["cash_dividend"] = pd.to_numeric(dividends["cash_dividend"], errors="coerce")
+        if "stock_dividend" in dividends.columns:
+            dividends["stock_dividend"] = pd.to_numeric(dividends["stock_dividend"], errors="coerce").fillna(0.0)
+        else:
+            dividends["stock_dividend"] = 0.0
         dividends = dividends.dropna(subset=["date"]).copy()
         dividends = dividends[dividends["cash_dividend"].fillna(0) > 0].copy()
         dividends = dividends.sort_values("date").reset_index(drop=True)
@@ -565,6 +574,7 @@ def get_event_calendar(symbol: str, market: str = "tw") -> dict[str, Any]:
             next_ex_dividend = {
                 "date": pd.Timestamp(row["date"]).strftime("%Y-%m-%d"),
                 "cash_dividend": _to_float_or_none(row.get("cash_dividend")),
+                "stock_dividend": float(row.get("stock_dividend", 0.0)),
                 "days_until": days_until,
                 "is_estimated": False,
             }
@@ -573,6 +583,7 @@ def get_event_calendar(symbol: str, market: str = "tw") -> dict[str, Any]:
             last_ex_dividend = {
                 "date": pd.Timestamp(row["date"]).strftime("%Y-%m-%d"),
                 "cash_dividend": _to_float_or_none(row.get("cash_dividend")),
+                "stock_dividend": float(row.get("stock_dividend", 0.0)),
             }
             if next_ex_dividend is None:
                 next_date = pd.Timestamp(row["date"]) + pd.DateOffset(years=1)
@@ -580,6 +591,7 @@ def get_event_calendar(symbol: str, market: str = "tw") -> dict[str, Any]:
                 next_ex_dividend = {
                     "date": next_date.strftime("%Y-%m-%d"),
                     "cash_dividend": _to_float_or_none(row.get("cash_dividend")),
+                    "stock_dividend": float(row.get("stock_dividend", 0.0)),
                     "days_until": days_until,
                     "is_estimated": True,
                 }

@@ -207,6 +207,7 @@ export interface P11MonthlyRevenueResponse {
 export interface P11DividendHistoryItem {
   date: string;
   cash_dividend: number | null;
+  stock_dividend?: number | null;
   ttm_pe: number | null;
   price_date?: string | null;
 }
@@ -259,6 +260,7 @@ export interface P11EventCalendarEntry {
   source?: string | null;
   is_manual?: boolean;
   cash_dividend?: number | null;
+  stock_dividend?: number | null;
   days_until?: number | null;
   is_estimated?: boolean;
 }

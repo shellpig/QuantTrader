@@ -328,6 +328,74 @@ def test_get_dividend_history_with_pe_uses_latest_announced_4q() -> None:
         assert data["items"][0]["ttm_pe"] == pytest.approx(12.5)
         assert "payment_date" not in data["items"][0]
         assert data["items"][0]["price_date"] == "2026-06-15"
+        assert data["items"][0]["stock_dividend"] == pytest.approx(0.0)
+
+
+def test_get_dividend_history_includes_nonzero_stock_dividend() -> None:
+    dividends_df = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2024-07-24"]),
+            "cash_dividend": [35.0],
+            "stock_dividend": [10.0],
+            "symbol": ["3293"],
+        }
+    )
+    daily_df = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2024-07-24"]),
+            "open": [500.0],
+            "high": [510.0],
+            "low": [495.0],
+            "close": [505.0],
+            "volume": [1000],
+            "symbol": ["3293"],
+        }
+    )
+
+    with patch("src.services.dashboard_service.ParquetStorage") as mock_storage_cls:
+        mock_storage = MagicMock()
+        mock_storage.load_dividends.return_value = dividends_df
+        mock_storage.load_daily.return_value = daily_df
+        mock_storage.load_eps.return_value = pd.DataFrame()
+        mock_storage_cls.return_value = mock_storage
+
+        data = get_dividend_history_with_pe("3293", count=5, market="tw")
+
+    assert len(data["items"]) == 1
+    assert data["items"][0]["stock_dividend"] == pytest.approx(10.0)
+
+
+def test_get_dividend_history_stock_dividend_missing_column_defaults_to_zero() -> None:
+    dividends_df = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2026-06-15"]),
+            "cash_dividend": [3.5],
+            "symbol": ["2330"],
+            # no stock_dividend column
+        }
+    )
+    daily_df = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2026-06-15"]),
+            "open": [100.0],
+            "high": [101.0],
+            "low": [99.0],
+            "close": [100.0],
+            "volume": [1000],
+            "symbol": ["2330"],
+        }
+    )
+
+    with patch("src.services.dashboard_service.ParquetStorage") as mock_storage_cls:
+        mock_storage = MagicMock()
+        mock_storage.load_dividends.return_value = dividends_df
+        mock_storage.load_daily.return_value = daily_df
+        mock_storage.load_eps.return_value = pd.DataFrame()
+        mock_storage_cls.return_value = mock_storage
+
+        data = get_dividend_history_with_pe("2330", count=5, market="tw")
+
+    assert data["items"][0]["stock_dividend"] == pytest.approx(0.0)
 
 
 def test_lookup_nearest_close_returns_exact_match() -> None:
@@ -556,6 +624,61 @@ def test_get_institutional_cost_returns_null_when_incremental_fetch_fails() -> N
     assert data["foreign"]["pnl"] is None
     assert data["trust"]["cost"] is None
     assert data["dealer"]["cost"] is None
+
+
+def test_get_event_calendar_includes_stock_dividend() -> None:
+    dividends_df = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2026-07-24"]),
+            "cash_dividend": [35.0],
+            "stock_dividend": [10.0],
+            "symbol": ["3293"],
+        }
+    )
+
+    with patch("src.services.dashboard_service.ParquetStorage") as mock_storage_cls:
+        mock_storage = MagicMock()
+        mock_storage.load_dividends.return_value = dividends_df
+        mock_storage.load_shareholder_meeting.return_value = pd.DataFrame()
+        mock_storage.load_shareholder_meeting_override.return_value = pd.DataFrame()
+        mock_storage_cls.return_value = mock_storage
+
+        with patch("src.services.dashboard_service._lookup_is_etf", return_value=False):
+            data = get_event_calendar("3293", market="tw")
+
+    next_div = data["next_ex_dividend"]
+    last_div = data["last_ex_dividend"]
+    # Depending on today's date, 2026-07-24 may be future or past
+    entry = next_div if next_div is not None else last_div
+    assert entry is not None
+    assert entry["stock_dividend"] == pytest.approx(10.0)
+
+
+def test_get_event_calendar_stock_dividend_defaults_to_zero_when_missing_column() -> None:
+    dividends_df = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2026-07-24"]),
+            "cash_dividend": [3.5],
+            "symbol": ["2330"],
+            # no stock_dividend column
+        }
+    )
+
+    with patch("src.services.dashboard_service.ParquetStorage") as mock_storage_cls:
+        mock_storage = MagicMock()
+        mock_storage.load_dividends.return_value = dividends_df
+        mock_storage.load_shareholder_meeting.return_value = pd.DataFrame()
+        mock_storage.load_shareholder_meeting_override.return_value = pd.DataFrame()
+        mock_storage_cls.return_value = mock_storage
+
+        with patch("src.services.dashboard_service._lookup_is_etf", return_value=False):
+            data = get_event_calendar("2330", market="tw")
+
+    next_div = data["next_ex_dividend"]
+    last_div = data["last_ex_dividend"]
+    entry = next_div if next_div is not None else last_div
+    assert entry is not None
+    assert entry["stock_dividend"] == pytest.approx(0.0)
 
 
 def test_get_event_calendar_prefers_newer_manual_shareholder_row() -> None:
