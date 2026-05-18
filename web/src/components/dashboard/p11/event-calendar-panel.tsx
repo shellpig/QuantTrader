@@ -113,23 +113,18 @@ export function EventCalendarPanel({
   onEdit: () => void;
 }) {
   const missing = data?.missing_shareholder_meeting ?? true;
-  const isEtf = data?.is_etf ?? false;
-  const missingText = isEtf
-    ? "撈不到資料，需要手動填入（ETF沒有股東會）"
-    : "撈不到資料，需要手動填入";
 
   return (
     <section className="rounded-lg border border-slate-700 bg-slate-950/40 p-3" data-testid="p11-panel-event-calendar">
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <div className="flex items-center gap-1">
-          <h3 className="text-sm font-semibold text-slate-100">事件行事曆</h3>
-          <HelpTooltip text={P11_TOOLTIP_TEXT.event_calendar} />
-        </div>
+      <div className="mb-2 flex items-center gap-1">
+        <h3 className="text-sm font-semibold text-slate-100">事件行事曆</h3>
+        <HelpTooltip text={P11_TOOLTIP_TEXT.event_calendar} />
         <button
           type="button"
-          className="rounded-md border border-slate-700 p-1 text-slate-300 hover:bg-slate-800"
+          className="ml-1 rounded-md border border-slate-700 p-1 text-slate-300 hover:bg-slate-800"
           aria-label="edit-shareholder-meeting"
           onClick={onEdit}
+          data-testid="p11-event-calendar-edit-btn"
         >
           <Pencil className="h-3.5 w-3.5" />
         </button>
@@ -137,7 +132,7 @@ export function EventCalendarPanel({
 
       {missing ? (
         <p className="mb-2 text-xs text-amber-300" data-testid="p11-shareholder-missing">
-          {missingText}
+          撈不到股東會資料，需要手動填入（或是ETF沒有股東會）
         </p>
       ) : null}
 

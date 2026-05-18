@@ -45,8 +45,7 @@ describe("EventCalendarPanel", () => {
       />,
     );
     expect(screen.getByTestId("p11-shareholder-missing")).toBeInTheDocument();
-    expect(screen.getByTestId("p11-shareholder-missing")).toHaveTextContent("撈不到資料，需要手動填入");
-    expect(screen.getByTestId("p11-shareholder-missing")).not.toHaveTextContent("ETF");
+    expect(screen.getByTestId("p11-shareholder-missing")).toHaveTextContent("撈不到股東會資料，需要手動填入（或是ETF沒有股東會）");
     expect(screen.getByTestId("p11-last-shareholder-row")).not.toHaveTextContent("倒數 99 天");
   });
 
@@ -86,25 +85,53 @@ describe("EventCalendarPanel", () => {
     expect(screen.queryByText(/股票股利/)).not.toBeInTheDocument();
   });
 
-  it("appends ETF note when symbol is an ETF and shareholder data is missing", () => {
+  // Phase 11-E: unified missing text regardless of ETF flag
+  it("11-E-F4: shows unified missing text regardless of ETF flag", () => {
+    for (const isEtf of [true, false, undefined]) {
+      const { unmount } = render(
+        <EventCalendarPanel
+          onEdit={() => undefined}
+          data={{
+            symbol: "00929",
+            market: "tw",
+            next_ex_dividend: null,
+            last_ex_dividend: null,
+            next_shareholder_meeting: null,
+            last_shareholder_meeting: null,
+            missing_shareholder_meeting: true,
+            ...(isEtf !== undefined ? { is_etf: isEtf } : {}),
+          }}
+        />,
+      );
+      expect(screen.getByTestId("p11-shareholder-missing")).toHaveTextContent(
+        "撈不到股東會資料，需要手動填入（或是ETF沒有股東會）",
+      );
+      unmount();
+    }
+  });
+
+  it("11-E-F7: edit button appears after the ? (HelpTooltip), not before it", () => {
     render(
       <EventCalendarPanel
         onEdit={() => undefined}
         data={{
-          symbol: "00929",
+          symbol: "2330",
           market: "tw",
           next_ex_dividend: null,
           last_ex_dividend: null,
           next_shareholder_meeting: null,
           last_shareholder_meeting: null,
-          missing_shareholder_meeting: true,
-          is_etf: true,
+          missing_shareholder_meeting: false,
         }}
       />,
     );
-    expect(screen.getByTestId("p11-shareholder-missing")).toHaveTextContent(
-      "撈不到資料，需要手動填入（ETF沒有股東會）",
-    );
+    const editBtn = screen.getByTestId("p11-event-calendar-edit-btn");
+    // HelpTooltip renders as <span aria-label="..."> not a <button>
+    const helpSpan = screen.getByLabelText("事件行事曆整合近期除息日與股東會，協助評估事件前後波動與部位規劃。");
+    // helpSpan must precede editBtn in DOM order
+    expect(
+      helpSpan.compareDocumentPosition(editBtn) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   // Phase 11-D: Goodinfo dividend policy fallback

@@ -72,7 +72,7 @@ export function MonthlyRevenuePanel({ data }: { data: P11MonthlyRevenueResponse 
         <HelpTooltip text={P11_TOOLTIP_TEXT.monthly_revenue} />
       </div>
       {noData ? (
-        <p className="text-xs text-slate-500" data-testid="p11-monthly-revenue-unsupported">
+        <p className="text-xs text-amber-300" data-testid="p11-monthly-revenue-unsupported">
           資料源未提供此標的月營收資料（如 ETF）
         </p>
       ) : (

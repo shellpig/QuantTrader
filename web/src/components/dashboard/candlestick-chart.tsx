@@ -32,6 +32,13 @@ interface CandlestickChartProps {
   supportLevels?: PriceLevel[];
 }
 
+export function getPrevCloseColor(currentPrice: number | undefined, previousClose: number | undefined, market: Market): string {
+  if (currentPrice == null || previousClose == null) return "#64748b";
+  if (currentPrice > previousClose) return MARKET_UP_COLOR[market];
+  if (currentPrice < previousClose) return MARKET_DOWN_COLOR[market];
+  return "#64748b";
+}
+
 interface ChartBar {
   time: Time;
   open: number;
@@ -234,6 +241,7 @@ export function CandlestickChart({
       wickDownColor: downColor,
       borderVisible: false,
       priceLineVisible: false,
+      lastValueVisible: false,
     });
 
     const volume = chart.addSeries(HistogramSeries, {
@@ -397,6 +405,23 @@ export function CandlestickChart({
           lineWidth: 1,
           axisLabelVisible: true,
           title: "支撐",
+        }),
+      );
+    }
+
+    // 收盤標籤：顯示最新收盤價，顏色依漲跌
+    const lastClose = bars[bars.length - 1]?.close;
+    const prevClose = bars[bars.length - 2]?.close;
+    if (lastClose != null) {
+      const color = getPrevCloseColor(lastClose, prevClose, market);
+      priceLineRefsRef.current.push(
+        candle.createPriceLine({
+          price: lastClose,
+          color,
+          lineStyle: LineStyle.Dashed,
+          lineWidth: 1,
+          axisLabelVisible: true,
+          title: "收盤",
         }),
       );
     }

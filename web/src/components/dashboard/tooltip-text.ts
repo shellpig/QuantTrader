@@ -74,6 +74,4 @@ export const P11_TOOLTIP_TEXT = {
     "法人持股成本估算外資、投信、自營商近一段時間累積部位的平均成本區間。",
   event_calendar:
     "事件行事曆整合近期除息日與股東會，協助評估事件前後波動與部位規劃。",
-  retail_sentiment:
-    "散戶多空比為後續待定指標，11-A 僅保留版面位置，不提供計算結果。",
 } as const;

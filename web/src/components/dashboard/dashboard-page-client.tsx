@@ -128,106 +128,55 @@ function HeaderRow({
   if (!quote && !intradaySnapshot) return null;
   if (!quote && intradaySnapshot) {
     return (
-      <section className="rounded-xl border border-slate-800 bg-slate-950/70 px-4 py-3">
-        <div className="grid grid-cols-2 gap-3 text-xs text-slate-300 md:grid-cols-6">
-          <div>
-            <div className="text-slate-500">Price</div>
-            <div className="text-slate-100 [font-family:var(--font-mono)]">
-              {formatNumber(intradaySnapshot.price, 2)}
-            </div>
-          </div>
-          <div>
-            <div className="text-slate-500">前收</div>
-            <div className="text-slate-100 [font-family:var(--font-mono)]">
-              {formatNumber(intradaySnapshot.previous_raw_close, 2)}
-            </div>
-          </div>
-          <div>
-            <div className="text-slate-500">Change</div>
-            <div className={`${changeColor(intradaySnapshot.change, market)} [font-family:var(--font-mono)]`}>
-              {formatSignedValue(intradaySnapshot.change, 2)} ({formatPct(intradaySnapshot.change_pct, 2)})
-            </div>
-          </div>
-          <div>
-            <div className="text-slate-500">成交量</div>
-            <div className="text-slate-100 [font-family:var(--font-mono)]">
-              {formatNumber(intradaySnapshot.volume, 0)}
-            </div>
-          </div>
-          <div>
-            <div className="text-slate-500">Source</div>
-            <div className="text-slate-100 [font-family:var(--font-mono)]">
-              {intradaySnapshot.source}
-            </div>
-          </div>
-          <div>
-            <div className="text-slate-500">Time</div>
-            <div className="text-slate-100 [font-family:var(--font-mono)]">
-              {intradaySnapshot.timestamp.slice(0, 19)}
-            </div>
-          </div>
-        </div>
+      <section className="rounded-xl border border-slate-800 bg-slate-950/70 px-4 py-2 text-xs text-slate-300" data-testid="quote-header-row">
+        <span className="text-slate-500">Price</span>{"　"}
+        <span className="[font-family:var(--font-mono)] text-slate-100">{formatNumber(intradaySnapshot.price, 2)}</span>
+        {"　　"}
+        <span className="text-slate-500">前收</span>{"　"}
+        <span className="[font-family:var(--font-mono)] text-slate-100">{formatNumber(intradaySnapshot.previous_raw_close, 2)}</span>
+        {"　　"}
+        <span className="text-slate-500">Change</span>{"　"}
+        <span className={`[font-family:var(--font-mono)] ${changeColor(intradaySnapshot.change, market)}`}>
+          {formatSignedValue(intradaySnapshot.change, 2)} ({formatPct(intradaySnapshot.change_pct, 2)})
+        </span>
+        {"　　"}
+        <span className="text-slate-500">成交量</span>{"　"}
+        <span className="[font-family:var(--font-mono)] text-slate-100">{formatNumber(intradaySnapshot.volume, 0)}</span>
       </section>
     );
   }
   if (!quote) return null;
   const isMarketOpen = quote.is_market_open;
   return (
-    <section className="rounded-xl border border-slate-800 bg-slate-950/70 px-4 py-3">
-      <div className={`grid gap-3 text-xs text-slate-300 ${isMarketOpen ? "grid-cols-2 md:grid-cols-7" : "grid-cols-2 md:grid-cols-5"}`}>
-        <div>
-          <div className="text-slate-500">開盤</div>
-          <div className="[font-family:var(--font-mono)]">
-            {formatNumber(quote.open, 2)}
-          </div>
-        </div>
-        <div>
-          <div className="text-slate-500">最高</div>
-          <div className="[font-family:var(--font-mono)]">
-            {formatNumber(quote.high, 2)}
-          </div>
-        </div>
-        <div>
-          <div className="text-slate-500">最低</div>
-          <div className="[font-family:var(--font-mono)]">
-            {formatNumber(quote.low, 2)}
-          </div>
-        </div>
-        <div>
-          <div className="text-slate-500">前收</div>
-          <div className="[font-family:var(--font-mono)]">
-            {formatNumber(quote.yesterday_close, 2)}
-          </div>
-        </div>
-        <div>
-          <div className="text-slate-500">成交量</div>
-          <div className="[font-family:var(--font-mono)]">
-            {formatNumber(quote.volume, 0)}
-          </div>
-        </div>
-        {isMarketOpen ? (
-          <>
-            <div>
-              <div className="text-slate-500">買量</div>
-              <div className={`[font-family:var(--font-mono)] ${changeColor(1, "tw")}`}>
-                {formatNumber(
-                  (quote.best_bid_vol?.[0] ?? 0) + (quote.best_bid_vol?.[1] ?? 0),
-                  0,
-                )}
-              </div>
-            </div>
-            <div>
-              <div className="text-slate-500">賣量</div>
-              <div className={`[font-family:var(--font-mono)] ${changeColor(-1, "tw")}`}>
-                {formatNumber(
-                  (quote.best_ask_vol?.[0] ?? 0) + (quote.best_ask_vol?.[1] ?? 0),
-                  0,
-                )}
-              </div>
-            </div>
-          </>
-        ) : null}
-      </div>
+    <section className="rounded-xl border border-slate-800 bg-slate-950/70 px-4 py-2 text-xs text-slate-300" data-testid="quote-header-row">
+      <span className="text-slate-500">開盤</span>{"　"}
+      <span className="[font-family:var(--font-mono)]">{formatNumber(quote.open, 2)}</span>
+      {"　　"}
+      <span className="text-slate-500">最高</span>{"　"}
+      <span className="[font-family:var(--font-mono)]">{formatNumber(quote.high, 2)}</span>
+      {"　　"}
+      <span className="text-slate-500">最低</span>{"　"}
+      <span className="[font-family:var(--font-mono)]">{formatNumber(quote.low, 2)}</span>
+      {"　　"}
+      <span className="text-slate-500">前收</span>{"　"}
+      <span className="[font-family:var(--font-mono)]">{formatNumber(quote.yesterday_close, 2)}</span>
+      {"　　"}
+      <span className="text-slate-500">成交量</span>{"　"}
+      <span className="[font-family:var(--font-mono)]">{formatNumber(quote.volume, 0)}</span>
+      {isMarketOpen ? (
+        <>
+          {"　　"}
+          <span className="text-slate-500">買量</span>{"　"}
+          <span className={`[font-family:var(--font-mono)] ${changeColor(1, "tw")}`}>
+            {formatNumber((quote.best_bid_vol?.[0] ?? 0) + (quote.best_bid_vol?.[1] ?? 0), 0)}
+          </span>
+          {"　　"}
+          <span className="text-slate-500">賣量</span>{"　"}
+          <span className={`[font-family:var(--font-mono)] ${changeColor(-1, "tw")}`}>
+            {formatNumber((quote.best_ask_vol?.[0] ?? 0) + (quote.best_ask_vol?.[1] ?? 0), 0)}
+          </span>
+        </>
+      ) : null}
     </section>
   );
 }
@@ -912,13 +861,6 @@ export default function DashboardPageClient() {
                         data={eventCalendar}
                         onEdit={() => setShareholderDialogOpen(true)}
                       />
-                      <section
-                        className="rounded-lg border border-dashed border-slate-700 bg-slate-950/40 p-3"
-                        data-testid="p11-panel-retail-sentiment"
-                      >
-                        <h3 className="text-sm font-semibold text-slate-100">散戶多空比</h3>
-                        <p className="text-sm italic text-slate-500">(P11-D 待定)</p>
-                      </section>
                     </div>
                   </div>
                 ) : null}

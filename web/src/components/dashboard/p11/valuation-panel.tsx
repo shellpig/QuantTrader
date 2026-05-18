@@ -37,7 +37,7 @@ export function ValuationPanel({
         </button>
       </div>
       {noData ? (
-        <p className="text-xs text-slate-500" data-testid="p11-valuation-unsupported">
+        <p className="text-xs text-amber-300" data-testid="p11-valuation-unsupported">
           資料源未提供此標的估值資料（如 ETF）
         </p>
       ) : (

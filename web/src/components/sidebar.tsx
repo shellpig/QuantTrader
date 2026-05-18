@@ -73,9 +73,14 @@ export function Sidebar() {
       <aside className="hidden lg:flex lg:flex-col lg:fixed lg:inset-y-0 lg:left-0 lg:w-32 lg:border-r lg:border-border lg:bg-card lg:z-40">
         {/* Logo */}
         <div className="flex h-16 items-center px-3 border-b border-border">
-          <span className="text-base font-bold text-foreground tracking-tight">
-            QuantTrader
-          </span>
+          <div className="flex flex-col">
+            <span className="text-base font-bold text-foreground tracking-tight" data-testid="sidebar-app-name">
+              FactorHammer
+            </span>
+            <span className="text-[10px] text-muted-foreground" data-testid="sidebar-app-version">
+              v{process.env.NEXT_PUBLIC_APP_VERSION}
+            </span>
+          </div>
         </div>
 
         {/* Nav */}

@@ -1,6 +1,8 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import DashboardPageClient from "@/components/dashboard/dashboard-page-client";
+import { ValuationPanel } from "@/components/dashboard/p11/valuation-panel";
+import { MonthlyRevenuePanel } from "@/components/dashboard/p11/monthly-revenue-panel";
 import { P11_TOOLTIP_TEXT } from "@/components/dashboard/tooltip-text";
 import type { DashboardPayloadResponse, OhlcvBar } from "@/types/analysis";
 import type { Market } from "@/types/market";
@@ -258,14 +260,42 @@ describe("P11 panels", () => {
     mockLoading = false;
   });
 
-  it("renders 11-B + 11-C panels and keeps 11-D placeholder for TW market", () => {
+  it("renders 11-B + 11-C panels for TW market", () => {
     render(<DashboardPageClient />);
     expect(screen.getByTestId("p11-panel-pe-ratio")).toBeInTheDocument();
     expect(screen.getByTestId("p11-panel-monthly-revenue")).toBeInTheDocument();
     expect(screen.getByTestId("p11-panel-historical-dividend-pe")).toBeInTheDocument();
     expect(screen.getByTestId("p11-panel-institutional-cost")).toBeInTheDocument();
     expect(screen.getByTestId("p11-panel-event-calendar")).toBeInTheDocument();
-    expect(screen.getByTestId("p11-panel-retail-sentiment")).toHaveClass("border-dashed");
+  });
+
+  it("11-E-F8: retail-sentiment placeholder is removed", () => {
+    render(<DashboardPageClient />);
+    expect(screen.queryByTestId("p11-panel-retail-sentiment")).not.toBeInTheDocument();
+    expect(screen.queryByText("散戶多空比")).not.toBeInTheDocument();
+  });
+
+  it("11-E-F3: valuation unsupported text uses same amber color as event-calendar warning", () => {
+    render(
+      <ValuationPanel
+        data={{ symbol: "0056", market: "tw", date: "2026-05-18", per: null, pbr: null, dividend_yield: null, industry: "ETF" }}
+        onOpenIndustry={() => undefined}
+      />
+    );
+    const el = screen.getByTestId("p11-valuation-unsupported");
+    expect(el).toHaveClass("text-amber-300");
+    expect(el).not.toHaveClass("text-slate-500");
+  });
+
+  it("11-E-F3: monthly-revenue unsupported text uses same amber color as event-calendar warning", () => {
+    render(
+      <MonthlyRevenuePanel
+        data={{ symbol: "0056", market: "tw", latest_month: null, latest_revenue: null, items: [] }}
+      />
+    );
+    const el = screen.getByTestId("p11-monthly-revenue-unsupported");
+    expect(el).toHaveClass("text-amber-300");
+    expect(el).not.toHaveClass("text-slate-500");
   });
 
   it("renders tooltip trigger for each 11-B panel title", () => {
