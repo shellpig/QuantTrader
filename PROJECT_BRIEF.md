@@ -2,7 +2,7 @@
 
 本文件供新 session 快速了解專案全貌，取代逐份閱讀全部規格文件。需要深入某區段時，按行號索引讀取對應文件。
 
-最後更新：2026-05-17
+最後更新：2026-05-18
 
 ---
 
@@ -10,20 +10,22 @@
 
 台股 / 美股 US-1 量化交易研究工具（個人版），運行於 Windows 11 本機。聚焦資料管線、研究、回測與 AI 分析，不接實盤。
 
-2026-05-17 Phase 11 規格已從草案正式寫入三份文件：`量化交易系統規格書_shellpig版.md`（V3.0）、`開發設計方針.md`、`測試指南.md`。Phase 11 擴充 dashboard 個股分析頁的基本面與事件資訊，拆為 11-A 版面 placeholder、11-B 估值 / 獲利、11-C 籌碼 / 事件、11-D 待定；執行順序固定 11-A → 11-B → 11-C → 11-D。11-A / 11-B 已完成並驗證通過；11-B 後續發現的刪除 WinError、ETF 空資料說明與歷史除息 TTM PE 最近交易日價格修正也已驗證完成。
+2026-05-18 Phase 11 規格已更新：11-D 從原先待定 / 散戶多空比 placeholder 改為 Goodinfo 股利政策 fallback，補強事件行事曆的「即將除息」顯示；若本機沒有正式未來除息資料，不再用上一筆除息日 + 1 年產生 `[預估]`，改查 Goodinfo 今年股利資料並提示使用者自行確認。11-C 已完成並驗證通過。
+
+2026-05-17 Phase 11 規格已從草案正式寫入三份文件：`量化交易系統規格書_shellpig版.md`（V3.0）、`開發設計方針.md`、`測試指南.md`。Phase 11 擴充 dashboard 個股分析頁的基本面與事件資訊，拆為 11-A 版面 placeholder、11-B 估值 / 獲利、11-C 籌碼 / 事件、11-D Goodinfo 股利政策 fallback；執行順序固定 11-A → 11-B → 11-C → 11-D。11-A / 11-B / 11-C 已完成並驗證通過；11-B 後續發現的刪除 WinError、ETF 空資料說明與歷史除息 TTM PE 最近交易日價格修正也已驗證完成。
 
 2026-05-14 Phase 10 規格已完成並寫入正式文件：前端架構從 Streamlit 遷移至 Next.js (React) + FastAPI，拆為 10-A~10-H 八個子階段。新增 `src/services/`（服務層）、`api/`（FastAPI 後端）、`web/`（Next.js 前端）。核心演算法不重寫。Phase 9-G（美股 intraday）為前置條件。
 
 - Phase 1–9 全部完成（含美股 US-1 / 9-G intraday）。
 - Phase 10 全部完成（10-A ~ 10-H-2）；舊 Streamlit UI 已移除。
-- Phase 11 規格已完成並寫入正式文件；11-A / 11-B 已完成，11-C 尚未開始。
+- Phase 11 規格已完成並寫入正式文件；11-A / 11-B / 11-C 已完成並驗證通過，11-D 已定義為 Goodinfo 股利政策 fallback，尚未實作。
 - Phase 10-F-2（AI 問答接 LLM）延後，不卡主線。
 
 ## 技術棧
 
 - **語言 / 套件管理：** Python 3.12+、uv（`pyproject.toml`）
 - **資料處理：** pandas、pandas-ta
-- **資料來源：** 台股 FinMind API + yfinance 備援；美股日 K / 1m intraday 使用 yfinance；Phase 11-C 股東會使用 TWSE / TPEx OpenAPI
+- **資料來源：** 台股 FinMind API + yfinance 備援；美股日 K / 1m intraday 使用 yfinance；Phase 11-C 股東會使用 TWSE / TPEx OpenAPI；Phase 11-D Goodinfo 股利政策頁作除息 fallback 參考
 - **儲存：** DuckDB + Parquet（零伺服器）
 - **後端：** FastAPI、uvicorn、httpx；SSE 以 FastAPI `StreamingResponse` 實作
 - **前端：** Next.js 15+、React 19+、TypeScript 5+、Tailwind CSS v4、SWR、Lightweight Charts、Radix UI、sonner、cmdk、shadcn/ui pattern
@@ -237,14 +239,19 @@ risk:
 | 10-H-2 | ✅ 完成 | 實際移除與全專案回歸：刪 `src/ui/`、`run_quanttrader.bat`、`pyproject.toml` streamlit 三套件、7 個 Streamlit pytest 檔；`src/ai/advisor.py` 保留（10-F-2 + dashboard analysis 仍使用）；`src/backtest/report.py` `_apply_theme` 去除 ui 依賴 |
 | 11-A | ✅ 完成 | Dashboard 版面調整：chart 高度 400px → 300px；移除 K 線圖 KD / RSI / MACD 下方副圖但保留成交量；左欄 chart 下方新增兩塊、共 6 個 dashed placeholder panel；market=us 時 P11 下方兩塊隱藏；籌碼面板買賣力道與融資 / 融券壓成單行；關鍵價位小數顯示修正；使用者實機驗證通過 |
 | 11-B | ✅ 完成 | 估值 / 獲利區塊：本益比、股價淨值比、殖利率、月營收、歷史除息本益比、同產業本益比 Modal；新增 PER / 月營收 fetcher，補 dividends / EPS storage + `data_meta`；P11 API namespace、service、frontend hooks / panels / Modal、同產業 PER cache + lock、US market 501 邊界與 route regression 已補；ETF 空資料說明、TTM PE 最近交易日價格、資料刪除 WinError 收尾皆已驗證完成 |
-| 11-C | 📝 規格完成，待實作 | 籌碼 / 事件區塊：法人持股成本、事件行事曆（除息 + 股東會）、股東會手動覆蓋 Modal；新增 TWSE / TPEx 股東會全市場資料源、獨立 metadata JSON、manual override CSV；股東會不進 `data_meta`；資料管理頁單檔刪除不動全市場股東會資料，`data_update` / `data_rebuild` 尾端只 refresh 一次 |
-| 11-D | 📝 佔位，待定 | 散戶多空比或其他資訊，11-C 完成後再定義 |
+| 11-C | ✅ 完成 | 籌碼 / 事件區塊：法人持股成本、事件行事曆（除息 + 股東會）、股東會手動覆蓋 Modal；新增 TWSE / TPEx 股東會全市場資料源、獨立 metadata JSON、manual override CSV；股東會不進 `data_meta`；資料管理頁單檔刪除不動全市場股東會資料，`data_update` / `data_rebuild` 尾端只 refresh 一次；使用者已驗證完成 |
+| 11-D | 📝 規格完成，待實作 | Goodinfo 股利政策 fallback：事件行事曆無正式未來除息資料時，不再顯示去年資料推估的 `[預估]`，改抓 Goodinfo 最新年度現金股利 / 股票股利；今年資料顯示來源確認註記，過期或失敗顯示查無今年股利資料 |
 
 ## 當前待辦
 
 見 `驗證後已知問題.md`（每次必讀）。
 
-主線：**Phase 1–10 全部完成（含 10-H-2 Streamlit 完整移除 + 全專案回歸）。Phase 11 規格已正式併入三份文件，11-A / 11-B 已完成，下一步是 11-C。** 10-F-2（AI 問答接 LLM）延後，不卡主線。專案已完全遷移至 Next.js + FastAPI；Streamlit 程式碼與套件已從 codebase 移除。
+主線：**Phase 1–10 全部完成（含 10-H-2 Streamlit 完整移除 + 全專案回歸）。Phase 11 規格已正式併入三份文件，11-A / 11-B / 11-C 已完成並驗證通過，下一步是 11-D Goodinfo 股利政策 fallback。** 10-F-2（AI 問答接 LLM）延後，不卡主線。專案已完全遷移至 Next.js + FastAPI；Streamlit 程式碼與套件已從 codebase 移除。
+
+2026-05-18 狀態（Phase 11-C 完成 + 11-D 規格更新）：
+- **P11-C 已完成並由使用者驗證通過**：法人持股成本、事件行事曆、TWSE / TPEx 股東會全市場資料、獨立 `shareholder_meeting.meta.json`、manual override CSV、股東會手動編輯 Modal、資料管理頁 lifecycle / refresh 規則皆已落地。
+- **P11-D 規格已正式改寫**：原「散戶多空比」先不做；11-D 改為 Goodinfo 股利政策 fallback，文件已同步更新 `量化交易系統規格書_shellpig版.md`、`開發設計方針.md`、`測試指南.md`。
+- **P11-D 核心決策**：有正式未來除息資料時顯示正式資料且不查 Goodinfo；沒有正式未來除息資料時，不再用上一筆資料推估日期 / 股利，改查 `https://goodinfo.tw/tw/StockDividendPolicy.asp?STOCK_ID={symbol}` 最新年度、現金股利、股票股利；今年資料顯示來源連結與「此為網頁抓取資料，請自行前往來源確認」，抓不到或年份過期則顯示「查無今年股利資料」。
 
 2026-05-17 狀態（Phase 11-B 完成）：
 - **P11-B 已完成並驗證通過**：新增 PER / monthly revenue fetcher；補 per / monthly_revenue / dividends / eps storage roundtrip 與 `data_meta`；dashboard service 新增 valuation / monthly revenue / dividend history with PE / industry PER；API 新增 `/api/analysis/p11/valuation`、`monthly-revenue`、`dividend-history`、`industry-per` 並放在動態 route 前；前端新增 valuation / monthly revenue / dividend history panel 與同產業 PER Modal；US market 回 501，frontend 隱藏 P11 區塊。
@@ -253,7 +260,7 @@ risk:
 - **P11-B 驗證結果**：Python gate `tests/test_fetcher.py tests/test_storage.py tests/test_maintenance.py tests/test_services/test_dashboard_svc.py tests/test_api/test_analysis_api.py` 為 **94 passed, 8 deselected**；frontend `npx tsc --noEmit` 0 errors；P11 frontend targeted tests **6 files / 17 tests passed**；full vitest **49 files / 321 tests passed**。
 - **P11-A 已完成並由使用者實機驗證通過**：Dashboard chart 高度改為 300px；TW 左欄 chart 下方新增 6 個 dashed placeholder；US market 隱藏 P11 下方區塊；K 線圖移除 KD / RSI / MACD 副圖並保留成交量；籌碼面板買賣力道與融資 / 融券壓成單行；關鍵價位面板恢復小數顯示。
 - **P11 規格草案已正式寫入三份文件**：`量化交易系統規格書_shellpig版.md` 新增 V3.0 與 Phase 11 章節；`開發設計方針.md` 新增 Phase 11 實作設計；`測試指南.md` 新增 Phase 11 測試矩陣與 gate。
-- **P11 執行順序**：11-A（版面 placeholder）→ 11-B（估值 / 獲利）→ 11-C（籌碼 / 事件）→ 11-D（待定），不可並行。
+- **P11 執行順序**：11-A（版面 placeholder）→ 11-B（估值 / 獲利）→ 11-C（籌碼 / 事件）→ 11-D（Goodinfo 股利政策 fallback），不可並行。
 - **P11 API 規則**：所有新 endpoint 掛 `/api/analysis/p11/*`，且需補 regression 防止被既有 `/api/analysis/{section}` 動態路由吃掉。
 - **P11-B 邊界決定**：同產業 PER cache miss 使用 `ThreadPoolExecutor(max_workers=8)`，每個 worker 建立獨立 `FinMindFetcher`；cache path 為 `data/cache/industry_per/{slug(industry)}_{YYYY-MM-DD}.parquet`；個別 peer 失敗以 `per/pbr/dividend_yield=null` 回傳，不阻塞整體結果。
 - **P11-C 股東會決策**：股東會是全市場單一 parquet，不進 `data_meta`，不用 sentinel symbol，不改 `DuckDBMeta` schema；使用 `data/raw/tw/shareholder_meeting.meta.json` 管 once-per-day guard，manual override 放 `data/manual/shareholder_meeting_override.csv`。資料管理頁單檔刪除只刪 per-symbol raw/processed/meta，不刪 shareholder meeting auto/meta/manual；`data_update` / `data_rebuild` 在 TW market 的 symbol loop 尾端最多 refresh 一次，US market 略過；乾淨重測需額外清全域股東會檔與 manual CSV。
@@ -376,7 +383,7 @@ risk:
 
 | 區段 | 行範圍 | 何時讀 |
 |:---|:---|:---|
-| 修訂歷史 | 3-28 | 查版本變更，最新為 `V3.0`（Phase 11 Dashboard 基本面與事件擴充；11-A 版面、11-B 估值/獲利、11-C 籌碼/事件、11-D 待定） |
+| 修訂歷史 | 3-28 | 查版本變更，最新為 `V3.0`（Phase 11 Dashboard 基本面與事件擴充；11-A 版面、11-B 估值/獲利、11-C 籌碼/事件、11-D Goodinfo 股利政策 fallback） |
 | 專案願景與目標 | 47-62 | 理解定位 |
 | 技術語言與套件選型 | 64-91 | 技術決策參考 |
 | 系統架構（四層架構圖） | 93-177 | 理解整體結構 |
@@ -394,7 +401,7 @@ risk:
 | Phase 8 個股綜合分析儀表板（8-A~8-G） | 1935-2366 | 實作 analysis/ / realtime / dashboard / 說明文字時必讀 |
 | Phase 9 美股 US-1 / 9-G 支援 | 2369-2693 | 美股日 K、調整後價格、回測、技術分析、多市場架構、yfinance 1m intraday 時必讀 |
 | **Phase 10 前端架構重構（10-A~10-H）** | **2705-3756** | **Streamlit → Next.js + FastAPI 遷移、服務層抽離、API 設計、圖表、Responsive、主題系統時必讀。10-E / 10-G 細部規格詳於此區段** |
-| **Phase 11 Dashboard 基本面與事件擴充（11-A~11-D）** | **3768-4070** | **Dashboard 新增估值/獲利與籌碼/事件資訊時必讀；含 `/api/analysis/p11/*` namespace、PER/月營收/dividends/EPS、股東會 metadata、同產業 PER Modal UX** |
+| **Phase 11 Dashboard 基本面與事件擴充（11-A~11-D）** | **3768-4129** | **Dashboard 新增估值/獲利與籌碼/事件資訊時必讀；含 `/api/analysis/p11/*` namespace、PER/月營收/dividends/EPS、股東會 metadata、同產業 PER Modal UX、Goodinfo 股利政策 fallback** |
 | 子階段總覽 | 2666-2680 | Phase 總覽（含 Phase 11） |
 | 費用估算 | 2685-2703 | API / yfinance / TWSE / TPEx / Next.js / US-2 資料源成本 |
 | 10-E：回測研究工作台 | 2942-3387 | 實作 10-E-1~4、Job lifecycle、SSE、取消、CSV、toast/skeleton/error boundary/command palette 整合時必讀 |
@@ -424,11 +431,12 @@ risk:
 | Phase 8-G 新手友善說明文字 | 5260-5683 | 實作儀表板說明文字時必讀 |
 | Phase 9 美股 US-1 / 9-G 支援 | 5685-6290 | 實作多市場基礎、美股資料管線、回測、dashboard、資料管理頁、美股 intraday snapshot 前必讀 |
 | **Phase 10 前端架構重構（10-A~10-H）** | **6293-8405** | **服務層抽離、FastAPI 骨架、Next.js 前端、API 端點、圖表元件、Job manager、config 安全、測試遷移檢查表實作時必讀。10-C / 10-E / 10-G 細部設計皆在此段** |
-| **Phase 11 Dashboard 基本面與事件擴充** | **8406-8883** | **實作 P11 前必讀：11-A 前端 placeholder、11-B data/service/API/frontend、11-C TWSEFetcher/股東會 metadata/manual override/event calendar、資料管理整合、11-D 佔位** |
+| **Phase 11 Dashboard 基本面與事件擴充** | **8406-9068** | **實作 P11 前必讀：11-A 前端 placeholder、11-B data/service/API/frontend、11-C TWSEFetcher/股東會 metadata/manual override/event calendar、資料管理整合、11-D Goodinfo 股利政策 fallback** |
 | 10-E 回測研究工作台 | 6920-7480 | 實作 backtest jobs、partial cancellation、CSV blob、共用 hook/元件時必讀 |
 | 10-G 設定頁 + 全局整合 | 7649-8119 | 實作 toast、Error Boundary、Skeleton、Command Palette、settings/secrets/theme/preset CRUD 時必讀 |
 | 11-B 資料層 / Service / API / 前端 | 8509-8705 | 實作 PER、monthly_revenue、dividends/EPS storage、valuation/monthly/dividend/industry PER API 與 panel 時必讀 |
 | 11-C 股東會 / 事件 / 法人成本 | 8706-8880 | 實作 TWSEFetcher、shareholder_meeting parquet/meta、once-per-day guard、manual override、資料管理整合、event calendar 與 institutional cost 時必讀 |
+| 11-D Goodinfo 股利政策 fallback | 8886-9068 | 實作 Goodinfo parser、每日 cache、event calendar fallback payload、前端「今年股利資料 / 查無今年股利資料」顯示時必讀 |
 
 ### 測試指南.md（~3748 行）
 
@@ -450,7 +458,7 @@ risk:
 | Phase 8 全階段回歸 | 2176-2194 | Phase 8 完成後 |
 | Phase 9 測試（9-A~9-G） | 2196-2603 | 美股 US-1 與 9-G intraday 實作與驗收時必讀 |
 | **Phase 10 測試（10-A~10-H）** | **2606-3238** | **服務層、API 端點、前端 Vitest、E2E Playwright、測試遷移檢查表。10-E / 10-G 測試規格已拆段** |
-| **Phase 11 測試（11-A~11-D）** | **3239-3646** | **P11 自動測試 / 手動驗收 / Gate；含 fetcher、storage、maintenance/job、service、API、frontend、namespace regression、股東會 metadata 與資料管理互動測試** |
+| **Phase 11 測試（11-A~11-D）** | **3239-3692** | **P11 自動測試 / 手動驗收 / Gate；含 fetcher、storage、maintenance/job、service、API、frontend、namespace regression、股東會 metadata、資料管理互動測試、Goodinfo fallback 測試** |
 | 10-E 回測工作台測試 | 2786-2939 | 驗 10-E-1~4：backtest jobs、cancelled partial result、CSV、toast/skeleton/error panel |
 | 10-G 設定頁 + 全局整合測試 | 3005-3092 | 驗 10-G-1 toast/error boundary/skeleton/command palette 與 10-G-2 settings |
 | 全專案最終回歸 | 3647-3688 | Phase 完成後 |
@@ -477,7 +485,7 @@ risk:
 
 ### 未涵蓋資料項目.md
 
-列管目前 fetcher / storage 不抓不存的資料。Phase 8 已接入法人買賣超與融資融券；Phase 11-B 已接入月營收、股利/除息、EPS 與 PER/PBR/殖利率資料層；Phase 11-C 股東會與事件資料層尚未實作。剩餘項目（財報細項、股權分散、散戶多空比、融資維持率、外資期貨未平倉、大盤指數等）仍需先擴規格再走管線。
+列管目前 fetcher / storage 不抓不存的資料。Phase 8 已接入法人買賣超與融資融券；Phase 11-B 已接入月營收、股利/除息、EPS 與 PER/PBR/殖利率資料層；Phase 11-C 已接入股東會與事件資料層；Phase 11-D 只用 Goodinfo 作事件行事曆 fallback 參考，不寫正式資料層。剩餘項目（財報細項、股權分散、散戶多空比、融資維持率、外資期貨未平倉、大盤指數等）仍需先擴規格再走管線。
 
 ## 測試速查
 
