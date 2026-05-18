@@ -25,7 +25,7 @@ from src.core.config import get_data_dir
 
 _GOODINFO_URL_TEMPLATE = "https://goodinfo.tw/tw/StockDividendPolicy.asp?STOCK_ID={symbol}"
 _SOURCE_NOTE = "此為網頁抓取資料，請自行前往來源確認"
-_CACHE_SCHEMA_VERSION = 2
+_CACHE_SCHEMA_VERSION = 5
 _REQUEST_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -83,6 +83,17 @@ def _period_sort_key(value: Any) -> tuple[int, int, str]:
     index = int(match.group(3))
     order = index if kind == "Q" else index * 2
     return (year, order, text)
+
+
+def _parse_payment_date(raw: str, year: int) -> pd.Timestamp | None:
+    """Parse 'M/DD' or 'MM/DD' from payment_raw into a date with the given year."""
+    m = re.search(r"(\d{1,2})/(\d{1,2})", raw)
+    if m is None:
+        return None
+    try:
+        return pd.Timestamp(year=year, month=int(m.group(1)), day=int(m.group(2)), tz="Asia/Taipei")
+    except (ValueError, OverflowError):
+        return None
 
 
 def _find_first_column(columns: pd.Index, keywords: tuple[str, ...], *, exclude: tuple[str, ...] = ()) -> Any | None:
@@ -181,6 +192,7 @@ def extract_goodinfo_dividend_policy_from_html(html: str) -> pd.DataFrame:
         frame["year"] = _extract_year(tbl[year_col]).ffill()
         frame["period"] = tbl[period_col].map(_normalize_text) if period_col is not None else None
         frame["payment_status"] = payment_raw.map(lambda value: "undetermined" if "未定" in value else None)
+        frame["payment_raw"] = payment_raw
         frame["cash_dividend"] = _clean_numeric(tbl[cash_col]) if cash_col is not None else None
         frame["stock_dividend"] = _clean_numeric(tbl[stock_col]) if stock_col is not None else None
         frame = frame.dropna(subset=["year"])
@@ -273,12 +285,14 @@ def get_goodinfo_dividend_policy(
         stock: float | None = None,
         period: str | None = None,
         payment_status: str | None = None,
+        payment_date: str | None = None,
     ) -> dict[str, Any]:
         return {
             "status": status,
             "year": year,
             "period": period,
             "payment_status": payment_status,
+            "payment_date": payment_date,
             "cash_dividend": cash,
             "stock_dividend": stock,
             "source_url": source_url,
@@ -313,16 +327,35 @@ def get_goodinfo_dividend_policy(
             pass
         return payload
 
-    candidates = df[
-        (df["payment_status"] == "undetermined")
-        & (~df["period"].fillna("").isin(["", "-"]))
-        & ((df["cash_dividend"].fillna(0) > 0) | (df["stock_dividend"].fillna(0) > 0))
+    has_period = ~df["period"].fillna("").isin(["", "-"])
+    has_dividend = (df["cash_dividend"].fillna(0) > 0) | (df["stock_dividend"].fillna(0) > 0)
+
+    undetermined = df[
+        (df["payment_status"] == "undetermined") & has_period & has_dividend
     ].copy()
-    if not candidates.empty:
-        candidates["_period_key"] = candidates["period"].map(_period_sort_key)
-        latest = candidates.sort_values(["year", "_period_key"]).iloc[0]
+
+    if not undetermined.empty:
+        undetermined["_period_key"] = undetermined["period"].map(_period_sort_key)
+        latest = undetermined.sort_values(["year", "_period_key"]).iloc[0]
     else:
-        latest = df.sort_values("year").iloc[-1]
+        _far_past = pd.Timestamp("1970-01-01", tz="Asia/Taipei")
+        future_mask = has_period & has_dividend & df.apply(
+            lambda r: (
+                _parse_payment_date(str(r.get("payment_raw", "")), int(r["year"])) or _far_past
+            ) >= today.normalize(),
+            axis=1,
+        )
+        future = df[future_mask].copy()
+        if not future.empty:
+            future["_period_key"] = future["period"].map(_period_sort_key)
+            latest = future.sort_values(["year", "_period_key"]).iloc[0]
+        else:
+            payload = _result("not_found")
+            try:
+                _save_cache(symbol, today, payload)
+            except Exception:
+                pass
+            return payload
     year = int(latest["year"])
     period_val = latest.get("period")
     period = str(period_val) if pd.notna(period_val) and str(period_val).strip() not in ("", "-") else None
@@ -336,6 +369,9 @@ def get_goodinfo_dividend_policy(
     stock_val = latest.get("stock_dividend")
     stock = float(stock_val) if pd.notna(stock_val) else 0.0
 
+    parsed_date = _parse_payment_date(str(latest.get("payment_raw", "")), year)
+    payment_date_str = parsed_date.strftime("%Y-%m-%d") if parsed_date is not None else None
+
     if year == today.year:
         payload = _result(
             "current_year",
@@ -344,6 +380,7 @@ def get_goodinfo_dividend_policy(
             stock=stock,
             period=period,
             payment_status=payment_status,
+            payment_date=payment_date_str,
         )
     else:
         payload = _result(
@@ -353,6 +390,7 @@ def get_goodinfo_dividend_policy(
             stock=stock,
             period=period,
             payment_status=payment_status,
+            payment_date=payment_date_str,
         )
 
     try:

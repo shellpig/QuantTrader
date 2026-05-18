@@ -200,6 +200,92 @@ def test_service_selects_undetermined_goodinfo_half_year_period_3293() -> None:
 
 
 # ---------------------------------------------------------------------------
+# No-undetermined → not_found (0050-like scenario)
+# ---------------------------------------------------------------------------
+
+
+def test_service_all_paid_returns_not_found_0050() -> None:
+    """0050-like: all rows have payment dates (none undetermined) → not_found."""
+    html = """
+    <table>
+      <thead>
+        <tr>
+          <th rowspan="3">股利發放期間</th>
+          <th rowspan="3">股利所屬期間</th>
+          <th colspan="3">現金股利</th>
+          <th colspan="3">股票股利</th>
+        </tr>
+        <tr>
+          <th>盈餘</th><th>公積</th><th>合計</th>
+          <th>盈餘</th><th>公積</th><th>合計</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>2026</td><td>-</td><td>1</td><td>0</td><td>1</td><td>0</td><td>0</td><td>0</td></tr>
+        <tr><td>1/22</td><td>25H2</td><td>1</td><td>0</td><td>1</td><td>0</td><td>0</td><td>0</td></tr>
+        <tr><td>2025</td><td>-</td><td>3.06</td><td>0</td><td>3.06</td><td>0</td><td>0</td><td>0</td></tr>
+        <tr><td>7/21</td><td>25H1</td><td>0.36</td><td>0</td><td>0.36</td><td>0</td><td>0</td><td>0</td></tr>
+        <tr><td>1/17</td><td>24H2</td><td>2.7</td><td>0</td><td>2.7</td><td>0</td><td>0</td><td>0</td></tr>
+      </tbody>
+    </table>
+    """
+    with (
+        patch("src.services.dividend_policy_service._load_cache", return_value=None),
+        patch("src.services.dividend_policy_service._save_cache"),
+        patch(
+            "src.services.dividend_policy_service.fetch_goodinfo_dividend_policy_html",
+            return_value=html,
+        ),
+    ):
+        result = get_goodinfo_dividend_policy("0050", today=TODAY_2026)
+
+    assert result["status"] == "not_found"
+
+
+def test_service_future_payment_date_selected_00929() -> None:
+    """00929-like: no undetermined, but 5/20 is a future date → pick it."""
+    html = """
+    <table>
+      <thead>
+        <tr>
+          <th rowspan="3">股利發放期間</th>
+          <th rowspan="3">股利所屬期間</th>
+          <th colspan="6">股東股利 (元/股)</th>
+        </tr>
+        <tr>
+          <th colspan="3">現金股利</th>
+          <th colspan="3">股票股利</th>
+        </tr>
+        <tr>
+          <th>盈餘</th><th>公積</th><th>合計</th>
+          <th>盈餘</th><th>公積</th><th>合計</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>2026</td><td>-</td><td>0.57</td><td>0</td><td>0.57</td><td>0</td><td>0</td><td>0</td></tr>
+        <tr><td>5/20</td><td>26M04</td><td>0.13</td><td>0</td><td>0.13</td><td>0</td><td>0</td><td>0</td></tr>
+        <tr><td>4/21</td><td>26M03</td><td>0.13</td><td>0</td><td>0.13</td><td>0</td><td>0</td><td>0</td></tr>
+        <tr><td>3/18</td><td>26M02</td><td>0.11</td><td>0</td><td>0.11</td><td>0</td><td>0</td><td>0</td></tr>
+      </tbody>
+    </table>
+    """
+    with (
+        patch("src.services.dividend_policy_service._load_cache", return_value=None),
+        patch("src.services.dividend_policy_service._save_cache"),
+        patch(
+            "src.services.dividend_policy_service.fetch_goodinfo_dividend_policy_html",
+            return_value=html,
+        ),
+    ):
+        result = get_goodinfo_dividend_policy("00929", today=TODAY_2026)
+
+    assert result["status"] == "current_year"
+    assert result["period"] == "26M04"
+    assert result["cash_dividend"] == pytest.approx(0.13)
+    assert result["payment_date"] == "2026-05-20"
+
+
+# ---------------------------------------------------------------------------
 # Service tests (11-D-S1 ~ 11-D-S7)
 # ---------------------------------------------------------------------------
 
@@ -211,8 +297,8 @@ def _make_service_mocks(has_cache: bool = False, cached_payload: dict | None = N
     return mock_load, mock_save
 
 
-def test_service_current_year_status(tmp_path: Path) -> None:
-    """11-D-S3: latest Goodinfo year == today's year → status current_year."""
+def test_service_current_year_no_undetermined_returns_not_found(tmp_path: Path) -> None:
+    """11-D-S3: Goodinfo has current-year rows but none undetermined → not_found."""
     with (
         patch("src.services.dividend_policy_service._load_cache", return_value=None),
         patch("src.services.dividend_policy_service._save_cache"),
@@ -223,16 +309,11 @@ def test_service_current_year_status(tmp_path: Path) -> None:
     ):
         result = get_goodinfo_dividend_policy("3293", today=TODAY_2026)
 
-    assert result["status"] == "current_year"
-    assert result["year"] == 2026
-    assert result["cash_dividend"] == pytest.approx(32.0)
-    assert result["stock_dividend"] == pytest.approx(10.0)
-    assert "goodinfo.tw" in result["source_url"]
-    assert result["source_note"] != ""
+    assert result["status"] == "not_found"
 
 
-def test_service_stale_when_latest_year_past(tmp_path: Path) -> None:
-    """11-D-S4: latest Goodinfo year < today's year → status stale."""
+def test_service_stale_no_undetermined_returns_not_found(tmp_path: Path) -> None:
+    """11-D-S4: Goodinfo latest year < today and no undetermined → not_found."""
     html_2025 = """
     <table>
       <thead><tr><th>股利發放期間</th><th>現金股利</th><th>股票股利</th></tr></thead>
@@ -249,8 +330,7 @@ def test_service_stale_when_latest_year_past(tmp_path: Path) -> None:
     ):
         result = get_goodinfo_dividend_policy("2330", today=TODAY_2026)
 
-    assert result["status"] == "stale"
-    assert result["year"] == 2025
+    assert result["status"] == "not_found"
 
 
 def test_service_fetch_failed_returns_200_compatible_status() -> None:
@@ -270,11 +350,16 @@ def test_service_fetch_failed_returns_200_compatible_status() -> None:
 
 
 def test_service_stock_dividend_defaults_to_zero_when_absent() -> None:
-    """11-D-S6: stock_dividend missing → fallback 0.0."""
+    """11-D-S6: stock_dividend column missing → fallback 0.0."""
     html_no_stock = """
     <table>
-      <thead><tr><th>股利發放期間</th><th>現金股利</th></tr></thead>
-      <tbody><tr><td>2026年</td><td>20.00</td></tr></tbody>
+      <thead>
+        <tr><th>股利發放期間</th><th>股利所屬期間</th><th>現金股利</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>2026</td><td>-</td><td>20.00</td></tr>
+        <tr><td>未定</td><td>25H2</td><td>10.00</td></tr>
+      </tbody>
     </table>
     """
     with (

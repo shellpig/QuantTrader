@@ -37,6 +37,19 @@ function DividendLine({ entry, showCountdown }: { entry: P11EventCalendarEntry |
   );
 }
 
+function PaymentDateCountdown({ date }: { date: string }) {
+  const target = new Date(date + "T00:00:00+08:00");
+  const now = new Date();
+  const todayMidnight = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Taipei" }));
+  todayMidnight.setHours(0, 0, 0, 0);
+  const days = Math.round((target.getTime() - todayMidnight.getTime()) / 86_400_000);
+  return (
+    <span className="text-slate-300">
+      {date} 發放{days >= 0 ? <span className="ml-1 text-slate-400">倒數 {formatNumber(days, 0)} 天</span> : null}
+    </span>
+  );
+}
+
 function DividendPolicyFallbackLine({ fallback }: { fallback: P11DividendPolicyFallback | null | undefined }) {
   if (!fallback) return <span className="text-slate-500">—</span>;
 
@@ -50,6 +63,8 @@ function DividendPolicyFallbackLine({ fallback }: { fallback: P11DividendPolicyF
           ) : null}
           {fallback.payment_status === "undetermined" ? (
             <span className="text-slate-400">股利發放時間未定</span>
+          ) : fallback.payment_date ? (
+            <PaymentDateCountdown date={fallback.payment_date} />
           ) : null}
           {fallback.cash_dividend != null ? (
             <span className="text-slate-300">現金股利 {formatNumber(fallback.cash_dividend, 2)}</span>
@@ -76,7 +91,7 @@ function DividendPolicyFallbackLine({ fallback }: { fallback: P11DividendPolicyF
 
   return (
     <div className="flex flex-wrap items-center gap-2" data-testid="p11-dividend-fallback-not-found">
-      <span className="text-slate-500">查無今年股利資料</span>
+      <span className="text-slate-500">查無最新股利資料</span>
       <a
         href={fallback.source_url}
         target="_blank"

@@ -186,7 +186,7 @@ describe("EventCalendarPanel", () => {
     expect(screen.queryByText(/倒數/)).not.toBeInTheDocument();
   });
 
-  it("11-D-F4: fallback stale/not_found/fetch_failed shows 查無今年股利資料 with link", () => {
+  it("11-D-F4: fallback stale/not_found/fetch_failed shows 查無最新股利資料 with link", () => {
     for (const status of ["stale", "not_found", "fetch_failed"] as const) {
       const { unmount } = render(
         <EventCalendarPanel
@@ -211,7 +211,7 @@ describe("EventCalendarPanel", () => {
         />,
       );
       expect(screen.getByTestId("p11-dividend-fallback-not-found")).toBeInTheDocument();
-      expect(screen.getByText("查無今年股利資料")).toBeInTheDocument();
+      expect(screen.getByText("查無最新股利資料")).toBeInTheDocument();
       expect(screen.getByTestId("p11-dividend-fallback-link")).toBeInTheDocument();
       unmount();
     }

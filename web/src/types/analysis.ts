@@ -270,6 +270,7 @@ export interface P11DividendPolicyFallback {
   year: number | null;
   period?: string | null;
   payment_status?: "undetermined" | null;
+  payment_date?: string | null;
   cash_dividend: number | null;
   stock_dividend: number | null;
   source_url: string;
