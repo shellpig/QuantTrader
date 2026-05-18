@@ -25,7 +25,17 @@ from fastapi.testclient import TestClient
 from api.main import app
 from api.job_manager import get_job_manager
 
-client = TestClient(app)
+client: TestClient = None  # type: ignore[assignment]
+
+
+@pytest.fixture(autouse=True)
+def _isolate_client():
+    """Give each test a fresh TestClient so background asyncio tasks cannot leak."""
+    global client
+    _reset_manager()
+    with TestClient(app) as c:
+        client = c
+        yield
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -204,15 +214,11 @@ def _wait_for_result(job_id: str, timeout: float = 5.0):
 
 def test_backtest_run_creates_job() -> None:
     _reset_manager()
-    with (
-        patch("src.services.backtest_service.list_strategy_presets", return_value=_MINIMAL_PRESETS),
-        patch("src.services.backtest_service.run_backtest_job", return_value=MagicMock(
-            symbol="2330", market="tw", currency="TWD", engine="vectorized",
-            strategy_type="moving_average_cross", strategy_params={},
-            result=None, dca_result=None, data=pd.DataFrame(), dca_warning=None, error=None,
-        )),
-        patch("src.services.backtest_service.serialize_backtest_result", return_value=_MOCK_RESULT_PAYLOAD),
-    ):
+
+    async def _noop_run_job(*_a, **_kw):
+        pass
+
+    with patch("api.routers.jobs._run_job", side_effect=_noop_run_job):
         resp = client.post("/api/jobs", json={
             "type": "backtest_run",
             "params": {
@@ -863,20 +869,25 @@ _MOCK_WFA_PAYLOAD = {
 
 def test_backtest_wfa_job_created_returns_201() -> None:
     _reset_manager()
-    resp = client.post("/api/jobs", json={
-        "type": "backtest_wfa",
-        "params": {
-            "market": "tw",
-            "symbol": "2330",
-            "start_date": "2018-01-01",
-            "end_date": "2024-12-31",
-            "strategy_type": "moving_average_cross",
-            "param_candidates": {"short_window": [20], "long_window": [60]},
-            "is_months": 12,
-            "oos_months": 3,
-            "step_months": 3,
-        },
-    })
+
+    async def _noop_run_job(*_a, **_kw):
+        pass
+
+    with patch("api.routers.jobs._run_job", side_effect=_noop_run_job):
+        resp = client.post("/api/jobs", json={
+            "type": "backtest_wfa",
+            "params": {
+                "market": "tw",
+                "symbol": "2330",
+                "start_date": "2018-01-01",
+                "end_date": "2024-12-31",
+                "strategy_type": "moving_average_cross",
+                "param_candidates": {"short_window": [20], "long_window": [60]},
+                "is_months": 12,
+                "oos_months": 3,
+                "step_months": 3,
+            },
+        })
     assert resp.status_code == 201
     assert "job_id" in resp.json()
 

@@ -15,13 +15,23 @@ from fastapi.testclient import TestClient
 from api.main import app
 from api.job_manager import get_job_manager
 
-client = TestClient(app)
+client: TestClient = None  # type: ignore[assignment]
 
 
 def _reset_job_manager() -> None:
     """Reset singleton between tests to avoid state leakage."""
     import api.job_manager as jm_module
     jm_module._job_manager = None
+
+
+@pytest.fixture(autouse=True)
+def _isolate_client():
+    """Give each test a fresh TestClient so background asyncio tasks cannot leak."""
+    global client
+    _reset_job_manager()
+    with TestClient(app) as c:
+        client = c
+        yield
 
 
 # ---------------------------------------------------------------------------
