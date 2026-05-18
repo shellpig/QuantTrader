@@ -248,6 +248,7 @@ def test_p11_event_calendar_endpoint_returns_payload(mock_event) -> None:
         "market": "tw",
         "next_ex_dividend": None,
         "last_ex_dividend": None,
+        "dividend_policy_fallback": None,
         "next_shareholder_meeting": {"date": "2026-06-30", "meeting_type": "常會", "source": "manual"},
         "last_shareholder_meeting": None,
         "missing_shareholder_meeting": False,
@@ -255,6 +256,78 @@ def test_p11_event_calendar_endpoint_returns_payload(mock_event) -> None:
     resp = client.get("/api/analysis/p11/event-calendar", params={"symbol": "2330", "market": "tw"})
     assert resp.status_code == 200
     assert resp.json()["data"]["next_shareholder_meeting"]["source"] == "manual"
+
+
+@patch("api.routers.analysis.get_event_calendar")
+def test_p11_event_calendar_returns_dividend_policy_fallback(mock_event) -> None:
+    """11-D-A1: endpoint passes dividend_policy_fallback through in response."""
+    mock_event.return_value = {
+        "symbol": "3293",
+        "market": "tw",
+        "next_ex_dividend": None,
+        "last_ex_dividend": {"date": "2025-07-24", "cash_dividend": 29.0, "stock_dividend": 0.0},
+        "dividend_policy_fallback": {
+            "status": "current_year",
+            "year": 2026,
+            "cash_dividend": 32.0,
+            "stock_dividend": 10.0,
+            "source_url": "https://goodinfo.tw/tw/StockDividendPolicy.asp?STOCK_ID=3293",
+            "source_note": "此為網頁抓取資料，請自行前往來源確認",
+        },
+        "next_shareholder_meeting": None,
+        "last_shareholder_meeting": None,
+        "missing_shareholder_meeting": True,
+    }
+    resp = client.get("/api/analysis/p11/event-calendar", params={"symbol": "3293", "market": "tw"})
+    assert resp.status_code == 200
+    fb = resp.json()["data"]["dividend_policy_fallback"]
+    assert fb["status"] == "current_year"
+    assert fb["year"] == 2026
+
+
+@patch("api.routers.analysis.get_event_calendar")
+def test_p11_event_calendar_formal_dividend_has_null_fallback(mock_event) -> None:
+    """11-D-A2: formal next_ex_dividend present → dividend_policy_fallback is null."""
+    mock_event.return_value = {
+        "symbol": "2330",
+        "market": "tw",
+        "next_ex_dividend": {"date": "2026-07-15", "cash_dividend": 3.5, "stock_dividend": 0.0, "days_until": 58, "is_estimated": False},
+        "last_ex_dividend": None,
+        "dividend_policy_fallback": None,
+        "next_shareholder_meeting": None,
+        "last_shareholder_meeting": None,
+        "missing_shareholder_meeting": True,
+    }
+    resp = client.get("/api/analysis/p11/event-calendar", params={"symbol": "2330", "market": "tw"})
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["next_ex_dividend"]["is_estimated"] is False
+    assert data["dividend_policy_fallback"] is None
+
+
+@patch("api.routers.analysis.get_event_calendar")
+def test_p11_event_calendar_goodinfo_failure_still_200(mock_event) -> None:
+    """11-D-A3: Goodinfo fetch_failed → endpoint returns 200, status=fetch_failed."""
+    mock_event.return_value = {
+        "symbol": "2330",
+        "market": "tw",
+        "next_ex_dividend": None,
+        "last_ex_dividend": None,
+        "dividend_policy_fallback": {
+            "status": "fetch_failed",
+            "year": None,
+            "cash_dividend": None,
+            "stock_dividend": None,
+            "source_url": "https://goodinfo.tw/tw/StockDividendPolicy.asp?STOCK_ID=2330",
+            "source_note": "此為網頁抓取資料，請自行前往來源確認",
+        },
+        "next_shareholder_meeting": None,
+        "last_shareholder_meeting": None,
+        "missing_shareholder_meeting": True,
+    }
+    resp = client.get("/api/analysis/p11/event-calendar", params={"symbol": "2330", "market": "tw"})
+    assert resp.status_code == 200
+    assert resp.json()["data"]["dividend_policy_fallback"]["status"] == "fetch_failed"
 
 
 @patch("api.routers.analysis.upsert_shareholder_meeting_override")

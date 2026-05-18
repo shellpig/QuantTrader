@@ -18,6 +18,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 
 from src.ai.advisor import AIAdvisor, DashboardAnalysis
+from src.services.dividend_policy_service import get_goodinfo_dividend_policy
 from src.analysis.chip_analysis import ChipSummary, generate_chip_summary
 from src.analysis.pattern import (
     CandlePattern,
@@ -585,16 +586,10 @@ def get_event_calendar(symbol: str, market: str = "tw") -> dict[str, Any]:
                 "cash_dividend": _to_float_or_none(row.get("cash_dividend")),
                 "stock_dividend": float(row.get("stock_dividend", 0.0)),
             }
-            if next_ex_dividend is None:
-                next_date = pd.Timestamp(row["date"]) + pd.DateOffset(years=1)
-                days_until = int((next_date.normalize() - today.normalize()) / pd.Timedelta(days=1))
-                next_ex_dividend = {
-                    "date": next_date.strftime("%Y-%m-%d"),
-                    "cash_dividend": _to_float_or_none(row.get("cash_dividend")),
-                    "stock_dividend": float(row.get("stock_dividend", 0.0)),
-                    "days_until": days_until,
-                    "is_estimated": True,
-                }
+
+    dividend_policy_fallback: dict[str, Any] | None = None
+    if next_ex_dividend is None:
+        dividend_policy_fallback = get_goodinfo_dividend_policy(symbol, today=today)
 
     meeting_df = _resolve_shareholder_meeting_event(symbol, storage)
     next_shareholder_meeting: dict[str, Any] | None = None
@@ -616,6 +611,7 @@ def get_event_calendar(symbol: str, market: str = "tw") -> dict[str, Any]:
         "market": normalized_market,
         "next_ex_dividend": next_ex_dividend,
         "last_ex_dividend": last_ex_dividend,
+        "dividend_policy_fallback": dividend_policy_fallback,
         "next_shareholder_meeting": next_shareholder_meeting,
         "last_shareholder_meeting": last_shareholder_meeting,
         "missing_shareholder_meeting": next_shareholder_meeting is None and last_shareholder_meeting is None,

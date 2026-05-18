@@ -753,6 +753,102 @@ def test_get_event_calendar_non_etf_returns_is_etf_false() -> None:
     assert data["is_etf"] is False
 
 
+# ---------------------------------------------------------------------------
+# Phase 11-D: Goodinfo dividend policy fallback
+# ---------------------------------------------------------------------------
+
+_GOODINFO_FALLBACK_CURRENT = {
+    "status": "current_year",
+    "year": 2026,
+    "cash_dividend": 29.0,
+    "stock_dividend": 0.0,
+    "source_url": "https://goodinfo.tw/tw/StockDividendPolicy.asp?STOCK_ID=3293",
+    "source_note": "此為網頁抓取資料，請自行前往來源確認",
+}
+
+
+def test_event_calendar_formal_future_dividend_skips_goodinfo() -> None:
+    """11-D-S1: has formal future dividend → is_estimated=False, Goodinfo not called."""
+    dividends_df = pd.DataFrame(
+        {"date": pd.to_datetime(["2026-07-24"]), "cash_dividend": [35.0], "stock_dividend": [10.0], "symbol": ["3293"]}
+    )
+    mock_goodinfo = MagicMock()
+    with (
+        patch("src.services.dashboard_service.ParquetStorage") as mock_storage_cls,
+        patch("src.services.dashboard_service._lookup_is_etf", return_value=False),
+        patch("src.services.dashboard_service.get_goodinfo_dividend_policy", mock_goodinfo),
+    ):
+        mock_storage = MagicMock()
+        mock_storage.load_dividends.return_value = dividends_df
+        mock_storage.load_shareholder_meeting.return_value = pd.DataFrame()
+        mock_storage.load_shareholder_meeting_override.return_value = pd.DataFrame()
+        mock_storage_cls.return_value = mock_storage
+        data = get_event_calendar("3293", market="tw")
+
+    mock_goodinfo.assert_not_called()
+    entry = data["next_ex_dividend"]
+    assert entry is not None
+    assert entry["is_estimated"] is False
+    assert data["dividend_policy_fallback"] is None
+
+
+def test_event_calendar_no_future_dividend_calls_goodinfo() -> None:
+    """11-D-S2: no future dividend → old [預估] gone, Goodinfo called instead."""
+    past_df = pd.DataFrame(
+        {"date": pd.to_datetime(["2025-07-24"]), "cash_dividend": [29.0], "stock_dividend": [0.0], "symbol": ["3293"]}
+    )
+    with (
+        patch("src.services.dashboard_service.ParquetStorage") as mock_storage_cls,
+        patch("src.services.dashboard_service._lookup_is_etf", return_value=False),
+        patch(
+            "src.services.dashboard_service.get_goodinfo_dividend_policy",
+            return_value=_GOODINFO_FALLBACK_CURRENT,
+        ),
+    ):
+        mock_storage = MagicMock()
+        mock_storage.load_dividends.return_value = past_df
+        mock_storage.load_shareholder_meeting.return_value = pd.DataFrame()
+        mock_storage.load_shareholder_meeting_override.return_value = pd.DataFrame()
+        mock_storage_cls.return_value = mock_storage
+        data = get_event_calendar("3293", market="tw")
+
+    # next_ex_dividend must be None (no [預估] estimation)
+    assert data["next_ex_dividend"] is None
+    # fallback should be populated with Goodinfo data
+    fb = data["dividend_policy_fallback"]
+    assert fb is not None
+    assert fb["status"] == "current_year"
+    assert fb["year"] == 2026
+
+
+def test_event_calendar_goodinfo_failure_does_not_raise() -> None:
+    """11-D-S5: Goodinfo failure → fetch_failed status, service still returns 200-compatible dict."""
+    with (
+        patch("src.services.dashboard_service.ParquetStorage") as mock_storage_cls,
+        patch("src.services.dashboard_service._lookup_is_etf", return_value=False),
+        patch(
+            "src.services.dashboard_service.get_goodinfo_dividend_policy",
+            return_value={
+                "status": "fetch_failed",
+                "year": None,
+                "cash_dividend": None,
+                "stock_dividend": None,
+                "source_url": "https://goodinfo.tw/tw/StockDividendPolicy.asp?STOCK_ID=2330",
+                "source_note": "此為網頁抓取資料，請自行前往來源確認",
+            },
+        ),
+    ):
+        mock_storage = MagicMock()
+        mock_storage.load_dividends.return_value = pd.DataFrame()
+        mock_storage.load_shareholder_meeting.return_value = pd.DataFrame()
+        mock_storage.load_shareholder_meeting_override.return_value = pd.DataFrame()
+        mock_storage_cls.return_value = mock_storage
+        data = get_event_calendar("2330", market="tw")
+
+    assert data["dividend_policy_fallback"]["status"] == "fetch_failed"
+    assert data["next_ex_dividend"] is None
+
+
 def test_shareholder_override_upsert_and_delete_delegates_to_storage() -> None:
     with patch("src.services.dashboard_service.ParquetStorage") as mock_storage_cls:
         mock_storage = MagicMock()

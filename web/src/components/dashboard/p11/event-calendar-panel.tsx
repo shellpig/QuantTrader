@@ -2,7 +2,7 @@ import { Pencil } from "lucide-react";
 import { HelpTooltip } from "@/components/dashboard/help-tooltip";
 import { P11_TOOLTIP_TEXT } from "@/components/dashboard/tooltip-text";
 import { formatNumber } from "@/lib/formatters";
-import type { P11EventCalendarEntry, P11EventCalendarResponse } from "@/types/analysis";
+import type { P11DividendPolicyFallback, P11EventCalendarEntry, P11EventCalendarResponse } from "@/types/analysis";
 
 function renderCountdown(daysUntil: number | null | undefined): string {
   if (daysUntil == null || Number.isNaN(daysUntil)) return "—";
@@ -32,8 +32,60 @@ function DividendLine({ entry, showCountdown }: { entry: P11EventCalendarEntry |
       {entry.stock_dividend != null && entry.stock_dividend > 0 ? (
         <span className="text-slate-300">股票股利 {formatNumber(entry.stock_dividend, 2)}</span>
       ) : null}
-      {entry.is_estimated ? <span className="text-amber-300">[預估]</span> : null}
       {showCountdown ? <span className="text-slate-400">{renderCountdown(entry.days_until)}</span> : null}
+    </div>
+  );
+}
+
+function DividendPolicyFallbackLine({ fallback }: { fallback: P11DividendPolicyFallback | null | undefined }) {
+  if (!fallback) return <span className="text-slate-500">—</span>;
+
+  if (fallback.status === "current_year") {
+    return (
+      <div className="flex flex-wrap items-start gap-1" data-testid="p11-dividend-fallback-current">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-slate-300">今年股利資料</span>
+          {fallback.period ? (
+            <span className="text-slate-100 [font-family:var(--font-mono)]">{fallback.period}</span>
+          ) : null}
+          {fallback.payment_status === "undetermined" ? (
+            <span className="text-slate-400">股利發放時間未定</span>
+          ) : null}
+          {fallback.cash_dividend != null ? (
+            <span className="text-slate-300">現金股利 {formatNumber(fallback.cash_dividend, 2)}</span>
+          ) : null}
+          {fallback.stock_dividend != null && fallback.stock_dividend > 0 ? (
+            <span className="text-slate-300">股票股利 {formatNumber(fallback.stock_dividend, 2)}</span>
+          ) : null}
+        </div>
+        <div className="w-full text-slate-500">
+          <a
+            href={fallback.source_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline hover:text-slate-300"
+            data-testid="p11-dividend-fallback-link"
+          >
+            Goodinfo 來源
+          </a>
+          <span className="ml-1">{fallback.source_note}</span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2" data-testid="p11-dividend-fallback-not-found">
+      <span className="text-slate-500">查無今年股利資料</span>
+      <a
+        href={fallback.source_url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-slate-500 underline hover:text-slate-300"
+        data-testid="p11-dividend-fallback-link"
+      >
+        Goodinfo 來源
+      </a>
     </div>
   );
 }
@@ -80,7 +132,11 @@ export function EventCalendarPanel({
           <div className="space-y-1">
             <div>
               <span className="mr-2 text-slate-500">除息</span>
-              <DividendLine entry={data?.next_ex_dividend ?? null} showCountdown />
+              {data?.next_ex_dividend != null ? (
+                <DividendLine entry={data.next_ex_dividend} showCountdown />
+              ) : (
+                <DividendPolicyFallbackLine fallback={data?.dividend_policy_fallback} />
+              )}
             </div>
             <div>
               <span className="mr-2 text-slate-500">股東會</span>

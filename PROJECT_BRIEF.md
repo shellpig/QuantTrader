@@ -10,7 +10,7 @@
 
 台股 / 美股 US-1 量化交易研究工具（個人版），運行於 Windows 11 本機。聚焦資料管線、研究、回測與 AI 分析，不接實盤。
 
-2026-05-18 Phase 11 規格已更新：11-D 從原先待定 / 散戶多空比 placeholder 改為 Goodinfo 股利政策 fallback，補強事件行事曆的「即將除息」顯示；若本機沒有正式未來除息資料，不再用上一筆除息日 + 1 年產生 `[預估]`，改查 Goodinfo 今年股利資料並提示使用者自行確認。11-C 已完成並驗證通過。
+2026-05-18 Phase 11 規格已更新：11-D 從原先待定 / 散戶多空比 placeholder 改為 Goodinfo 股利政策 fallback，補強事件行事曆的「即將除息」顯示；若本機沒有正式未來除息資料，不再用上一筆除息日 + 1 年產生 `[預估]`，改查 Goodinfo 股利政策表。若表內有「股利發放期間=未定」的明細列，優先顯示較舊的待發放所屬期間，例如 `3293` 顯示 `25H2 現金股利 36`、`2330` 顯示 `25Q4 現金股利 6`，並提示使用者自行確認。11-C 已完成並驗證通過。
 
 2026-05-17 Phase 11 規格已從草案正式寫入三份文件：`量化交易系統規格書_shellpig版.md`（V3.0）、`開發設計方針.md`、`測試指南.md`。Phase 11 擴充 dashboard 個股分析頁的基本面與事件資訊，拆為 11-A 版面 placeholder、11-B 估值 / 獲利、11-C 籌碼 / 事件、11-D Goodinfo 股利政策 fallback；執行順序固定 11-A → 11-B → 11-C → 11-D。11-A / 11-B / 11-C 已完成並驗證通過；11-B 後續發現的刪除 WinError、ETF 空資料說明與歷史除息 TTM PE 最近交易日價格修正也已驗證完成。
 
@@ -18,7 +18,7 @@
 
 - Phase 1–9 全部完成（含美股 US-1 / 9-G intraday）。
 - Phase 10 全部完成（10-A ~ 10-H-2）；舊 Streamlit UI 已移除。
-- Phase 11 規格已完成並寫入正式文件；11-A / 11-B / 11-C 已完成並驗證通過，11-D 已定義為 Goodinfo 股利政策 fallback，尚未實作。
+- Phase 11 規格已完成並寫入正式文件；11-A / 11-B / 11-C 已完成並驗證通過，11-D 已定義為 Goodinfo 股利政策 fallback，正在實作 / 驗證。
 - Phase 10-F-2（AI 問答接 LLM）延後，不卡主線。
 
 ## 技術棧
@@ -240,7 +240,7 @@ risk:
 | 11-A | ✅ 完成 | Dashboard 版面調整：chart 高度 400px → 300px；移除 K 線圖 KD / RSI / MACD 下方副圖但保留成交量；左欄 chart 下方新增兩塊、共 6 個 dashed placeholder panel；market=us 時 P11 下方兩塊隱藏；籌碼面板買賣力道與融資 / 融券壓成單行；關鍵價位小數顯示修正；使用者實機驗證通過 |
 | 11-B | ✅ 完成 | 估值 / 獲利區塊：本益比、股價淨值比、殖利率、月營收、歷史除息本益比、同產業本益比 Modal；新增 PER / 月營收 fetcher，補 dividends / EPS storage + `data_meta`；P11 API namespace、service、frontend hooks / panels / Modal、同產業 PER cache + lock、US market 501 邊界與 route regression 已補；ETF 空資料說明、TTM PE 最近交易日價格、資料刪除 WinError 收尾皆已驗證完成 |
 | 11-C | ✅ 完成 | 籌碼 / 事件區塊：法人持股成本、事件行事曆（除息 + 股東會）、股東會手動覆蓋 Modal；新增 TWSE / TPEx 股東會全市場資料源、獨立 metadata JSON、manual override CSV；股東會不進 `data_meta`；資料管理頁單檔刪除不動全市場股東會資料，`data_update` / `data_rebuild` 尾端只 refresh 一次；使用者已驗證完成 |
-| 11-D | 📝 規格完成，待實作 | Goodinfo 股利政策 fallback：事件行事曆無正式未來除息資料時，不再顯示去年資料推估的 `[預估]`，改抓 Goodinfo 最新年度現金股利 / 股票股利；今年資料顯示來源確認註記，過期或失敗顯示查無今年股利資料 |
+| 11-D | 🔄 實作 / 驗證中 | Goodinfo 股利政策 fallback：事件行事曆無正式未來除息資料時，不再顯示去年資料推估的 `[預估]`，改抓 Goodinfo 股利政策表；優先顯示「股利發放期間=未定」且較舊的待發放明細（如 `25H2` / `25Q4`）與現金 / 股票股利；過期或失敗顯示查無今年股利資料 |
 
 ## 當前待辦
 
@@ -251,7 +251,7 @@ risk:
 2026-05-18 狀態（Phase 11-C 完成 + 11-D 規格更新）：
 - **P11-C 已完成並由使用者驗證通過**：法人持股成本、事件行事曆、TWSE / TPEx 股東會全市場資料、獨立 `shareholder_meeting.meta.json`、manual override CSV、股東會手動編輯 Modal、資料管理頁 lifecycle / refresh 規則皆已落地。
 - **P11-D 規格已正式改寫**：原「散戶多空比」先不做；11-D 改為 Goodinfo 股利政策 fallback，文件已同步更新 `量化交易系統規格書_shellpig版.md`、`開發設計方針.md`、`測試指南.md`。
-- **P11-D 核心決策**：有正式未來除息資料時顯示正式資料且不查 Goodinfo；沒有正式未來除息資料時，不再用上一筆資料推估日期 / 股利，改查 `https://goodinfo.tw/tw/StockDividendPolicy.asp?STOCK_ID={symbol}` 最新年度、現金股利、股票股利；今年資料顯示來源連結與「此為網頁抓取資料，請自行前往來源確認」，抓不到或年份過期則顯示「查無今年股利資料」。
+- **P11-D 核心決策**：有正式未來除息資料時顯示正式資料且不查 Goodinfo；沒有正式未來除息資料時，不再用上一筆資料推估日期 / 股利，改查 `https://goodinfo.tw/tw/StockDividendPolicy.asp?STOCK_ID={symbol}`。Goodinfo fallback 使用 requests-first，處理 `CLIENT_KEY` / `REINIT` 初始化頁，Playwright 僅作 optional fallback；優先選「股利發放期間=未定」且較舊的待發放明細，顯示股利所屬期間、現金股利、股票股利與來源確認註記；抓不到或年份過期則顯示「查無今年股利資料」。`fetch_failed` 不寫每日 cache，舊 schema cache 自動失效。
 
 2026-05-17 狀態（Phase 11-B 完成）：
 - **P11-B 已完成並驗證通過**：新增 PER / monthly revenue fetcher；補 per / monthly_revenue / dividends / eps storage roundtrip 與 `data_meta`；dashboard service 新增 valuation / monthly revenue / dividend history with PE / industry PER；API 新增 `/api/analysis/p11/valuation`、`monthly-revenue`、`dividend-history`、`industry-per` 並放在動態 route 前；前端新增 valuation / monthly revenue / dividend history panel 與同產業 PER Modal；US market 回 501，frontend 隱藏 P11 區塊。

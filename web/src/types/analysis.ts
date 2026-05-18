@@ -265,11 +265,23 @@ export interface P11EventCalendarEntry {
   is_estimated?: boolean;
 }
 
+export interface P11DividendPolicyFallback {
+  status: "current_year" | "stale" | "not_found" | "fetch_failed";
+  year: number | null;
+  period?: string | null;
+  payment_status?: "undetermined" | null;
+  cash_dividend: number | null;
+  stock_dividend: number | null;
+  source_url: string;
+  source_note: string;
+}
+
 export interface P11EventCalendarResponse {
   symbol: string;
   market: Market;
   next_ex_dividend: P11EventCalendarEntry | null;
   last_ex_dividend: P11EventCalendarEntry | null;
+  dividend_policy_fallback?: P11DividendPolicyFallback | null;
   next_shareholder_meeting: P11EventCalendarEntry | null;
   last_shareholder_meeting: P11EventCalendarEntry | null;
   missing_shareholder_meeting: boolean;

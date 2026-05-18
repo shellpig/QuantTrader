@@ -4067,13 +4067,19 @@ https://goodinfo.tw/tw/StockDividendPolicy.asp?STOCK_ID={symbol}
    - 若股票股利 `stock_dividend > 0`，同步顯示股票股利；為 0 不顯示。
    - 不呼叫 Goodinfo。
 2. 若沒有未來正式除息資料，不再用上一筆資料推估下一次除息日期與股利，改查 Goodinfo 股利政策頁。
-3. Goodinfo 解析最新一筆股利資料，取欄位：年份、現金股利、股票股利。
-4. 若最新年份等於 Asia/Taipei 今日年份：
-   - 顯示年份、現金股利、股票股利。
+3. Goodinfo 解析股利政策表，取欄位：年份、股利所屬期間、股利發放期間、現金股利、股票股利。
+4. 若表內有「股利發放期間」為 `未定`、且現金股利或股票股利大於 0 的明細列：
+   - 在未定明細列中選「股利所屬期間」較舊的一筆作為下一個待發放參考；例如 `2330` 同時有 `26Q1` / `25Q4` 未定時，顯示 `25Q4`；`3293` 顯示 `25H2`。
+   - 顯示「今年股利資料」、股利所屬期間、`股利發放時間未定`、現金股利、股票股利。
    - 附 Goodinfo 原始網址。
    - 顯示註記：「此為網頁抓取資料，請自行前往來源確認」。
    - 不顯示倒數天數，因為 Goodinfo 股利政策表不是正式除息日。
-5. 若抓不到資料、頁面解析失敗，或最新年份小於今日年份：
+5. 若沒有未定明細列，退回年度總計列：若最新年份等於 Asia/Taipei 今日年份：
+   - 顯示「今年股利資料」、年份、現金股利、股票股利。
+   - 附 Goodinfo 原始網址。
+   - 顯示註記：「此為網頁抓取資料，請自行前往來源確認」。
+   - 不顯示倒數天數，因為 Goodinfo 股利政策表不是正式除息日。
+6. 若抓不到資料、頁面解析失敗，或最新年份小於今日年份：
    - 顯示「查無今年股利資料」。
    - 附 Goodinfo 原始網址。
 
@@ -4085,6 +4091,8 @@ Goodinfo fallback payload 建議：
   "dividend_policy_fallback": {
     "status": "current_year" | "stale" | "not_found" | "fetch_failed",
     "year": 2026 | None,
+    "period": "25H2" | "25Q4" | None,
+    "payment_status": "undetermined" | None,
     "cash_dividend": 29.0 | None,
     "stock_dividend": 10.0 | None,
     "source_url": "https://goodinfo.tw/tw/StockDividendPolicy.asp?STOCK_ID=3293",
@@ -4098,14 +4106,18 @@ Goodinfo fallback payload 建議：
 | 狀態 | 顯示 |
 |:---|:---|
 | 有正式 `next_ex_dividend` | 維持除息事件列：日期、現金股利、股票股利（非 0 才顯示）、倒數天數；不顯示 `[預估]` |
-| `dividend_policy_fallback.status == "current_year"` | 顯示「今年股利資料」：年份、現金股利、股票股利（非 0 才顯示）、Goodinfo link、來源確認註記 |
+| `dividend_policy_fallback.status == "current_year"` 且 `payment_status == "undetermined"` | 顯示「今年股利資料」：股利所屬期間、`股利發放時間未定`、現金股利、股票股利（非 0 才顯示）、Goodinfo link、來源確認註記 |
+| `dividend_policy_fallback.status == "current_year"` 且沒有未定明細列 | 顯示「今年股利資料」：年份、現金股利、股票股利（非 0 才顯示）、Goodinfo link、來源確認註記 |
 | `status == "stale"` / `"not_found"` / `"fetch_failed"` | 顯示「查無今年股利資料」與 Goodinfo link |
 
 Goodinfo 抓取限制：
 
-- 使用 Playwright 解析 JS 動態載入內容；`playwright` 可作 optional import，未安裝或 browser 未安裝時不可讓 dashboard API 500。
+- 優先使用 `requests` 抓 Goodinfo 靜態 HTML；若首次回應為 Goodinfo `CLIENT_KEY` / `REINIT` 初始化頁，需模擬設定 `CLIENT_KEY` cookie 後重抓。
+- `playwright` 只作 optional fallback；未安裝或 browser 未安裝時不可讓 dashboard API 500。
 - Goodinfo 有反爬與流量控管，不可高頻抓取。
 - 必須以每日 cache 降低呼叫頻率；建議 cache path：`data/cache/goodinfo_dividend_policy/{symbol}_{YYYY-MM-DD}.json`。
+- Cache 需帶 schema version；parser / fetcher 規則改版時，舊 cache 必須自動失效。
+- `fetch_failed` 不寫入每日 cache，避免暫時網路 / 依賴問題讓同日後續查詢一直顯示查無資料。
 - Parser 只依 HTML table 內容抽取，不保存 HTML，不保存 CSV。
 - 測試不得打真 Goodinfo；用 fixture HTML / mock fetcher 驗證 parser 與 service 分支。
 
@@ -4124,7 +4136,7 @@ Goodinfo 抓取限制：
 | FinMind 同產業 PER 大量呼叫撞 quota | cache by industry + date；同一天同產業只抓一次；個別 peer 失敗不阻擋整體 |
 | 同產業 Modal 首次等待 8-25 秒 | skeleton + 半透明遮罩 + 中央等待訊息；cache hit 後秒回 |
 | TWSE / TPEx endpoint 變更或 SSL 問題 | 失敗時保留既有 parquet 與 meta，不寫部分結果；後續 reactive 改規格 |
-| Goodinfo 反爬、版面異動或 Playwright 缺依賴 | optional import + 每日 cache；失敗時顯示「查無今年股利資料」並附來源連結，不讓 dashboard 500 |
+| Goodinfo 反爬、版面異動或 Playwright 缺依賴 | requests-first + `CLIENT_KEY` / `REINIT` 初始化處理 + optional Playwright fallback；失敗時顯示「查無今年股利資料」並附來源連結，不讓 dashboard 500 |
 | Manual override 被 auto daily refresh 蓋掉 | auto `updated_at` 只在內容變動時 bump |
 | EPS `date=report_date` 與會計期間語意不同 | 接受；metadata 記錄資料公告範圍，會計期間仍保留 `year/quarter` |
 | Dashboard 高度增加 | chart 縮至 300px；若 1080p 仍需 scroll，先接受 |

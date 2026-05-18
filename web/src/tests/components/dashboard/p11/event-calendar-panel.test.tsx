@@ -106,4 +106,140 @@ describe("EventCalendarPanel", () => {
       "撈不到資料，需要手動填入（ETF沒有股東會）",
     );
   });
+
+  // Phase 11-D: Goodinfo dividend policy fallback
+  it("11-D-F1: formal next_ex_dividend shows date/cash/stock/countdown, no [預估]", () => {
+    render(
+      <EventCalendarPanel
+        onEdit={() => undefined}
+        data={{
+          symbol: "2330",
+          market: "tw",
+          next_ex_dividend: { date: "2026-07-15", cash_dividend: 3.5, stock_dividend: 0.0, days_until: 58, is_estimated: false },
+          last_ex_dividend: null,
+          dividend_policy_fallback: null,
+          next_shareholder_meeting: null,
+          last_shareholder_meeting: null,
+          missing_shareholder_meeting: true,
+        }}
+      />,
+    );
+    expect(screen.getByText("2026-07-15")).toBeInTheDocument();
+    expect(screen.getByText(/現金股利 3\.50/)).toBeInTheDocument();
+    expect(screen.getByText("倒數 58 天")).toBeInTheDocument();
+    expect(screen.queryByText(/\[預估\]/)).not.toBeInTheDocument();
+    expect(screen.queryByTestId("p11-dividend-fallback-current")).not.toBeInTheDocument();
+  });
+
+  it("11-D-F2: formal entry with stock_dividend=0 does not show stock dividend", () => {
+    render(
+      <EventCalendarPanel
+        onEdit={() => undefined}
+        data={{
+          symbol: "2330",
+          market: "tw",
+          next_ex_dividend: { date: "2026-07-15", cash_dividend: 3.5, stock_dividend: 0, days_until: 58, is_estimated: false },
+          last_ex_dividend: null,
+          next_shareholder_meeting: null,
+          last_shareholder_meeting: null,
+          missing_shareholder_meeting: true,
+        }}
+      />,
+    );
+    expect(screen.queryByText(/股票股利/)).not.toBeInTheDocument();
+  });
+
+  it("11-D-F3: fallback current_year shows undetermined payment period, amounts, link, note, no countdown", () => {
+    render(
+      <EventCalendarPanel
+        onEdit={() => undefined}
+        data={{
+          symbol: "3293",
+          market: "tw",
+          next_ex_dividend: null,
+          last_ex_dividend: { date: "2025-07-24", cash_dividend: 29.0, stock_dividend: 0.0 },
+          dividend_policy_fallback: {
+            status: "current_year",
+            year: 2026,
+            period: "25H2",
+            payment_status: "undetermined",
+            cash_dividend: 32.0,
+            stock_dividend: 10.0,
+            source_url: "https://goodinfo.tw/tw/StockDividendPolicy.asp?STOCK_ID=3293",
+            source_note: "此為網頁抓取資料，請自行前往來源確認",
+          },
+          next_shareholder_meeting: null,
+          last_shareholder_meeting: null,
+          missing_shareholder_meeting: true,
+        }}
+      />,
+    );
+    expect(screen.getByTestId("p11-dividend-fallback-current")).toBeInTheDocument();
+    expect(screen.getByText("今年股利資料")).toBeInTheDocument();
+    expect(screen.getByText("25H2")).toBeInTheDocument();
+    expect(screen.getByText("股利發放時間未定")).toBeInTheDocument();
+    expect(screen.getByText(/現金股利 32\.00/)).toBeInTheDocument();
+    expect(screen.getByText(/股票股利 10\.00/)).toBeInTheDocument();
+    expect(screen.getByTestId("p11-dividend-fallback-link")).toBeInTheDocument();
+    expect(screen.getByText(/此為網頁抓取資料/)).toBeInTheDocument();
+    // fallback must NOT show countdown
+    expect(screen.queryByText(/倒數/)).not.toBeInTheDocument();
+  });
+
+  it("11-D-F4: fallback stale/not_found/fetch_failed shows 查無今年股利資料 with link", () => {
+    for (const status of ["stale", "not_found", "fetch_failed"] as const) {
+      const { unmount } = render(
+        <EventCalendarPanel
+          onEdit={() => undefined}
+          data={{
+            symbol: "2330",
+            market: "tw",
+            next_ex_dividend: null,
+            last_ex_dividend: null,
+            dividend_policy_fallback: {
+              status,
+              year: null,
+              cash_dividend: null,
+              stock_dividend: null,
+              source_url: "https://goodinfo.tw/tw/StockDividendPolicy.asp?STOCK_ID=2330",
+              source_note: "此為網頁抓取資料，請自行前往來源確認",
+            },
+            next_shareholder_meeting: null,
+            last_shareholder_meeting: null,
+            missing_shareholder_meeting: true,
+          }}
+        />,
+      );
+      expect(screen.getByTestId("p11-dividend-fallback-not-found")).toBeInTheDocument();
+      expect(screen.getByText("查無今年股利資料")).toBeInTheDocument();
+      expect(screen.getByTestId("p11-dividend-fallback-link")).toBeInTheDocument();
+      unmount();
+    }
+  });
+
+  it("11-D-F5: Goodinfo fallback does not show countdown", () => {
+    render(
+      <EventCalendarPanel
+        onEdit={() => undefined}
+        data={{
+          symbol: "3293",
+          market: "tw",
+          next_ex_dividend: null,
+          last_ex_dividend: null,
+          dividend_policy_fallback: {
+            status: "current_year",
+            year: 2026,
+            cash_dividend: 32.0,
+            stock_dividend: 0.0,
+            source_url: "https://goodinfo.tw/tw/StockDividendPolicy.asp?STOCK_ID=3293",
+            source_note: "此為網頁抓取資料，請自行前往來源確認",
+          },
+          next_shareholder_meeting: null,
+          last_shareholder_meeting: null,
+          missing_shareholder_meeting: true,
+        }}
+      />,
+    );
+    expect(screen.queryByText(/倒數/)).not.toBeInTheDocument();
+  });
 });
